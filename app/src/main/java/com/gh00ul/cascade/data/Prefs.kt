@@ -10,6 +10,9 @@ import org.json.JSONObject
 
 enum class SwipeDownAction { NOTIFICATIONS, SEARCH }
 
+/** Text over the wallpaper: follow the wallpaper's brightness, or force white / dark. */
+enum class TextColor { AUTO, LIGHT, DARK }
+
 data class LauncherSettings(
     /** App keys in the order they appear on the home screen. */
     val favorites: List<String> = emptyList(),
@@ -18,6 +21,8 @@ data class LauncherSettings(
     val showIcons: Boolean = true,
     val monochromeIcons: Boolean = false,
     val showNotificationPreviews: Boolean = true,
+    val showMediaControls: Boolean = true,
+    val textColor: TextColor = TextColor.AUTO,
     val swipeDownAction: SwipeDownAction = SwipeDownAction.NOTIFICATIONS,
     val favoritesSeeded: Boolean = false,
     val notificationPromptDismissed: Boolean = false,
@@ -51,6 +56,8 @@ class Prefs(context: Context) {
         showIcons = sp.getBoolean(SHOW_ICONS, true),
         monochromeIcons = sp.getBoolean(MONOCHROME, false),
         showNotificationPreviews = sp.getBoolean(PREVIEWS, true),
+        showMediaControls = sp.getBoolean(MEDIA, true),
+        textColor = sp.getString(TEXT_COLOR, null)?.let { name -> TextColor.entries.firstOrNull { it.name == name } } ?: TextColor.AUTO,
         swipeDownAction = sp.getString(SWIPE_DOWN, null)
             ?.let { name -> SwipeDownAction.entries.firstOrNull { it.name == name } }
             ?: SwipeDownAction.NOTIFICATIONS,
@@ -66,6 +73,8 @@ class Prefs(context: Context) {
             .putBoolean(SHOW_ICONS, s.showIcons)
             .putBoolean(MONOCHROME, s.monochromeIcons)
             .putBoolean(PREVIEWS, s.showNotificationPreviews)
+            .putBoolean(MEDIA, s.showMediaControls)
+            .putString(TEXT_COLOR, s.textColor.name)
             .putString(SWIPE_DOWN, s.swipeDownAction.name)
             .putBoolean(SEEDED, s.favoritesSeeded)
             .putBoolean(NOTIFICATION_PROMPT, s.notificationPromptDismissed)
@@ -79,6 +88,8 @@ class Prefs(context: Context) {
         const val SHOW_ICONS = "show_icons"
         const val MONOCHROME = "monochrome_icons"
         const val PREVIEWS = "notification_previews"
+        const val MEDIA = "media_controls"
+        const val TEXT_COLOR = "text_color"
         const val SWIPE_DOWN = "swipe_down"
         const val SEEDED = "favorites_seeded"
         const val NOTIFICATION_PROMPT = "notification_prompt_dismissed"

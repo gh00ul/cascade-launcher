@@ -55,16 +55,17 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.searchApps
-import com.gh00ul.cascade.ui.theme.LauncherText
+import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.util.LauncherActions
 
 /** Full-screen search. Hidden apps still show up here. Enter opens the top hit, or searches the web. */
 @Composable
 fun SearchOverlay(
     apps: List<AppEntry>,
-    icons: Map<String, ImageBitmap>,
+    icons: Map<String, IconImage>,
     showIcons: Boolean,
     onLaunch: (AppEntry, Rect?) -> Unit,
     onLongPress: (AppEntry) -> Unit,
@@ -75,6 +76,7 @@ fun SearchOverlay(
     val focus = remember { FocusRequester() }
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query, apps) { searchApps(apps, query) }
+    val style = LocalLauncherStyle.current
 
     fun submit() {
         val top = results.firstOrNull()
@@ -95,7 +97,7 @@ fun SearchOverlay(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.94f))
+            .background(style.scrim.copy(alpha = 0.94f))
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
     ) {
         Column(
@@ -108,8 +110,8 @@ fun SearchOverlay(
         ) {
             Surface(
                 shape = CircleShape,
-                color = Color.White.copy(alpha = 0.14f),
-                contentColor = Color.White,
+                color = style.content.copy(alpha = 0.12f),
+                contentColor = style.content,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
@@ -119,13 +121,13 @@ fun SearchOverlay(
                     Icon(Icons.Filled.Search, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
                     Box(Modifier.weight(1f)) {
-                        if (query.isEmpty()) Text("Search apps or the web", color = Color.White.copy(alpha = 0.55f), fontSize = 17.sp)
+                        if (query.isEmpty()) Text("Search apps or the web", color = style.content.copy(alpha = 0.55f), fontSize = 17.sp)
                         BasicTextField(
                             value = query,
                             onValueChange = { query = it },
                             singleLine = true,
-                            textStyle = TextStyle(color = Color.White, fontSize = 17.sp),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            textStyle = TextStyle(color = style.content, fontSize = 17.sp),
+                            cursorBrush = SolidColor(style.accent),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, autoCorrectEnabled = false),
                             keyboardActions = KeyboardActions(onGo = { submit() }),
                             modifier = Modifier
@@ -165,12 +167,12 @@ fun SearchOverlay(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Search, contentDescription = null, tint = Color.White.copy(alpha = 0.7f))
+                                Icon(Icons.Filled.Search, contentDescription = null, tint = style.content.copy(alpha = 0.7f))
                             }
                             Spacer(Modifier.width(16.dp))
                             Text(
                                 "Search the web for “${query.trim()}”",
-                                style = LauncherText.app.copy(fontSize = 17.sp),
+                                style = style.app.copy(fontSize = 17.sp),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )

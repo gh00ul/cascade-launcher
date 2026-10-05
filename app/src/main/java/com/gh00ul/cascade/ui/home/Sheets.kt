@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.notifications.AppNotification
@@ -63,7 +64,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun AppActionsSheet(
     app: AppEntry,
-    icon: ImageBitmap?,
+    icon: IconImage?,
     isFavorite: Boolean,
     isHidden: Boolean,
     notifications: List<AppNotification>,

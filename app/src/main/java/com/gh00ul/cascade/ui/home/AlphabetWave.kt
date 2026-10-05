@@ -7,7 +7,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -26,7 +25,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
-import com.gh00ul.cascade.ui.theme.LauncherText
+import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import kotlin.math.exp
 import kotlin.math.min
 
@@ -41,9 +40,9 @@ private val WaveDepth = 64.dp
 @Composable
 fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Modifier = Modifier) {
     val haptics = LocalHapticFeedback.current
-    val accent = MaterialTheme.colorScheme.primary
+    val style = LocalLauncherStyle.current
     val measurer = rememberTextMeasurer()
-    val layouts = remember(letters, measurer) { letters.map { measurer.measure(it, LauncherText.letter) } }
+    val layouts = remember(letters, measurer, style) { letters.map { measurer.measure(it, style.letter) } }
     val currentLetters by rememberUpdatedState(letters)
     val currentOnLetter by rememberUpdatedState(onLetter)
 
@@ -99,7 +98,7 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
             val center = Offset(restX - depth * 0.6f, touchY)
             val radius = 170.dp.toPx()
             drawCircle(
-                Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.55f * wave), Color.Transparent), center, radius),
+                Brush.radialGradient(listOf(style.scrim.copy(alpha = 0.6f * wave), Color.Transparent), center, radius),
                 radius,
                 center,
             )
@@ -113,7 +112,7 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
             } else 0f
             val cx = restX - depth * influence
             val scale = 1f + 1.6f * influence
-            val color = if (i == selected) accent else Color.White
+            val color = if (i == selected) style.accent else style.content
             withTransform({ scale(scale, scale, pivot = Offset(cx, cy)) }) {
                 drawText(
                     layout,

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only. Fakes a playing song for the music card; usage is in FakeMediaReceiver.kt. -->
+        <receiver
+            android:name=".FakeMediaReceiver"
+            android:exported="true" />
+    </application>
+</manifest>

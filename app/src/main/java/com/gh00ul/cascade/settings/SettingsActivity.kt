@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,8 +35,10 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,9 +58,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.data.SwipeDownAction
+import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.data.searchApps
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.ui.common.AppIcon
@@ -182,17 +187,27 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, onN
             )
         }
         item {
-            RadioRow("Swipe down opens notifications", settings.swipeDownAction == SwipeDownAction.NOTIFICATIONS) {
-                prefs.update { it.copy(swipeDownAction = SwipeDownAction.NOTIFICATIONS) }
-            }
+            ChoiceRow(
+                title = "Swipe down on home",
+                options = listOf("Notifications", "Search"),
+                selected = settings.swipeDownAction.ordinal,
+            ) { i -> prefs.update { it.copy(swipeDownAction = SwipeDownAction.entries[i]) } }
         }
         item {
-            RadioRow("Swipe down opens search", settings.swipeDownAction == SwipeDownAction.SEARCH) {
-                prefs.update { it.copy(swipeDownAction = SwipeDownAction.SEARCH) }
+            SwitchRow("Music controls", "Show what's playing above your favorites", settings.showMediaControls) { on ->
+                prefs.update { it.copy(showMediaControls = on) }
             }
         }
 
         item { Header("Appearance") }
+        item {
+            ChoiceRow(
+                title = "Text color",
+                summary = "Automatic switches to dark text on light wallpapers",
+                options = listOf("Automatic", "White", "Dark"),
+                selected = settings.textColor.ordinal,
+            ) { i -> prefs.update { it.copy(textColor = TextColor.entries[i]) } }
+        }
         item {
             SwitchRow("App icons", null, settings.showIcons) { on -> prefs.update { it.copy(showIcons = on) } }
         }
@@ -230,7 +245,7 @@ private fun FavoritesSettings(
     padding: PaddingValues,
     settings: LauncherSettings,
     apps: List<AppEntry>,
-    icons: Map<String, ImageBitmap>,
+    icons: Map<String, IconImage>,
     onAdd: () -> Unit,
 ) {
     val prefs = LocalContext.current.launcher.prefs
@@ -284,7 +299,7 @@ private fun AddFavorite(
     padding: PaddingValues,
     settings: LauncherSettings,
     apps: List<AppEntry>,
-    icons: Map<String, ImageBitmap>,
+    icons: Map<String, IconImage>,
     onDone: () -> Unit,
 ) {
     val prefs = LocalContext.current.launcher.prefs
@@ -320,7 +335,7 @@ private fun AddFavorite(
 }
 
 @Composable
-private fun HiddenApps(padding: PaddingValues, settings: LauncherSettings, apps: List<AppEntry>, icons: Map<String, ImageBitmap>) {
+private fun HiddenApps(padding: PaddingValues, settings: LauncherSettings, apps: List<AppEntry>, icons: Map<String, IconImage>) {
     val prefs = LocalContext.current.launcher.prefs
     val hidden = apps.filter { it.key in settings.hidden }
     LazyColumn(contentPadding = padding) {
@@ -397,12 +412,25 @@ private fun SwitchRow(title: String, summary: String?, checked: Boolean, enabled
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RadioRow(title: String, selected: Boolean, onSelect: () -> Unit) {
+private fun ChoiceRow(title: String, options: List<String>, selected: Int, summary: String? = null, onSelect: (Int) -> Unit) {
     ListItem(
         headlineContent = { Text(title) },
-        leadingContent = { RadioButton(selected = selected, onClick = onSelect) },
+        supportingContent = {
+            Column {
+                if (summary != null) Text(summary)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    options.forEachIndexed { i, label ->
+                        SegmentedButton(
+                            selected = i == selected,
+                            onClick = { onSelect(i) },
+                            shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
+                        ) { Text(label, maxLines = 1) }
+                    }
+                }
+            }
+        },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = Modifier.clickable(onClick = onSelect),
     )
 }

@@ -1,12 +1,11 @@
 package com.gh00ul.cascade.notifications
 
-import android.app.ActivityOptions
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
-import android.os.Build
 import android.service.notification.StatusBarNotification
 import com.gh00ul.cascade.data.notificationKey
+import com.gh00ul.cascade.util.sendFromLauncher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,14 +39,9 @@ object NotificationStore {
 
     /** Opens what the notification points at. Returns false when it has nothing to open. */
     fun open(context: Context, notification: AppNotification): Boolean {
-        val intent = notification.contentIntent ?: return false
-        return try {
-            intent.send(context, 0, null, null, null, null, sendOptions())
-            if (notification.autoCancel) dismiss(notification)
-            true
-        } catch (e: PendingIntent.CanceledException) {
-            false
-        }
+        val opened = notification.contentIntent?.sendFromLauncher(context) ?: false
+        if (opened && notification.autoCancel) dismiss(notification)
+        return opened
     }
 
     fun dismiss(notification: AppNotification) {
@@ -55,14 +49,6 @@ object NotificationStore {
     }
 
     fun dismissAll(notifications: List<AppNotification>) = notifications.filter { it.clearable }.forEach(::dismiss)
-
-    // The launcher is in the foreground, so let the notification's app start its activity.
-    @Suppress("DEPRECATION")
-    private fun sendOptions() = ActivityOptions.makeBasic().apply {
-        if (Build.VERSION.SDK_INT >= 34) {
-            setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-        }
-    }.toBundle()
 }
 
 private fun StatusBarNotification.toAppNotification(): AppNotification? {

@@ -11,6 +11,9 @@ import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
+import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -33,10 +36,17 @@ fun Drawable.renderTo(size: Int, filter: ColorFilter? = null): Bitmap {
 }
 
 /**
- * A white glyph: the app's themed-icon layer when it ships one (Android 13+),
+ * An app icon ready to draw. A [isGlyph] icon is a white silhouette (Android 13 themed icon) that the UI
+ * tints with its current text color.
+ */
+@Immutable
+class IconImage(val bitmap: ImageBitmap, val isGlyph: Boolean)
+
+/**
+ * The app's themed-icon layer when it ships one (Android 13+) as a white glyph,
  * otherwise a grayscale copy of its regular icon.
  */
-fun Drawable.renderMonochrome(size: Int): Bitmap {
+fun Drawable.renderMonochrome(size: Int): IconImage {
     if (Build.VERSION.SDK_INT >= 33 && this is AdaptiveIconDrawable) {
         monochrome?.mutate()?.let { glyph ->
             val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -45,8 +55,9 @@ fun Drawable.renderMonochrome(size: Int): Bitmap {
             glyph.setBounds(-bleed, -bleed, size + bleed, size + bleed)
             glyph.colorFilter = PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
             glyph.draw(Canvas(bitmap))
-            return bitmap
+            return IconImage(bitmap.asImageBitmap(), isGlyph = true)
         }
     }
-    return renderTo(size, ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) }))
+    val gray = renderTo(size, ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) }))
+    return IconImage(gray.asImageBitmap(), isGlyph = false)
 }

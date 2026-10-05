@@ -49,10 +49,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.notifications.AppNotification
-import com.gh00ul.cascade.ui.theme.LauncherText
+import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.util.LauncherActions
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -63,15 +64,19 @@ fun HomePage(
     minHeight: Dp,
     bottomInset: Dp,
     favorites: List<AppEntry>,
-    icons: Map<String, ImageBitmap>,
+    icons: Map<String, IconImage>,
     notifications: Map<String, List<AppNotification>>,
     settings: LauncherSettings,
     onLaunch: (AppEntry, Rect?) -> Unit,
     onAppLongPress: (AppEntry) -> Unit,
     onOpenNotification: (AppEntry, AppNotification) -> Unit,
     onEmptyLongPress: () -> Unit,
+    expandedKey: String?,
+    onToggleExpand: (String) -> Unit,
+    nowPlaying: @Composable () -> Unit,
     onboarding: @Composable () -> Unit,
 ) {
+    val style = LocalLauncherStyle.current
     val longPress by rememberUpdatedState(onEmptyLongPress)
     Column(
         Modifier
@@ -85,10 +90,11 @@ fun HomePage(
         onboarding()
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.height(32.dp))
+        nowPlaying()
         if (favorites.isEmpty()) {
             Text(
                 "Long-press any app to add it here.\nScroll down, or slide along the letters on the right, to see all apps.",
-                style = LauncherText.small,
+                style = style.small,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
         }
@@ -103,6 +109,8 @@ fun HomePage(
                 onClick = { onLaunch(app, it) },
                 onLongClick = { onAppLongPress(app) },
                 onNotificationClick = { onOpenNotification(app, it) },
+                expanded = expandedKey == "fav:${app.key}",
+                onToggleExpand = { onToggleExpand("fav:${app.key}") },
             )
         }
     }
@@ -134,23 +142,24 @@ private fun Clock(modifier: Modifier = Modifier) {
     val time = SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale).format(Date(now))
     val date = SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd"), locale).format(Date(now))
     val alarm = remember(now) { context.getSystemService(AlarmManager::class.java).nextAlarmClock?.triggerTime }
+    val style = LocalLauncherStyle.current
 
     Column(modifier) {
         Text(
             time,
-            style = LauncherText.clock,
+            style = style.clock,
             modifier = Modifier.clickable(interactionSource = null, indication = null) { LauncherActions.openAlarms(context) },
         )
         Text(
             date,
-            style = LauncherText.date,
+            style = style.date,
             modifier = Modifier.clickable(interactionSource = null, indication = null) { LauncherActions.openCalendar(context) },
         )
         if (alarm != null) {
             val pattern = DateFormat.getBestDateTimePattern(locale, if (is24h) "EEEHmm" else "EEEhmma")
             Text(
                 "Alarm  ${SimpleDateFormat(pattern, locale).format(Date(alarm))}",
-                style = LauncherText.small,
+                style = style.small,
                 modifier = Modifier
                     .padding(top = 4.dp)
                     .clickable(interactionSource = null, indication = null) { LauncherActions.openAlarms(context) },
@@ -161,17 +170,18 @@ private fun Clock(modifier: Modifier = Modifier) {
 
 @Composable
 fun OnboardingCard(title: String, body: String, action: String, onAction: () -> Unit, onDismiss: () -> Unit) {
+    val style = LocalLauncherStyle.current
     Surface(
         shape = RoundedCornerShape(24.dp),
-        color = Color.Black.copy(alpha = 0.5f),
-        contentColor = Color.White,
+        color = style.scrim.copy(alpha = 0.55f),
+        contentColor = style.content,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(start = 20.dp, end = 12.dp, top = 18.dp, bottom = 8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.75f), modifier = Modifier.padding(top = 4.dp))
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = style.content.copy(alpha = 0.75f), modifier = Modifier.padding(top = 4.dp))
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text("Not now", color = Color.White.copy(alpha = 0.8f)) }
+                TextButton(onClick = onDismiss) { Text("Not now", color = style.content.copy(alpha = 0.8f)) }
                 Spacer(Modifier.width(4.dp))
                 Button(onClick = onAction) { Text(action) }
             }
@@ -181,6 +191,7 @@ fun OnboardingCard(title: String, body: String, action: String, onAction: () -> 
 
 @Composable
 fun AllAppsHeader(onSearch: () -> Unit, onSettings: () -> Unit) {
+    val style = LocalLauncherStyle.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -190,18 +201,18 @@ fun AllAppsHeader(onSearch: () -> Unit, onSettings: () -> Unit) {
         Surface(
             onClick = onSearch,
             shape = CircleShape,
-            color = Color.White.copy(alpha = 0.14f),
-            contentColor = Color.White,
+            color = style.content.copy(alpha = 0.12f),
+            contentColor = style.content,
             modifier = Modifier.weight(1f).height(48.dp),
         ) {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Search, contentDescription = null)
                 Spacer(Modifier.width(12.dp))
-                Text("Search apps", color = Color.White.copy(alpha = 0.75f))
+                Text("Search apps", color = style.content.copy(alpha = 0.75f))
             }
         }
         IconButton(onClick = onSettings) {
-            Icon(Icons.Filled.Settings, contentDescription = "Launcher settings", tint = Color.White)
+            Icon(Icons.Filled.Settings, contentDescription = "Launcher settings", tint = style.content)
         }
     }
 }
@@ -210,7 +221,7 @@ fun AllAppsHeader(onSearch: () -> Unit, onSettings: () -> Unit) {
 fun SectionHeader(letter: String) {
     Text(
         letter,
-        style = LauncherText.section.copy(color = MaterialTheme.colorScheme.primary),
+        style = LocalLauncherStyle.current.section,
         modifier = Modifier.padding(start = 28.dp, top = 18.dp, bottom = 2.dp),
     )
 }

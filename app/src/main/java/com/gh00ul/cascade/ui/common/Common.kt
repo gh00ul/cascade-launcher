@@ -9,6 +9,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
@@ -16,11 +17,24 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.gh00ul.cascade.data.IconImage
+
+/** An app icon; themed glyphs take the surrounding content color so they read on any background. */
+@Composable
+fun AppIcon(icon: IconImage?, size: Dp, modifier: Modifier = Modifier) {
+    AppIcon(icon?.bitmap, size, modifier, tint = if (icon?.isGlyph == true) LocalContentColor.current else null)
+}
 
 @Composable
-fun AppIcon(icon: ImageBitmap?, size: Dp, modifier: Modifier = Modifier) {
+fun AppIcon(icon: ImageBitmap?, size: Dp, modifier: Modifier = Modifier, tint: Color? = null) {
     if (icon != null) {
-        Image(icon, contentDescription = null, modifier = modifier.size(size), filterQuality = FilterQuality.Medium)
+        Image(
+            icon,
+            contentDescription = null,
+            modifier = modifier.size(size),
+            colorFilter = tint?.let { ColorFilter.tint(it) },
+            filterQuality = FilterQuality.Medium,
+        )
     } else {
         Box(modifier.size(size).background(LocalContentColor.current.copy(alpha = 0.12f), CircleShape))
     }
@@ -48,6 +62,11 @@ object ExtraIcons {
         "M21,19V5c0,-1.1 -0.9,-2 -2,-2H5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2zM8.5,13.5l2.5," +
             "3.01L14.5,12l4.5,6H5l3.5,-4.5z",
     )
+
+    val Play = icon("Play", "M8,5v14l11,-7z")
+    val Pause = icon("Pause", "M6,19h4V5H6v14zM14,5v14h4V5h-4z")
+    val SkipNext = icon("SkipNext", "M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z")
+    val SkipPrevious = icon("SkipPrevious", "M6,6h2v12H6zM9.5,12l8.5,6V6z")
 
     private fun icon(name: String, path: String) = ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
         .addPath(addPathNodes(path), fill = SolidColor(Color.Black))

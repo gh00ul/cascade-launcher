@@ -1,11 +1,13 @@
 package com.gh00ul.cascade.ui.home
 
+import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -22,6 +24,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,14 +55,22 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.SwipeDownAction
+import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
+import com.gh00ul.cascade.notifications.NowPlaying
 import com.gh00ul.cascade.settings.SettingsActivity
+import com.gh00ul.cascade.ui.theme.LauncherStyle
+import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.colorScheme
+import com.gh00ul.cascade.ui.theme.rememberWallpaperSupportsDarkText
 import com.gh00ul.cascade.util.LauncherActions
+import com.gh00ul.cascade.util.sendFromLauncher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
@@ -103,6 +114,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     val icons by launcher.repository.icons.collectAsStateWithLifecycle()
     val settings by launcher.prefs.settings.collectAsStateWithLifecycle()
     val notifications by NotificationStore.byApp.collectAsStateWithLifecycle()
+    val nowPlaying by NowPlaying.state.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -110,6 +122,25 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     var sheetApp by remember { mutableStateOf<AppEntry?>(null) }
     var renameApp by remember { mutableStateOf<AppEntry?>(null) }
     var homeMenuOpen by remember { mutableStateOf(false) }
+    // Row whose notifications are swiped open; "fav:" and "all:" prefixes keep the two lists apart.
+    var expandedKey by remember { mutableStateOf<String?>(null) }
+    val toggleExpand: (String) -> Unit = { key -> expandedKey = if (expandedKey == key) null else key }
+
+    val wallpaperDarkText = rememberWallpaperSupportsDarkText()
+    val darkText = when (settings.textColor) {
+        TextColor.AUTO -> wallpaperDarkText
+        TextColor.LIGHT -> false
+        TextColor.DARK -> true
+    }
+    val accent = colorScheme(dark = !darkText).primary
+    val style = remember(darkText, accent) { LauncherStyle(darkText, accent) }
+    SideEffect {
+        val window = (view.context as? Activity)?.window ?: return@SideEffect
+        WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = darkText
+            isAppearanceLightNavigationBars = darkText
+        }
+    }
 
     var isDefault by remember { mutableStateOf(LauncherActions.isDefaultLauncher(context)) }
     var hasNotificationAccess by remember { mutableStateOf(LauncherActions.hasNotificationAccess(context)) }
@@ -144,6 +175,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             sheetApp = null
             renameApp = null
             homeMenuOpen = false
+            expandedKey = null
             if (listState.firstVisibleItemIndex > 4) listState.scrollToItem(0) else listState.animateScrollToItem(0)
         }
     }
@@ -156,7 +188,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         }
     }
 
-    CompositionLocalProvider(LocalContentColor provides Color.White) {
+    CompositionLocalProvider(LocalLauncherStyle provides style, LocalContentColor provides style.content) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -168,7 +200,19 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                 else (listState.firstVisibleItemScrollOffset / homeHeightPx).coerceIn(0f, 1f)
             }
 
-            Box(Modifier.fillMaxSize().drawBehind { drawRect(Color.Black, alpha = 0.12f + 0.58f * progress()) })
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .drawBehind {
+                        val p = progress()
+                        drawRect(style.scrim, alpha = 0.12f + 0.58f * p)
+                        // A soft wash behind the clock so it reads on bright skies; fades as the list scrolls up.
+                        drawRect(
+                            Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f),
+                            alpha = 1f - p,
+                        )
+                    },
+            )
 
             LazyColumn(
                 state = listState,
@@ -201,6 +245,24 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onAppLongPress = { sheetApp = it },
                         onOpenNotification = openNotification,
                         onEmptyLongPress = { homeMenuOpen = true },
+                        expandedKey = expandedKey,
+                        onToggleExpand = toggleExpand,
+                        nowPlaying = {
+                            val media = nowPlaying
+                            if (media != null && settings.showMediaControls) {
+                                val mediaApp = apps.firstOrNull { it.packageName == media.packageName && !it.isWork }
+                                NowPlayingCard(
+                                    state = media,
+                                    appIcon = mediaApp?.let { icons[it.key] },
+                                    appLabel = mediaApp?.label,
+                                    onOpen = {
+                                        val opened = media.sessionActivity?.sendFromLauncher(context) ?: false
+                                        if (!opened && mediaApp != null) launch(mediaApp, null)
+                                    },
+                                )
+                                Spacer(Modifier.height(12.dp))
+                            }
+                        },
                         onboarding = {
                             when {
                                 !isDefault && !defaultPromptHidden -> OnboardingCard(
@@ -238,6 +300,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                             onLongClick = { sheetApp = row.app },
                             onNotificationClick = { openNotification(row.app, it) },
                             modifier = Modifier.padding(start = 20.dp, end = 44.dp),
+                            expanded = expandedKey == "all:${row.app.key}",
+                            onToggleExpand = { toggleExpand("all:${row.app.key}") },
                         )
                     }
                 }
@@ -249,7 +313,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     .fillMaxWidth()
                     .height(statusTop + 16.dp)
                     .drawBehind {
-                        drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.5f), Color.Transparent)), alpha = progress())
+                        drawRect(Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.5f), Color.Transparent)), alpha = progress())
                     },
             )
 

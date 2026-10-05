@@ -3,16 +3,21 @@ package com.gh00ul.cascade.notifications
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
-/** Runs once the user grants notification access; mirrors active notifications into [NotificationStore]. */
+/**
+ * Runs once the user grants notification access; mirrors active notifications into [NotificationStore]
+ * and lets [NowPlaying] follow media sessions.
+ */
 class NotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         instance = this
         sync()
+        NowPlaying.start(applicationContext)
     }
 
     override fun onListenerDisconnected() {
         instance = null
         NotificationStore.clear()
+        NowPlaying.stop()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) = sync()

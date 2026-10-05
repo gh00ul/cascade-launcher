@@ -15,7 +15,7 @@ import android.os.Process
 import android.os.UserHandle
 import android.os.UserManager
 import android.provider.MediaStore
-import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -74,9 +74,9 @@ class AppRepository(
             .flowOn(Dispatchers.Default)
             .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    private val iconCache = ConcurrentHashMap<String, ImageBitmap>()
-    private val _icons = MutableStateFlow<Map<String, ImageBitmap>>(emptyMap())
-    val icons: StateFlow<Map<String, ImageBitmap>> = _icons.asStateFlow()
+    private val iconCache = ConcurrentHashMap<String, IconImage>()
+    private val _icons = MutableStateFlow<Map<String, IconImage>>(emptyMap())
+    val icons: StateFlow<Map<String, IconImage>> = _icons.asStateFlow()
 
     private var loadJob: Job? = null
 
@@ -178,17 +178,13 @@ class AppRepository(
         _icons.value = HashMap(iconCache)
     }
 
-    private fun renderIcon(app: InstalledApp, monochrome: Boolean, size: Int): ImageBitmap? = runCatching {
+    private fun renderIcon(app: InstalledApp, monochrome: Boolean, size: Int): IconImage? = runCatching {
         val dpi = context.resources.displayMetrics.densityDpi
-        val bitmap = if (monochrome) {
-            val glyph = app.info.getIcon(dpi).renderMonochrome(size)
-            if (app.isWork) {
-                context.packageManager.getUserBadgedIcon(BitmapDrawable(context.resources, glyph), app.info.user).renderTo(size)
-            } else glyph
-        } else {
-            app.info.getBadgedIcon(dpi).renderTo(size)
-        }
-        bitmap.asImageBitmap()
+        if (!monochrome) return@runCatching IconImage(app.info.getBadgedIcon(dpi).renderTo(size).asImageBitmap(), isGlyph = false)
+        val mono = app.info.getIcon(dpi).renderMonochrome(size)
+        if (!app.isWork) return@runCatching mono
+        val plain = BitmapDrawable(context.resources, mono.bitmap.asAndroidBitmap())
+        IconImage(context.packageManager.getUserBadgedIcon(plain, app.info.user).renderTo(size).asImageBitmap(), mono.isGlyph)
     }.getOrNull()
 
     private fun sectionOf(label: String): String {

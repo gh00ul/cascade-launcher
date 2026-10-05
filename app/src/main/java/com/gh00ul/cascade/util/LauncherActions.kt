@@ -1,0 +1,158 @@
+package com.gh00ul.cascade.util
+
+import android.annotation.SuppressLint
+import android.app.ActivityOptions
+import android.app.SearchManager
+import android.app.role.RoleManager
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.graphics.Rect
+import android.net.Uri
+import android.os.Build
+import android.provider.AlarmClock
+import android.provider.Settings
+import android.view.View
+import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.app.NotificationManagerCompat
+import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.renderTo
+import com.gh00ul.cascade.notifications.NotificationListener
+import kotlin.math.roundToInt
+
+class AppShortcut(val info: ShortcutInfo, val label: String, val icon: ImageBitmap?)
+
+object LauncherActions {
+    /** Starts the app, animating it out of [bounds] (window coordinates) when given. */
+    fun launch(context: Context, app: AppEntry, sourceView: View? = null, bounds: androidx.compose.ui.geometry.Rect? = null) {
+        val rect = bounds?.let { Rect(it.left.roundToInt(), it.top.roundToInt(), it.right.roundToInt(), it.bottom.roundToInt()) }
+        val options = if (sourceView != null && rect != null && !rect.isEmpty) {
+            ActivityOptions.makeClipRevealAnimation(sourceView, rect.left, rect.top, rect.width(), rect.height()).toBundle()
+        } else null
+        try {
+            context.getSystemService(LauncherApps::class.java).startMainActivity(app.component, app.user, rect, options)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Couldn't open ${app.label}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun openAppInfo(context: Context, app: AppEntry) {
+        runCatching { context.getSystemService(LauncherApps::class.java).startAppDetailsActivity(app.component, app.user, null, null) }
+    }
+
+    fun uninstall(context: Context, app: AppEntry) {
+        start(context, Intent(Intent.ACTION_DELETE, Uri.fromParts("package", app.packageName, null)))
+    }
+
+    fun isSystemApp(context: Context, app: AppEntry): Boolean = runCatching {
+        val info = context.getSystemService(LauncherApps::class.java).getApplicationInfo(app.packageName, 0, app.user)
+        info.flags and ApplicationInfo.FLAG_SYSTEM != 0
+    }.getOrDefault(true)
+
+    /** Static and dynamic shortcuts, like the ones Pixel Launcher shows on long-press. */
+    fun loadShortcuts(context: Context, app: AppEntry): List<AppShortcut> = runCatching {
+        val launcherApps = context.getSystemService(LauncherApps::class.java)
+        if (!launcherApps.hasShortcutHostPermission()) return emptyList()
+        val query = LauncherApps.ShortcutQuery()
+            .setPackage(app.packageName)
+            .setActivity(app.component)
+            .setQueryFlags(LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST)
+        val dpi = context.resources.displayMetrics.densityDpi
+        val size = (32 * context.resources.displayMetrics.density).roundToInt()
+        launcherApps.getShortcuts(query, app.user).orEmpty()
+            .sortedWith(compareBy<ShortcutInfo> { if (it.isDeclaredInManifest) 0 else 1 }.thenBy { it.rank })
+            .take(5)
+            .map { info ->
+                val icon = runCatching { launcherApps.getShortcutIconDrawable(info, dpi)?.renderTo(size)?.asImageBitmap() }.getOrNull()
+                AppShortcut(info, (info.shortLabel ?: info.longLabel ?: "").toString(), icon)
+            }
+    }.getOrDefault(emptyList())
+
+    fun launchShortcut(context: Context, shortcut: AppShortcut) {
+        try {
+            context.getSystemService(LauncherApps::class.java).startShortcut(shortcut.info, null, null)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Couldn't open ${shortcut.label}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Pulls down the notification shade. There is no public API for this, so it goes through StatusBarManager. */
+    @SuppressLint("WrongConstant")
+    fun expandNotifications(context: Context): Boolean = runCatching {
+        val statusBar = context.getSystemService("statusbar")
+        Class.forName("android.app.StatusBarManager").getMethod("expandNotificationsPanel").invoke(statusBar)
+    }.isSuccess
+
+    fun openAlarms(context: Context) {
+        start(context, Intent(AlarmClock.ACTION_SHOW_ALARMS))
+    }
+
+    fun openCalendar(context: Context) {
+        val now = Uri.parse("content://com.android.calendar/time/${System.currentTimeMillis()}")
+        if (!start(context, Intent(Intent.ACTION_VIEW, now))) {
+            start(context, Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR))
+        }
+    }
+
+    fun openWallpaperPicker(context: Context) {
+        start(context, Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Choose wallpaper"))
+    }
+
+    fun webSearch(context: Context, query: String) {
+        if (!start(context, Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, query))) {
+            start(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))))
+        }
+    }
+
+    fun isDefaultLauncher(context: Context): Boolean {
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        return context.packageManager.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.packageName == context.packageName
+    }
+
+    /** Shows the system "Set as default home app" dialog where available, otherwise the Home settings page. */
+    fun requestDefaultLauncher(context: Context, roleRequest: ActivityResultLauncher<Intent>) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val roles = context.getSystemService(RoleManager::class.java)
+            if (roles.isRoleAvailable(RoleManager.ROLE_HOME) && !roles.isRoleHeld(RoleManager.ROLE_HOME)) {
+                roleRequest.launch(roles.createRequestRoleIntent(RoleManager.ROLE_HOME))
+                return
+            }
+        }
+        openHomeSettings(context)
+    }
+
+    fun openHomeSettings(context: Context) {
+        start(context, Intent(Settings.ACTION_HOME_SETTINGS))
+    }
+
+    fun hasNotificationAccess(context: Context): Boolean =
+        context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
+
+    fun openNotificationAccess(context: Context) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val component = ComponentName(context, NotificationListener::class.java).flattenToString()
+            val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component)
+            if (start(context, detail)) return
+        }
+        start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    private fun start(context: Context, intent: Intent): Boolean = try {
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    } catch (e: ActivityNotFoundException) {
+        false
+    } catch (e: SecurityException) {
+        false
+    }
+}

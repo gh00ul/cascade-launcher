@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A short app list with the alphabet wave bulging beside it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M34,42 L62,42 M34,54 L56,54 M34,66 L66,66"
+        android:strokeWidth="6"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M79,32 C79,44 70,46 70,54 C70,62 79,64 79,76"
+        android:strokeWidth="3.5"
+        android:strokeColor="#9FD3FF"
+        android:strokeLineCap="round" />
+</vector>

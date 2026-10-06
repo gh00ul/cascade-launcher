@@ -30,6 +30,14 @@ class LoginCodeTest {
 
     @Test fun theCodeCanBeInTheTitle() {
         assertEquals("334455", code("334455", title = "Verification code"))
+        assertEquals("123456", code("Tap to copy", title = "Your sign-in code is 123456"))
+    }
+
+    /** Messages titles a message from an unsaved short code with its number: the sender, never the code. */
+    @Test fun aNumberedSenderIsNotTheCode() {
+        assertEquals("482913", code("Verification code: 482913", title = "72975"))
+        assertEquals("482913", code("482913 is your code", title = "72975"))
+        assertNull(code("Your PIN was changed", title = "72975"))
     }
 
     @Test fun withoutACodeWordNothingCounts() {

@@ -11,7 +11,10 @@ import com.gh00ul.cascade.data.TimeFormat
 import com.gh00ul.cascade.data.Weather
 import com.gh00ul.cascade.data.WeatherNow
 import com.gh00ul.cascade.data.WeatherPlace
+import androidx.compose.ui.unit.dp
+import com.gh00ul.cascade.notifications.LastPlayed
 import com.gh00ul.cascade.testing.FIXED_NOW
+import com.gh00ul.cascade.ui.home.ResumeRow
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeNotifications
 import com.gh00ul.cascade.ui.home.OnboardingCard
@@ -61,6 +64,24 @@ class HomeScreenshots : ScreenshotTest() {
         }) {
             HomeScreen(glance, apps, favorites, icons, FakeNotifications.byApp())
         }
+    }
+
+    /** Listen mode: headphones on, nothing playing, so the app that played last offers to pick up where it stopped. */
+    @Test fun resume() = snap("Home_Resume") {
+        val music = FakeApps.byLabel("Music")
+        HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp(), resume = {
+            ResumeRow(
+                appLabel = music.label,
+                icon = icons[music.key],
+                played = LastPlayed(music.packageName, "Midnight City", "M83"),
+                showIcon = true,
+                iconSize = IconSize.MEDIUM.homeDp.dp,
+                monochrome = false,
+                resuming = false,
+                onResume = {},
+                onDismiss = {},
+            )
+        })
     }
 
     @Test fun bold() = snap("Home_Bold") {

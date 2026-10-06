@@ -99,6 +99,10 @@ import com.gh00ul.cascade.notifications.NowPlaying
 import com.gh00ul.cascade.settings.SettingsActivity
 import com.gh00ul.cascade.settings.SettingsScreen
 import com.gh00ul.cascade.ui.common.rememberEntry
+import com.gh00ul.cascade.notifications.LastPlayed
+import com.gh00ul.cascade.notifications.LastPlayer
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import com.gh00ul.cascade.ui.common.rememberReplaySkip
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
@@ -439,6 +443,27 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         if (!NotificationStore.open(context, n)) launch(app, null)
     }
 
+    // Listen mode: headphones on and nothing playing offers the app that played last. "Not now" holds for the devices
+    // connected then; the next headphones (or the same ones, reconnected) bring it back.
+    val lastPlayed by LastPlayer.state.collectAsStateWithLifecycle()
+    val listening = rememberListeningDevices(settings.resumePrompt)
+    val resumeApp = remember(apps, lastPlayed?.packageName) {
+        lastPlayed?.let { p -> apps.firstOrNull { it.packageName == p.packageName && !it.isWork } }
+    }
+    var resumeDismissedFor by rememberSaveable { mutableStateOf(emptyList<Int>()) }
+    var resuming by remember { mutableStateOf(false) }
+    val showResume = resumeApp != null && media == null && nowPlaying?.isPlaying != true &&
+        listening.any { it !in resumeDismissedFor }
+    // The player replaces the row once the app plays. If it hasn't within a few seconds (the app ignored the request),
+    // open the app so play is one tap away there.
+    LaunchedEffect(resuming) {
+        if (!resuming) return@LaunchedEffect
+        val app = resumeApp
+        val started = withTimeoutOrNull(4_000) { NowPlaying.state.first { it?.isPlaying == true } }
+        if (started == null && app != null) launch(app, null)
+        resuming = false
+    }
+
     LaunchedEffect(homePresses) {
         homePresses.collect {
             searchOpen = false
@@ -563,6 +588,34 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                             if (!opened) mediaApp?.let { launch(it, null) }
                         },
                         onHideMedia = NowPlaying::hide,
+                        resume = {
+                            // The last row and track shown, so the row still has something to draw while it folds away.
+                            val shown = remember { Latest<Pair<AppEntry, LastPlayed>>() }.also {
+                                val p = lastPlayed
+                                if (showResume && resumeApp != null && p != null) it.value = resumeApp to p
+                            }
+                            AnimatedVisibility(showResume, enter = Motion.ExpandUp, exit = Motion.CollapseDown) {
+                                shown.value?.let { (app, played) ->
+                                    val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
+                                    ResumeRow(
+                                        appLabel = app.label,
+                                        icon = icon,
+                                        played = played,
+                                        showIcon = settings.showIcons,
+                                        iconSize = settings.iconSize.homeDp.dp,
+                                        monochrome = settings.showIcons && settings.monochromeIcons,
+                                        resuming = resuming,
+                                        onResume = {
+                                            if (!resuming) {
+                                                resuming = true
+                                                LastPlayer.resume(context, app.packageName)
+                                            }
+                                        },
+                                        onDismiss = { resumeDismissedFor = listening.toList() },
+                                    )
+                                }
+                            }
+                        },
                         onboarding = {
                             // Read in here, so granting access or the default role recomposes only this slot, not the screen.
                             val cardSlot = when {

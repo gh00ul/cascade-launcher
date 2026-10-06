@@ -26,6 +26,9 @@ and Android won't update an app across a key change.
   in both text modes. Swipe the row left to skip to the next track. If the app isn't a favorite, a temporary
   player row appears above your favorites. A player that's paused when you come home folds down to one line,
   and it steps aside after 30 minutes paused, or when you choose "Hide player" from the long-press menu.
+- **Resume with headphones.** With headphones (wired, USB or Bluetooth) connected and nothing playing, a
+  "Resume Spotify" row (or whichever app played last) shows above your favorites, with the track it stopped on.
+  Tap it to pick up where you left off; long-press for "Not now" until the next time headphones connect.
 - **Dark text on light wallpapers.** Text, icons and the status bar switch to dark automatically when your
   wallpaper is light. You can also force white or dark text in settings.
 - **Long-press menu.** Shows the app's notifications and shortcuts, plus actions to favorite, rename, hide

@@ -181,6 +181,7 @@ internal fun HomeScreen(
     media: NowPlayingState? = null,
     mediaResting: Boolean = false,
     onboarding: @Composable () -> Unit = {},
+    resume: @Composable () -> Unit = {},
     firstItem: Int = 0,
     searchOpen: Boolean = false,
     onSearchDismiss: () -> Unit = {},
@@ -245,6 +246,7 @@ internal fun HomeScreen(
                     mediaResting = mediaResting,
                     onOpenMedia = {},
                     onHideMedia = {},
+                    resume = resume,
                     onboarding = onboarding,
                 )
             }

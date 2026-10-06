@@ -281,6 +281,10 @@ object NowPlaying {
         pausedSince -= playing
         hidden -= playing
         for ((owner, since) in resting) if (owner !in playing) pausedSince.getOrPut(owner) { since }
+        // What plays is remembered for listen mode's Resume row, watched or not; LastPlayer writes only on a change.
+        sessions.values.firstOrNull { it.playback?.state in PLAYING_STATES }?.let { tracked ->
+            titleOf(tracked.metadata)?.let { title -> LastPlayer.played(ownerOf(tracked.controller), title, subtitleOf(tracked.metadata)) }
+        }
         handler.removeCallbacks(recheck)
         if (!force && _state.subscriptionCount.value == 0) return
         var wake = Long.MAX_VALUE
@@ -354,15 +358,22 @@ object NowPlaying {
         metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }
             ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)?.takeIf { it.isNotBlank() }
 
+    private fun subtitleOf(metadata: MediaMetadata?): String =
+        metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
+            ?: ""
+
+    /** The session's app; in debug builds, Cascade's own fake session stands in for [debugAlias]. */
+    private fun ownerOf(controller: MediaController): String =
+        controller.packageName.let { if (it == ownPackage) debugAlias ?: it else it }
+
     private fun toState(snapshot: Snapshot): NowPlayingState? {
         val controller = snapshot.controller
         val metadata = snapshot.metadata ?: return null
         val title = titleOf(metadata) ?: return null
-        val subtitle = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
-            ?: metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
-            ?: metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
-            ?: ""
-        val pkg = controller.packageName.let { if (it == ownPackage) debugAlias ?: it else it }
+        val subtitle = subtitleOf(metadata)
+        val pkg = ownerOf(controller)
         // Only what is shown: an album arriving a moment after the title must not replay the track change.
         val trackKey = "$pkg|$title|$subtitle"
         val thumb = snapshot.thumb

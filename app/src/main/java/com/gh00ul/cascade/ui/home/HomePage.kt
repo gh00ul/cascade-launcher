@@ -102,6 +102,8 @@ fun HomePage(
     mediaResting: Boolean,
     onOpenMedia: () -> Unit,
     onHideMedia: () -> Unit,
+    /** Above the favorites, where a temporary player goes: listen mode's Resume row, while it shows. */
+    resume: @Composable () -> Unit = {},
     onboarding: @Composable () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -149,6 +151,7 @@ fun HomePage(
         onboarding()
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.height(32.dp))
+        resume()
 
         // The playing app's favorite row becomes the player; if it isn't a favorite, a temporary row sits on top.
         val hostKey = media?.let { m -> favorites.firstOrNull { it.packageName == m.packageName && !it.isWork }?.key }

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.res.Configuration
 import com.gh00ul.cascade.data.AppRepository
 import com.gh00ul.cascade.data.Prefs
+import com.gh00ul.cascade.notifications.LastPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,7 @@ class LauncherApplication : Application() {
         super.onCreate()
         prefs = Prefs(this)
         repository = AppRepository(this, prefs, scope)
+        LastPlayer.init(this)
     }
 
     // The repository outlives the activity, which a language or display size change merely recreates.

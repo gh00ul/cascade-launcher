@@ -16,6 +16,7 @@ internal val SettingsIndex = listOf(
     SettingEntry("Renamed apps", SettingsScreen.RENAMED, keywords = "rename name label reset"),
     SettingEntry("Notification previews", SettingsScreen.HOME, "previews", "notifications messages dot latest"),
     SettingEntry("Music player", SettingsScreen.HOME, "media", "music media controls player song playing"),
+    SettingEntry("Resume with headphones", SettingsScreen.HOME, "resume", "listen mode bluetooth earbuds spotify music continue"),
 
     SettingEntry("Text color", SettingsScreen.LOOK, "textColor", "white dark light contrast automatic readable"),
     SettingEntry("Wallpaper dimming", SettingsScreen.LOOK, "dim", "darken dim scrim readability readable background"),

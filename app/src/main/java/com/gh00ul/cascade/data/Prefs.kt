@@ -85,6 +85,8 @@ data class LauncherSettings(
     val showWeather: Boolean = false,
     val weatherPlace: WeatherPlace? = null,
     val tempUnit: TempUnit = TempUnit.AUTO,
+    /** Listen mode: with headphones connected and nothing playing, offer to resume the app that played last. */
+    val resumePrompt: Boolean = true,
 )
 
 class Prefs(context: Context) {
@@ -144,6 +146,7 @@ class Prefs(context: Context) {
         showWeather = sp.getBoolean(SHOW_WEATHER, false),
         weatherPlace = sp.getString(WEATHER_PLACE, null)?.let(::parsePlace),
         tempUnit = sp.getString(TEMP_UNIT, null)?.let { name -> TempUnit.entries.firstOrNull { it.name == name } } ?: TempUnit.AUTO,
+        resumePrompt = sp.getBoolean(RESUME_PROMPT, true),
     )
 
     private fun write(s: LauncherSettings) {
@@ -179,6 +182,7 @@ class Prefs(context: Context) {
             .putBoolean(SHOW_WEATHER, s.showWeather)
             .putString(WEATHER_PLACE, s.weatherPlace?.let(::placeJson))
             .putString(TEMP_UNIT, s.tempUnit.name)
+            .putBoolean(RESUME_PROMPT, s.resumePrompt)
             .apply()
     }
 
@@ -214,6 +218,7 @@ class Prefs(context: Context) {
         const val SHOW_WEATHER = "show_weather"
         const val WEATHER_PLACE = "weather_place"
         const val TEMP_UNIT = "temp_unit"
+        const val RESUME_PROMPT = "resume_prompt"
     }
 }
 

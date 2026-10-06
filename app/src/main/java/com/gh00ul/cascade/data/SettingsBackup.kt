@@ -52,6 +52,7 @@ object SettingsBackup {
         // {name, lat, lon} as Prefs stores it, or null for no place; put(key, null) would drop the key instead.
         .put("weatherPlace", settings.weatherPlace?.let { JSONObject(placeJson(it)) } ?: JSONObject.NULL)
         .put("tempUnit", settings.tempUnit.name)
+        .put("resumePrompt", settings.resumePrompt)
         .toString(2)
 
     /** [current] with every field the backup carries replaced; null when [json] isn't a Cascade settings backup. */
@@ -108,6 +109,7 @@ object SettingsBackup {
                 else -> current.weatherPlace
             },
             tempUnit = root.enum("tempUnit", TempUnit.entries) ?: current.tempUnit,
+            resumePrompt = root.bool("resumePrompt") ?: current.resumePrompt,
         )
     }
 
@@ -157,6 +159,7 @@ object SettingsBackup {
         LauncherSettings::showWeather,
         LauncherSettings::weatherPlace,
         LauncherSettings::tempUnit,
+        LauncherSettings::resumePrompt,
     )
 
     /** "6 favorites (now 5)"; null when both are empty. The same count with other contents still reads "now". */

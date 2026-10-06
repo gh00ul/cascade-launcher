@@ -100,6 +100,12 @@ internal fun HomeScreenPage(
             SwitchRow("Music player", "The playing app's row turns into a player", settings.showMediaControls, key = "media") { on ->
                 prefs.update { it.copy(showMediaControls = on) }
             }
+            SwitchRow(
+                "Resume with headphones",
+                "With headphones connected and nothing playing, offers to resume the app that played last",
+                settings.resumePrompt,
+                key = "resume",
+            ) { on -> prefs.update { it.copy(resumePrompt = on) } }
         }
     }
 }

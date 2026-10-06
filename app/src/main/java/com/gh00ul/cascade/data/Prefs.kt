@@ -29,6 +29,21 @@ enum class TempUnit { AUTO, CELSIUS, FAHRENHEIT }
 /** Where the weather is for: a place picked in Settings, by name and coordinates. */
 data class WeatherPlace(val name: String, val latitude: Double, val longitude: Double)
 
+/** A folder on the home screen: its name, and its apps' keys in order. */
+data class Folder(val name: String, val apps: List<String>)
+
+/**
+ * A favorites entry that is a folder rather than an app: this prefix, then the folder's id, a key into
+ * [LauncherSettings.folders].
+ */
+const val FOLDER_PREFIX = "folder:"
+
+/** Widget stack entries besides Android app widgets ("app:<appWidgetId>"). */
+const val WIDGET_CALENDAR = "calendar"
+const val WIDGET_WEATHER = "weather"
+const val WIDGET_APP_PREFIX = "app:"
+const val MAX_STACK_WIDGETS = 4
+
 /** Icon sizes in dp for the home screen favorites and the A–Z list. */
 enum class IconSize(val homeDp: Int, val listDp: Int) {
     SMALL(32, 28),
@@ -87,6 +102,14 @@ data class LauncherSettings(
     val tempUnit: TempUnit = TempUnit.AUTO,
     /** Listen mode: with headphones connected and nothing playing, offer to resume the app that played last. */
     val resumePrompt: Boolean = true,
+    /** Folders by id; each sits in [favorites] as [FOLDER_PREFIX] + id. */
+    val folders: Map<String, Folder> = emptyMap(),
+    /** The widget stack on home, in swipe order, at most [MAX_STACK_WIDGETS]: [WIDGET_CALENDAR], [WIDGET_WEATHER] or [WIDGET_APP_PREFIX] + an app widget id. Empty: no stack. */
+    val widgetStack: List<String> = emptyList(),
+    /** Search answers arithmetic ("24*7", "20% of 85") inline. */
+    val searchCalculator: Boolean = true,
+    /** Search finds contacts too, to call or text; needs READ_CONTACTS. */
+    val searchContacts: Boolean = false,
 )
 
 class Prefs(context: Context) {
@@ -147,6 +170,10 @@ class Prefs(context: Context) {
         weatherPlace = sp.getString(WEATHER_PLACE, null)?.let(::parsePlace),
         tempUnit = sp.getString(TEMP_UNIT, null)?.let { name -> TempUnit.entries.firstOrNull { it.name == name } } ?: TempUnit.AUTO,
         resumePrompt = sp.getBoolean(RESUME_PROMPT, true),
+        folders = sp.getString(FOLDERS, null)?.let(::parseFolders) ?: emptyMap(),
+        widgetStack = sp.getString(WIDGET_STACK, null)?.let(::parseList)?.take(MAX_STACK_WIDGETS) ?: emptyList(),
+        searchCalculator = sp.getBoolean(SEARCH_CALCULATOR, true),
+        searchContacts = sp.getBoolean(SEARCH_CONTACTS, false),
     )
 
     private fun write(s: LauncherSettings) {
@@ -183,6 +210,10 @@ class Prefs(context: Context) {
             .putString(WEATHER_PLACE, s.weatherPlace?.let(::placeJson))
             .putString(TEMP_UNIT, s.tempUnit.name)
             .putBoolean(RESUME_PROMPT, s.resumePrompt)
+            .putString(FOLDERS, foldersJson(s.folders))
+            .putString(WIDGET_STACK, JSONArray(s.widgetStack).toString())
+            .putBoolean(SEARCH_CALCULATOR, s.searchCalculator)
+            .putBoolean(SEARCH_CONTACTS, s.searchContacts)
             .apply()
     }
 
@@ -219,8 +250,29 @@ class Prefs(context: Context) {
         const val WEATHER_PLACE = "weather_place"
         const val TEMP_UNIT = "temp_unit"
         const val RESUME_PROMPT = "resume_prompt"
+        const val FOLDERS = "folders"
+        const val WIDGET_STACK = "widget_stack"
+        const val SEARCH_CALCULATOR = "search_calculator"
+        const val SEARCH_CONTACTS = "search_contacts"
     }
 }
+
+/** Folders as a JSON object: id to {name, apps: [...]}. SettingsBackup stores them the same way. */
+internal fun foldersJson(folders: Map<String, Folder>): String = JSONObject().apply {
+    for ((id, folder) in folders) put(id, JSONObject().put("name", folder.name).put("apps", JSONArray(folder.apps)))
+}.toString()
+
+/** The folders in [json]; a malformed one is skipped, and an unreadable file reads as none. */
+internal fun parseFolders(json: String): Map<String, Folder> = runCatching {
+    val obj = JSONObject(json)
+    buildMap {
+        for (id in obj.keys()) {
+            val f = obj.optJSONObject(id) ?: continue
+            val apps = f.optJSONArray("apps") ?: continue
+            put(id, Folder(f.optString("name"), List(apps.length()) { apps.optString(it) }.filter { it.isNotEmpty() }.distinct()))
+        }
+    }
+}.getOrDefault(emptyMap())
 
 /** A [WeatherPlace] as a JSON object (name, lat, lon); SettingsBackup stores it the same way. */
 internal fun placeJson(place: WeatherPlace): String =

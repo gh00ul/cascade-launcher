@@ -93,6 +93,14 @@ internal fun HomeScreenPage(
                 onClick = { nav.go(SettingsScreen.RENAMED) },
             )
         }
+        SettingsGroup("Widgets") {
+            SettingRow(
+                title = "Widget stack",
+                summary = if (settings.widgetStack.isEmpty()) "None yet. Add calendar, weather or app widgets under the clock."
+                else count(settings.widgetStack.size, "widget", "widgets") + " · swipe between them on home",
+                onClick = { nav.go(SettingsScreen.WIDGETS) },
+            )
+        }
         SettingsGroup("Rows") {
             SwitchRow("Notification previews", "The latest notification under each favorite", settings.showNotificationPreviews, key = "previews") { on ->
                 prefs.update { it.copy(showNotificationPreviews = on) }

@@ -38,6 +38,7 @@ enum class SettingsScreen(val title: String) {
     ADD_FAVORITE("Add a favorite"),
     HIDDEN("Hidden apps"),
     RENAMED("Renamed apps"),
+    WIDGETS("Widgets"),
     LOOK("Appearance"),
     CLOCK("Clock & glance"),
     GESTURES("Gestures"),
@@ -50,7 +51,7 @@ enum class SettingsScreen(val title: String) {
     val parent: SettingsScreen?
         get() = when (this) {
             MAIN -> null
-            FAVORITES, HIDDEN, RENAMED -> HOME
+            FAVORITES, HIDDEN, RENAMED, WIDGETS -> HOME
             ADD_FAVORITE -> FAVORITES
             else -> MAIN
         }
@@ -143,6 +144,7 @@ internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
                 SettingsScreen.ADD_FAVORITE -> AddFavoritePage(settings, apps, icons, nav)
                 SettingsScreen.HIDDEN -> HiddenAppsPage(settings, apps, icons, nav)
                 SettingsScreen.RENAMED -> RenamedAppsPage(settings, apps, icons, nav)
+                SettingsScreen.WIDGETS -> WidgetsPage(settings, nav)
                 SettingsScreen.LOOK -> AppearancePage(settings, favorites, icons, nav)
                 SettingsScreen.CLOCK -> ClockPage(settings, favorites, icons, nav)
                 SettingsScreen.GESTURES -> GesturesPage(settings, nav)

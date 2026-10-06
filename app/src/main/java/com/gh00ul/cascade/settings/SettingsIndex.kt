@@ -14,6 +14,8 @@ internal val SettingsIndex = listOf(
     SettingEntry("Favorites", SettingsScreen.FAVORITES, keywords = "home apps reorder order add remove pin drag"),
     SettingEntry("Hidden apps", SettingsScreen.HIDDEN, keywords = "hide unhide show app list"),
     SettingEntry("Renamed apps", SettingsScreen.RENAMED, keywords = "rename name label reset"),
+    SettingEntry("Widgets", SettingsScreen.WIDGETS, keywords = "widget stack calendar agenda weather forecast app widgets"),
+    SettingEntry("Folders", SettingsScreen.FAVORITES, keywords = "folder group pop-up popup organize"),
     SettingEntry("Notification previews", SettingsScreen.HOME, "previews", "notifications messages dot latest"),
     SettingEntry("Music player", SettingsScreen.HOME, "media", "music media controls player song playing"),
     SettingEntry("Resume with headphones", SettingsScreen.HOME, "resume", "listen mode bluetooth earbuds spotify music continue"),
@@ -44,6 +46,8 @@ internal val SettingsIndex = listOf(
     SettingEntry("Search the web", SettingsScreen.SEARCH, "searchWeb", "internet google browser web"),
     SettingEntry("Hidden apps in search", SettingsScreen.SEARCH, "hiddenInSearch", "hidden find"),
     SettingEntry("Open single match", SettingsScreen.SEARCH, "autoLaunch", "launch automatically instant open"),
+    SettingEntry("Calculator", SettingsScreen.SEARCH, "calculator", "math calculate sum arithmetic percent"),
+    SettingEntry("Contacts in search", SettingsScreen.SEARCH, "contacts", "people call text message phone number"),
 
     SettingEntry("Back up settings", SettingsScreen.BACKUP, "backup", "export save file copy"),
     SettingEntry("Restore settings", SettingsScreen.BACKUP, "restore", "import load file new phone"),

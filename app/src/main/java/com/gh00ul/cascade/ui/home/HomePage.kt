@@ -104,6 +104,8 @@ fun HomePage(
     onHideMedia: () -> Unit,
     /** Above the favorites, where a temporary player goes: listen mode's Resume row, while it shows. */
     resume: @Composable () -> Unit = {},
+    /** Under the clock and any card: the widget stack, when it has widgets. */
+    widgets: @Composable () -> Unit = {},
     onboarding: @Composable () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -149,6 +151,7 @@ fun HomePage(
         ClockHeader(settings, Modifier.padding(horizontal = 8.dp))
         Spacer(Modifier.height(20.dp))
         onboarding()
+        widgets()
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.height(32.dp))
         resume()

@@ -53,6 +53,11 @@ object SettingsBackup {
         .put("weatherPlace", settings.weatherPlace?.let { JSONObject(placeJson(it)) } ?: JSONObject.NULL)
         .put("tempUnit", settings.tempUnit.name)
         .put("resumePrompt", settings.resumePrompt)
+        .put("folders", JSONObject(foldersJson(settings.folders)))
+        // Android app widgets are bound to this install's widget ids, which mean nothing elsewhere: only Cascade's own.
+        .put("widgetStack", JSONArray(settings.widgetStack.filterNot { it.startsWith(WIDGET_APP_PREFIX) }))
+        .put("searchCalculator", settings.searchCalculator)
+        .put("searchContacts", settings.searchContacts)
         .toString(2)
 
     /** [current] with every field the backup carries replaced; null when [json] isn't a Cascade settings backup. */
@@ -110,6 +115,15 @@ object SettingsBackup {
             },
             tempUnit = root.enum("tempUnit", TempUnit.entries) ?: current.tempUnit,
             resumePrompt = root.bool("resumePrompt") ?: current.resumePrompt,
+            folders = (root.opt("folders") as? JSONObject)?.let { parseFolders(it.toString()) } ?: current.folders,
+            // The current app widgets stay (they're this install's); the backup's own widgets replace the rest.
+            widgetStack = root.strings("widgetStack")?.let { restored ->
+                (restored.filter { it == WIDGET_CALENDAR || it == WIDGET_WEATHER } + current.widgetStack.filter { it.startsWith(WIDGET_APP_PREFIX) })
+                    .distinct().take(MAX_STACK_WIDGETS)
+            } ?: current.widgetStack,
+            searchCalculator = root.bool("searchCalculator") ?: current.searchCalculator,
+            // Only with the permission still to ask for: restoring can't grant it.
+            searchContacts = root.bool("searchContacts") ?: current.searchContacts,
         )
     }
 
@@ -160,6 +174,10 @@ object SettingsBackup {
         LauncherSettings::weatherPlace,
         LauncherSettings::tempUnit,
         LauncherSettings::resumePrompt,
+        LauncherSettings::folders,
+        LauncherSettings::widgetStack,
+        LauncherSettings::searchCalculator,
+        LauncherSettings::searchContacts,
     )
 
     /** "6 favorites (now 5)"; null when both are empty. The same count with other contents still reads "now". */

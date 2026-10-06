@@ -59,6 +59,8 @@ and Android won't update an app across a key change.
   Tap it to pick up where you left off; long-press for "Not now" until the next time headphones connect.
 - **Dark text on light wallpapers.** Text, icons and the status bar switch to dark automatically when your
   wallpaper is light. You can also force white or dark text in settings.
+- **Portrait only.** Home and Settings stay upright when the phone turns, and on a tablet too: held sideways, home
+  stays a portrait column over your wallpaper.
 - **Long-press menu.** Pops from the row you're holding, the moment the long press lands, with the app's icon and
   name, round buttons for what you reach for most (favorite, rename, app info, uninstall), its notifications,
   shortcuts (loaded while your finger is still down, so they're there on the first frame) and the rest (folders,

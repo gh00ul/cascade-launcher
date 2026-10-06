@@ -30,6 +30,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Cascade">
 
+        <!-- Portrait only, tablet included: Android 16 ignores an app's orientation on screens 600 dp and wider unless
+             it opts out like this (allowed while targeting API 36). -->
+        <property
+            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+            android:value="true" />
+
         <activity
             android:name=".MainActivity"
             android:clearTaskOnLaunch="true"
@@ -38,8 +44,10 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:resumeWhilePausing="true"
+            android:screenOrientation="portrait"
             android:stateNotNeeded="true"
-            android:windowSoftInputMode="adjustResize|stateHidden">
+            android:windowSoftInputMode="adjustResize|stateHidden"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
@@ -52,9 +60,11 @@
             android:name=".settings.SettingsActivity"
             android:exported="false"
             android:label="@string/settings_title"
+            android:screenOrientation="portrait"
             android:taskAffinity="com.gh00ul.cascade.settings"
             android:theme="@style/Theme.Cascade.Settings"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity" />
 
         <receiver
             android:name=".update.InstallResultReceiver"

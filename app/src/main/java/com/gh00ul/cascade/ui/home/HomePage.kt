@@ -2,15 +2,6 @@ package com.gh00ul.cascade.ui.home
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.key
 import com.gh00ul.cascade.notifications.NowPlayingState
 import android.app.AlarmManager
@@ -77,6 +68,7 @@ import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.ui.common.rememberEntry
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.sendFromLauncher
 import java.text.SimpleDateFormat
@@ -168,15 +160,13 @@ fun HomePage(
         }
         AnimatedVisibility(
             visible = floating != null,
-            enter = expandVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Bottom) +
-                fadeIn(tween(220, 90)),
-            exit = shrinkVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), shrinkTowards = Alignment.Bottom) +
-                fadeOut(tween(90)),
+            enter = Motion.ExpandUp,
+            exit = Motion.CollapseDown,
         ) {
             val sessionId = lastFloating.value?.sessionId ?: return@AnimatedVisibility
             AnimatedContent(
                 targetState = sessionId,
-                transitionSpec = { (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using SizeTransform(clip = true) },
+                transitionSpec = { Motion.swap() },
                 label = "floatingPlayer",
             ) { id ->
                 val held = remember { Latest<NowPlayingState>() }
@@ -198,10 +188,8 @@ fun HomePage(
         // first load it trusts the stored keys so it doesn't flash.
         AnimatedVisibility(
             visible = showFavoritesHint,
-            enter = expandVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Bottom) +
-                fadeIn(tween(220, 90)),
-            exit = shrinkVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), shrinkTowards = Alignment.Bottom) +
-                fadeOut(tween(90)),
+            enter = Motion.ExpandUp,
+            exit = Motion.CollapseDown,
         ) {
             Column(Modifier.padding(horizontal = 8.dp)) {
                 Text("No favorites yet", style = style.app)
@@ -218,10 +206,7 @@ fun HomePage(
                 val lastHosted = remember { Latest<NowPlayingState>() }.also { if (hosting) it.value = media }
                 AnimatedContent(
                     targetState = hosting,
-                    transitionSpec = {
-                        (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using
-                            SizeTransform(clip = true) { _, _ -> spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow) }
-                    },
+                    transitionSpec = { Motion.swap() },
                     label = "favorite",
                 ) { hosted ->
                     val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null

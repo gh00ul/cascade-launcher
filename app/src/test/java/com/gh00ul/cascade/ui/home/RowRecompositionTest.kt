@@ -4,15 +4,22 @@ import android.app.Application
 import android.content.ComponentName
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.IconImage
@@ -65,6 +72,8 @@ class RowRecompositionTest {
     /** Runs of a composable that reads the whole icon map, and of one that reads the whole notifications map. */
     private var iconMapRuns = 0
     private var notificationMapRuns = 0
+    /** Keys of the rows tapped. */
+    private val launched = ArrayList<String>()
     // Made once, so the rows' modifier stays equal across recompositions. composed is the point: lint's "unnecessary"
     // is about factories that call no composables, but this one counts how often the factory runs.
     @Suppress("UnnecessaryComposedModifier")
@@ -117,6 +126,55 @@ class RowRecompositionTest {
         assertEquals(before[b.key], rowRuns[b.key])
     }
 
+    /** The press shrink and the ripple run in modifier nodes, so a tap draws without recomposing its row. */
+    @Test fun aPressDoesNotRecomposeTheRow() {
+        show()
+        val before = runs()
+
+        // Shorter than a long press, so it's a tap.
+        compose.onNodeWithText(a.label).performTouchInput {
+            down(center)
+            advanceEventTime(100)
+            up()
+        }
+        compose.waitForIdle()
+
+        assertEquals("The tap reached the row", listOf(a.key), launched)
+        assertEquals(before, runs())
+    }
+
+    /**
+     * Binding a row (as the list does for each row a fling scrolls in) builds no ripple and no press listener: clickable
+     * builds the row's indication on its first press, and keeps it for the next.
+     */
+    @Test fun aRowBuildsItsIndicationOnItsFirstPressOnly() {
+        var built = 0
+        val counting = object : IndicationNodeFactory {
+            override fun create(interactionSource: InteractionSource): DelegatableNode {
+                built++
+                return object : Modifier.Node() {}
+            }
+            override fun equals(other: Any?) = other === this
+            override fun hashCode() = 0
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalIndication provides counting) {
+                Column { for (app in listOf(a, b)) ProbedRow(app) }
+            }
+        }
+        compose.waitForIdle()
+        assertEquals("Bound rows", 0, built)
+
+        repeat(2) {
+            compose.onNodeWithText(a.label).performTouchInput {
+                down(center)
+                up()
+            }
+            compose.waitForIdle()
+            assertEquals("Built on the first press only", 1, built)
+        }
+    }
+
     private fun show() {
         compose.setContent {
             Column {
@@ -138,7 +196,7 @@ class RowRecompositionTest {
         showIcon = true,
         iconSize = 40.dp,
         expanded = false,
-        onLaunch = { _, _ -> },
+        onLaunch = { launchedApp, _ -> launched += launchedApp.key },
         onLongPress = {},
         onOpenNotification = { _, _ -> },
         onToggleExpand = {},

@@ -1,6 +1,18 @@
 package com.gh00ul.cascade.ui.home
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Transition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -35,11 +47,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,8 +64,10 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
@@ -64,7 +81,11 @@ import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.searchApps
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.util.LauncherActions
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.min
 
 /** The search pills' start padding inside the pill: tight with icons, where [SearchGlyph] centers the glyph itself. */
 internal fun searchPillStart(showIcons: Boolean) = if (showIcons) 8.dp else 16.dp
@@ -89,12 +110,57 @@ private val EnterTargetShape = RoundedCornerShape(16.dp)
 /** A soft tint on the row that Go opens, the same shape as the rows' press ripple. */
 private fun Modifier.enterTarget(content: Color) = background(content.copy(alpha = 0.08f), EnterTargetShape)
 
+/** The pill drops in from a little above as search opens, and lifts away, shorter and quicker, as it closes. */
+private val PillEnter = slideInVertically(tween(Motion.SCREEN, easing = Motion.Decelerate)) { -it / 3 } +
+    fadeIn(tween(Motion.ENTER, easing = Motion.Decelerate))
+private val PillExit = slideOutVertically(tween(Motion.QUICK, easing = Motion.Accelerate)) { -it / 6 } + fadeOut(tween(Motion.EXIT))
+
+/** How much a predictive back gesture shrinks and dims the overlay at full progress. */
+private const val OverlayBackShrink = 0.08f
+private const val OverlayBackDim = 0.2f
+
 /**
- * Full-screen search. Hidden apps still show up here. Enter opens the top hit, or searches the web; that row is
- * tinted while there's a query.
+ * The home screen's alpha under search, from the search transition (target: open): it gets out of the way quickly as
+ * search fades in over it, and fades back in as search closes. Read it only while drawing.
  */
 @Composable
-fun SearchOverlay(
+internal fun Transition<Boolean>.animateHomeAlpha(): State<Float> =
+    animateFloat(transitionSpec = { if (targetState) Motion.LayerFadeOut else Motion.LayerFadeIn }, label = "homeAlpha") { open ->
+        if (open) 0f else 1f
+    }
+
+/**
+ * The first results after search opens fade in one row after another; anything later (another query, a row scrolled
+ * in) shows at once, so typing never waits on an animation. Each row asks once, when it is first composed.
+ */
+private class ResultsStagger {
+    /** The first non-empty results since search opened. */
+    var batch: List<AppEntry>? = null
+    /** Set a frame after [batch] is first laid out. */
+    var done = false
+
+    /** The fade-in delay of the row at [index] of [results], or -1 to show it at once. */
+    fun delayFor(results: List<AppEntry>, index: Int) =
+        if (done || results !== batch) -1 else min(index, Motion.STAGGER_ROWS) * Motion.STAGGER
+}
+
+/** Fades a result row in, [delay] ms after it is first composed (a spec delay, so it scales); negative shows it as is. */
+@Composable
+private fun Modifier.staggered(delay: Int): Modifier {
+    if (delay < 0) return this
+    val fade = remember { Animatable(0f) }
+    LaunchedEffect(fade) { fade.animateTo(1f, tween(Motion.ENTER, delay, Motion.Decelerate)) }
+    return graphicsLayer { alpha = fade.value }
+}
+
+/**
+ * Full-screen search, inside the AnimatedVisibility of LauncherScreen's search transition: the pill drops in as it
+ * opens, and the first results fade in one after another. Hidden apps still show up here. Enter opens the top hit, or
+ * searches the web; that row is tinted while there's a query. On Android 13+ the overlay shrinks with a predictive
+ * back gesture, and closes from there.
+ */
+@Composable
+fun AnimatedVisibilityScope.SearchOverlay(
     apps: List<AppEntry>,
     icons: Map<String, IconImage>,
     showIcons: Boolean,
@@ -105,10 +171,25 @@ fun SearchOverlay(
 ) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val focus = remember { FocusRequester() }
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query, apps) { searchApps(apps, query) }
     val style = LocalLauncherStyle.current
+    val scope = rememberCoroutineScope()
+    // False from the moment search starts to close, while it still fades out.
+    val open = transition.targetState == EnterExitState.Visible
+    // 0 at rest; follows a predictive back gesture. Read only in the overlay's layer.
+    val backProgress = remember { Animatable(0f) }
+    val stagger = remember { ResultsStagger() }
+    if (stagger.batch == null && results.isNotEmpty()) stagger.batch = results
+    stagger.batch?.let { batch ->
+        // Not at once: on a device this would run before the first results are laid out, and none would fade.
+        LaunchedEffect(batch) {
+            withFrameNanos {}
+            stagger.done = true
+        }
+    }
 
     fun submit() {
         val top = results.firstOrNull()
@@ -120,15 +201,43 @@ fun SearchOverlay(
         }
     }
 
-    BackHandler(onBack = onDismiss)
-    LaunchedEffect(Unit) {
-        focus.requestFocus()
-        keyboard?.show()
+    if (Build.VERSION.SDK_INT >= 33) {
+        PredictiveBackHandler(enabled = open) { events ->
+            try {
+                events.collect { backProgress.snapTo(it.progress) }
+            } catch (e: CancellationException) {
+                // This coroutine is cancelled, so the spring back is launched outside it.
+                if (backProgress.value != 0f) scope.launch { backProgress.animateTo(0f, Motion.SwipeBack) }
+                throw e
+            }
+            // The exit fades the overlay out from where the gesture left it.
+            onDismiss()
+        }
+    } else {
+        BackHandler(enabled = open, onBack = onDismiss)
+    }
+    // Typing starts at once, and the keyboard goes as soon as search starts to close, not once it has faded out.
+    LaunchedEffect(open) {
+        if (open) {
+            focus.requestFocus()
+            keyboard?.show()
+            // Reopened while closing after a back gesture: grow back from where it was.
+            if (backProgress.value != 0f) backProgress.animateTo(0f, Motion.SwipeBack)
+        } else {
+            focusManager.clearFocus()
+            keyboard?.hide()
+        }
     }
 
     Box(
         Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                val p = backProgress.value
+                scaleX = 1f - OverlayBackShrink * p
+                scaleY = 1f - OverlayBackShrink * p
+                alpha = 1f - OverlayBackDim * p
+            }
             // A pane for TalkBack; it also keeps the home screen underneath out of reach.
             .semantics { paneTitle = "Search" }
             .background(style.scrim.copy(alpha = 0.94f))
@@ -147,6 +256,7 @@ fun SearchOverlay(
                 color = style.content.copy(alpha = 0.12f),
                 contentColor = style.content,
                 modifier = Modifier
+                    .animateEnterExit(PillEnter, PillExit)
                     .fillMaxWidth()
                     // The results' side inset, so the field's edges line up with the rows below.
                     .padding(horizontal = 20.dp)
@@ -195,6 +305,7 @@ fun SearchOverlay(
             }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp)) {
                 itemsIndexed(results, key = { _, app -> app.key }) { index, app ->
+                    val delay = remember { stagger.delayFor(results, index) }
                     AppRow(
                         app = app,
                         icon = icons[app.key],
@@ -207,13 +318,16 @@ fun SearchOverlay(
                         onLongClick = { onLongPress(app) },
                         onNotificationClick = {},
                         // Go opens the top hit; a blank query has no results, so this is only ever set with a query.
-                        modifier = if (index == 0) Modifier.enterTarget(style.content) else Modifier,
+                        modifier = Modifier.staggered(delay).then(if (index == 0) Modifier.enterTarget(style.content) else Modifier),
                     )
                 }
                 if (query.isNotBlank()) {
                     item(key = "web") {
+                        // Last of the first results, when it comes with them.
+                        val delay = remember { stagger.delayFor(results, results.size) }
                         Row(
                             Modifier
+                                .staggered(delay)
                                 .fillMaxWidth()
                                 // With no app hits, Go searches the web.
                                 .then(if (results.isEmpty()) Modifier.enterTarget(style.content) else Modifier)

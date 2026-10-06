@@ -18,7 +18,7 @@ Cascade is the home screen, so its process lives all day: behind every other app
 | `Updater` | Home resume, with auto-check on | At most once per 6 h after a completed check (a 404 counts) and once per 30 min after any attempt. Downloads only on a tap. | Nothing |
 | `InstallResultReceiver` (manifest) | PackageInstaller result | Fires only during an install | Same |
 | `FakeMediaReceiver` (debug builds only) | adb broadcast | Only when triggered from adb | Same |
-| Compose | State changes | No infinite transitions or animation loops. The only indeterminate indicators are the buffering ring (stops after 10 s) and the download bar while an update the user started has no size yet. | Recomposition and frames pause at ON_STOP. Coroutines, receivers and Handler callbacks don't. |
+| Compose | State changes | No infinite transitions or animation loops. The only indeterminate indicators are the buffering ring (stops after 10 s) and the download bar while an update the user started has no size yet. Motion is finite and runs only after an event: the return settle (on each ON_START after a stop, not on the replayed first one), row and player presses, swipes, chips coming and going, search opening and closing (the first results fade in once per open), cards and notifications expanding, the clock style switch, the alphabet wave while touched, and the list or search following a predictive back gesture. Timer chips change their digits in place, with no animation per tick, and their width snaps; other chips' width glides only when their text gets wider or narrower. None of it runs while home is idle, and every spec is scaled by the system animator duration scale, so Remove animations makes it instant. | Recomposition and frames pause at ON_STOP. Coroutines, receivers and Handler callbacks don't. |
 
 ## Rules for new code
 
@@ -29,6 +29,7 @@ Cascade is the home screen, so its process lives all day: behind every other app
 - Coalesce bursty system events.
 - Use the network only on explicit triggers, with backoff.
 - Every tick redraws the list's offscreen fade layer, so keep tickers rare.
+- Animate with the specs in `ui/theme/Motion.kt`. Motion is finite and starts from an event, never loops. Read animated values only in `graphicsLayer` or draw lambdas (or a `Modifier.Node`'s draw), so frames redraw without recomposing. Time motion with spec delays (`tween(delayMillis = …)`), never `delay()`: only specs are scaled by the animator duration scale.
 
 ## Tests
 
@@ -36,3 +37,5 @@ Cascade is the home screen, so its process lives all day: behind every other app
 - `NotificationStoreTest`: a paused store regroups once on resume, timers still emit while paused, and no-op callbacks don't emit.
 - `UpdaterTest`: the 6-hour and 30-minute check intervals.
 - `AppRepositoryTest`: icon rendering never runs more renders at once than its threads, and a superseded or cancelled reload stops rendering and publishing.
+- `MotionSettleTest`: home at rest and after each event (a tap, a press held past the long press, a row swipe, an alphabet drag, search opening and closing, notifications expanding and collapsing, a clock style switch, a timer chip coming and going) stops asking for frames and stays idle a second later; a press shrinks a row until it's released; the return settle plays only on a start after a stop; a predictive back gesture shrinks search, springs it back when cancelled and closes it when committed. With the animator duration scale at 0, the settle and search finish within a few frames, and a row press within two.
+- `ListBackHandlerTest`: switched off, back falls through to the activity's own callback; on, a back gesture shrinks the list, springs it back when cancelled, and when committed goes back once and eases the list back.

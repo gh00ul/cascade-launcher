@@ -1,5 +1,6 @@
 package com.gh00ul.cascade.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,6 +56,7 @@ import com.gh00ul.cascade.settings.SettingsActivity
 import com.gh00ul.cascade.settings.SettingsScreen
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.common.ExtraIcons
+import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.util.AppShortcut
 import com.gh00ul.cascade.util.LauncherActions
 import kotlinx.coroutines.Dispatchers
@@ -170,14 +172,18 @@ internal fun AppActionsContent(
             }
         }
 
-        if (shortcuts.isNotEmpty()) {
-            SheetLabel("Shortcuts")
-            for (shortcut in shortcuts) {
-                SheetRow(
-                    onClick = { onShortcut(shortcut) },
-                    headline = { Text(shortcut.label) },
-                    leading = { AppIcon(shortcut.icon, 28.dp) },
-                )
+        // Shortcuts load after the sheet opens, so they grow it instead of jumping in. The last list stays for the exit.
+        val lastShortcuts = remember { Latest<List<AppShortcut>>() }.also { if (shortcuts.isNotEmpty()) it.value = shortcuts }
+        AnimatedVisibility(shortcuts.isNotEmpty(), enter = Motion.ExpandDown, exit = Motion.CollapseUp) {
+            Column {
+                SheetLabel("Shortcuts")
+                for (shortcut in lastShortcuts.value.orEmpty()) {
+                    SheetRow(
+                        onClick = { onShortcut(shortcut) },
+                        headline = { Text(shortcut.label) },
+                        leading = { AppIcon(shortcut.icon, 28.dp) },
+                    )
+                }
             }
         }
 

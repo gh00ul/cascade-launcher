@@ -1,5 +1,7 @@
 package com.gh00ul.cascade.screenshots
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -45,9 +47,11 @@ import com.gh00ul.cascade.ui.home.HomePage
 import com.gh00ul.cascade.ui.home.ListAppRow
 import com.gh00ul.cascade.ui.home.SearchOverlay
 import com.gh00ul.cascade.ui.home.SectionHeader
+import com.gh00ul.cascade.ui.home.animateHomeAlpha
 import com.gh00ul.cascade.ui.home.homeScrim
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.ui.theme.colorScheme
 import kotlinx.coroutines.launch
 
@@ -162,7 +166,9 @@ internal const val FIRST_APP_ROW = 2
  * LauncherScreen's layout with its state passed in: the scrim, the home page, the A–Z list, the alphabet strip and
  * search. LauncherScreen itself reads the app repository through `context.launcher`, which these tests don't start.
  * The scrim and the list rows are LauncherScreen's own (`homeScrim`, `ListAppRow`), fed the same per-entry states.
- * Insets are zero under Robolectric, so they are left out. Callbacks do nothing.
+ * Search comes and goes on the same transition as LauncherScreen's, which also fades the list and the strip; at rest
+ * it draws as it always did. Insets are zero under Robolectric, so they are left out. Callbacks do nothing, except
+ * [onSearchDismiss] (search's back and taps outside), for tests that close search the way a user would.
  */
 @Composable
 internal fun HomeScreen(
@@ -177,6 +183,7 @@ internal fun HomeScreen(
     onboarding: @Composable () -> Unit = {},
     firstItem: Int = 0,
     searchOpen: Boolean = false,
+    onSearchDismiss: () -> Unit = {},
 ) {
     val style = LocalLauncherStyle.current
     val density = LocalDensity.current
@@ -193,6 +200,8 @@ internal fun HomeScreen(
         buildMap { rows.forEachIndexed { i, row -> if (row is ListRow.Section && row.letter !in this) put(row.letter, i + FIRST_APP_ROW) } }
     }
     val letters = remember(letterRows) { letterRows.keys.toList() }
+    val searchTransition = updateTransition(searchOpen, label = "search")
+    val listAlpha = searchTransition.animateHomeAlpha()
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val homeHeight = maxHeight
@@ -211,7 +220,7 @@ internal fun HomeScreen(
                 // Hidden under search, as in LauncherScreen.
                 .graphicsLayer {
                     compositingStrategy = CompositingStrategy.Offscreen
-                    alpha = if (searchOpen) 0f else 1f
+                    alpha = listAlpha.value
                 },
             contentPadding = PaddingValues(bottom = 16.dp),
         ) {
@@ -261,15 +270,22 @@ internal fun HomeScreen(
             }
         }
 
-        if (letters.isNotEmpty() && !searchOpen) {
-            AlphabetWave(
-                letters = letters,
-                onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
+        if (letters.isNotEmpty()) {
+            searchTransition.AnimatedVisibility(
+                visible = { open -> !open },
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(0.8f),
-            )
+                enter = Motion.LayerIn,
+                exit = Motion.LayerOut,
+            ) {
+                AlphabetWave(
+                    letters = letters,
+                    onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
+                    modifier = Modifier.fillMaxHeight(),
+                )
+            }
         }
 
-        if (searchOpen) {
+        searchTransition.AnimatedVisibility(visible = { open -> open }, enter = Motion.LayerIn, exit = Motion.LayerOut) {
             SearchOverlay(
                 apps = apps,
                 icons = icons,
@@ -277,7 +293,7 @@ internal fun HomeScreen(
                 iconSize = settings.iconSize.listDp.dp,
                 onLaunch = { _, _ -> },
                 onLongPress = {},
-                onDismiss = {},
+                onDismiss = onSearchDismiss,
             )
         }
     }

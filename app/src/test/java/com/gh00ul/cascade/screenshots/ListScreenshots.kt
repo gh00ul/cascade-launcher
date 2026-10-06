@@ -1,7 +1,11 @@
 package com.gh00ul.cascade.screenshots
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.testing.FakeNotifications
 import org.junit.Test
@@ -22,6 +26,24 @@ class ListScreenshots : ScreenshotTest() {
 
     /** Scrolled to the list: full scrim, section letters, and the strip at rest on the end edge. */
     @Test fun alphabetWaveIdle() = snap("AlphabetWave_Idle") {
+        HomeScreen(settings, apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)
+    }
+
+    /**
+     * A finger held on M: the letters around it swell toward the list over the glow, M takes the accent, and the list
+     * has jumped to M. The capture waits for the wave to settle with the finger still down.
+     */
+    @Test fun alphabetWaveDragging() = snap(
+        "AlphabetWave_Dragging",
+        afterContent = {
+            onNodeWithContentDescription("Alphabet index").performTouchInput {
+                // The finger held for the variant before is still down on this root: lift it, or down() is refused.
+                if (currentPosition() != null) up()
+                // 16 letters in 22dp slots: the strip's middle falls between K and L, and M's middle is a slot and a half below.
+                down(center + Offset(0f, 33.dp.toPx()))
+            }
+        },
+    ) {
         HomeScreen(settings, apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)
     }
 }

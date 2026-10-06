@@ -2,18 +2,17 @@ package com.gh00ul.cascade.ui.home
 
 import com.gh00ul.cascade.update.Updater
 import android.app.Activity
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.LocalContentColor
@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -76,6 +77,7 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.AppEntry
@@ -91,12 +93,15 @@ import com.gh00ul.cascade.ui.common.rememberEntry
 import com.gh00ul.cascade.ui.common.rememberReplaySkip
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.ui.theme.colorScheme
 import com.gh00ul.cascade.ui.theme.rememberWallpaperSupportsDarkText
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.sendFromLauncher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 
 /** Index of the first A–Z row: the home page and the all-apps header come before it. */
 private const val FIRST_APP_ROW = 2
@@ -186,6 +191,84 @@ internal fun Modifier.homeScrim(scrim: Color, progress: () -> Float) = drawWithC
     }
 }
 
+/** How much smaller the list starts when home settles in, and how far its alpha starts below 1 (it never vanishes). */
+private const val SettleShrink = 0.05f
+private const val SettleFade = 0.7f
+/** The share of the settle by which the list is fully opaque again; the rest only finishes the scale. */
+private const val SettleOpaqueBy = 0.6f
+/** Around the favorites, so the rows you reach for move least while the rest of the list grows in around them. */
+private val SettleOrigin = TransformOrigin(0.5f, 0.75f)
+/** How much a predictive back gesture shrinks the list at full progress. */
+private const val ListBackShrink = 0.04f
+
+/**
+ * Home settling in as you come back to it: runs 0 to 1 over [Motion.Settle] on each ON_START after a stop (an app
+ * closed, the screen turned on), read only in the list's layer. Not on the first composition (the start that composing
+ * replays is skipped), a recomposition, or a pause without a stop (a dialog-like activity on top), so a cold start and
+ * the role dialog don't play it. It starts undispatched, so the first frame after a return already draws the start.
+ */
+@Composable
+internal fun rememberReturnSettle(): Animatable<Float, AnimationVector1D> {
+    val settle = remember { Animatable(1f) }
+    val replayedStart = rememberReplaySkip(Lifecycle.State.STARTED)
+    val scope = rememberCoroutineScope()
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        if (!replayedStart.consume()) {
+            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                settle.snapTo(0f)
+                settle.animateTo(1f, Motion.Settle)
+            }
+        }
+    }
+    return settle
+}
+
+/**
+ * Home and back both come here. Close by and in view, the list scrolls up. Deep in the list, or while it isn't being
+ * seen (home stopped, or just back and still settling in), it jumps instead; a jump in view plays [settle] again, so
+ * the top grows in rather than cutting in.
+ */
+private suspend fun LazyListState.goToTop(settle: Animatable<Float, AnimationVector1D>, lifecycle: Lifecycle) {
+    val seen = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && !settle.isRunning
+    if (seen && firstVisibleItemIndex <= 4) {
+        animateScrollToItem(0)
+    } else {
+        scrollToItem(0)
+        if (seen) {
+            settle.snapTo(0f)
+            settle.animateTo(1f, Motion.Settle)
+        }
+    }
+}
+
+/**
+ * Back on the home screen while there is somewhere to go back to: [enabled] is read here, so only this recomposes as
+ * it flips. On Android 13+ a predictive back gesture shrinks the list a little ([scale], read in its layer) as it's
+ * dragged; letting go runs [onBack] and eases the list back, and cancelling springs it back.
+ */
+@Composable
+internal fun ListBackHandler(enabled: () -> Boolean, scale: Animatable<Float, AnimationVector1D>, onBack: () -> Unit) {
+    val on = enabled()
+    if (Build.VERSION.SDK_INT >= 33) {
+        val scope = rememberCoroutineScope()
+        PredictiveBackHandler(on) { events ->
+            try {
+                events.collect { scale.snapTo(1f - ListBackShrink * it.progress) }
+            } catch (e: CancellationException) {
+                // This coroutine is cancelled, so the spring back is launched outside it.
+                if (scale.value != 1f) scope.launch { scale.animateTo(1f, Motion.SwipeBack) }
+                throw e
+            }
+            // Nothing here suspends: onBack disables this handler, which would cancel the rest. A plain back (no
+            // gesture) left the scale alone and has nothing to ease.
+            onBack()
+            if (scale.value != 1f) scope.launch { scale.animateTo(1f, Motion.Settle) }
+        }
+    } else {
+        BackHandler(on, onBack)
+    }
+}
+
 /**
  * One continuous list, like Niagara: the home page (clock + favorites) fills the first screen and the full
  * A–Z app list continues below it. The alphabet wave on the right edge jumps anywhere in the list.
@@ -207,7 +290,14 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Both read only in the list's layer: the settle on each return home, and a predictive back gesture's shrink.
+    val settle = rememberReturnSettle()
+    val backScale = remember { Animatable(1f) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    // Drives search fading in over the home screen, and the list and alphabet strip getting out of its way.
+    val searchTransition = updateTransition(searchOpen, label = "search")
+    val listAlpha = searchTransition.animateHomeAlpha()
     var sheetApp by remember { mutableStateOf<AppEntry?>(null) }
     var renameApp by remember { mutableStateOf<AppEntry?>(null) }
     var homeMenuOpen by remember { mutableStateOf(false) }
@@ -326,14 +416,19 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             homeMenuOpen = false
             expandedKey = null
             // Its own coroutine: a touch that interrupts the scroll would otherwise end this collector for good.
-            scope.launch { if (listState.firstVisibleItemIndex > 4) listState.scrollToItem(0) else listState.animateScrollToItem(0) }
+            scope.launch { listState.goToTop(settle, lifecycle) }
         }
     }
-    // Back is always ours on the home screen: before Android 12 the default finishes the home activity.
-    BackHandler(enabled = !searchOpen) {
-        expandedKey = null
-        if (!atTop) scope.launch { listState.animateScrollToItem(0) }
-    }
+    // Back closes an open row and goes to the top. With nothing to do it falls through to MainActivity's own callback,
+    // which keeps it on the home screen: before Android 12 the default finishes the home activity.
+    ListBackHandler(
+        enabled = { !searchOpen && (expandedKey != null || !atTop) },
+        scale = backScale,
+        onBack = {
+            expandedKey = null
+            scope.launch { listState.goToTop(settle, lifecycle) }
+        },
+    )
 
     val swipeDownAction by rememberUpdatedState(settings.swipeDownAction)
     val pullDown = remember {
@@ -369,9 +464,16 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     .then(if (searchOpen) Modifier.clearAndSetSemantics {} else Modifier)
                     .nestedScroll(pullDown)
                     // Fade rows out as they slide under the status bar. Hidden under search, whose scrim is see-through.
+                    // Settling in after a return, it grows from a little smaller and fainter around the favorites; a
+                    // back gesture shrinks it. At rest every factor here is exactly 1.
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
-                        alpha = if (searchOpen) 0f else 1f
+                        val s = settle.value
+                        val scale = (1f - SettleShrink * (1f - s)) * backScale.value
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = SettleOrigin
+                        alpha = listAlpha.value * (1f - SettleFade * (1f - s / SettleOpaqueBy).coerceAtLeast(0f))
                     }
                     // Redrawn on every scroll frame; the gradient is built once per size.
                     .drawWithCache {
@@ -424,10 +526,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                             // (download, install) change in place under one key.
                             AnimatedContent(
                                 targetState = cardSlot,
-                                transitionSpec = {
-                                    (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using
-                                        SizeTransform(clip = true) { _, _ -> spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow) }
-                                },
+                                transitionSpec = { Motion.swap() },
                                 label = "homeCard",
                             ) { slot ->
                                 when (slot) {
@@ -492,22 +591,30 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     .height(statusTop + 16.dp)
                     .drawWithCache {
                         val scrim = Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.5f), Color.Transparent))
-                        onDrawBehind { drawRect(scrim, alpha = if (searchOpen) 0f else progress()) }
+                        onDrawBehind { drawRect(scrim, alpha = progress() * listAlpha.value) }
                     },
             )
 
-            if (letters.isNotEmpty() && !searchOpen) {
-                AlphabetWave(
-                    letters = letters,
-                    onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
+            if (letters.isNotEmpty()) {
+                // Gone while search is open, like the list under it.
+                searchTransition.AnimatedVisibility(
+                    visible = { open -> !open },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(top = statusTop, bottom = navBottom, end = endInset)
                         .fillMaxHeight(0.8f),
-                )
+                    enter = Motion.LayerIn,
+                    exit = Motion.LayerOut,
+                ) {
+                    AlphabetWave(
+                        letters = letters,
+                        onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
+                        modifier = Modifier.fillMaxHeight(),
+                    )
+                }
             }
 
-            if (searchOpen) {
+            searchTransition.AnimatedVisibility(visible = { open -> open }, enter = Motion.LayerIn, exit = Motion.LayerOut) {
                 SearchOverlay(
                     apps = apps,
                     icons = icons.value,

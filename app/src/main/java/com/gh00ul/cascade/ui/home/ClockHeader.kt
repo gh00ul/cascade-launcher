@@ -9,6 +9,13 @@ import android.os.BatteryManager
 import android.os.Build
 import android.text.format.DateFormat
 import android.text.format.DateUtils
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +67,7 @@ import com.gh00ul.cascade.notifications.LiveTimer
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.util.CalendarEvent
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.nextCalendarEvent
@@ -129,13 +137,17 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
     Column(modifier) {
         val timeFormat = remember(locale, is24h, alarmChecks) { SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale) }
         val time = timeFormat.format(Date(now))
-        when (settings.clockStyle) {
-            ClockStyle.CLASSIC -> Text(time, style = style.clock, modifier = openAlarms.endBelowBaseline())
-            ClockStyle.BOLD -> Text(time, style = style.clockBold, modifier = openAlarms.endBelowBaseline())
-            // One two-line Text, so clockStacked's line height sets the gap between hours and minutes.
-            ClockStyle.STACKED -> Column(openAlarms.clearAndSetSemantics { contentDescription = time }) {
-                val stackedFormat = remember(locale, is24h, alarmChecks) { SimpleDateFormat(if (is24h) "HH\nmm" else "hh\nmm", locale) }
-                Text(stackedFormat.format(Date(now)), style = style.clockStacked, modifier = Modifier.endBelowBaseline())
+        // Keyed on the style alone, so minute ticks update in place and only a style switch cross-fades. Not clipped
+        // while the size animates: the clock's shadow draws past the bottom edge that endBelowBaseline sets.
+        AnimatedContent(targetState = settings.clockStyle, transitionSpec = { Motion.swap(clip = false) }, label = "clockStyle") { clockStyle ->
+            when (clockStyle) {
+                ClockStyle.CLASSIC -> Text(time, style = style.clock, modifier = openAlarms.endBelowBaseline())
+                ClockStyle.BOLD -> Text(time, style = style.clockBold, modifier = openAlarms.endBelowBaseline())
+                // One two-line Text, so clockStacked's line height sets the gap between hours and minutes.
+                ClockStyle.STACKED -> Column(openAlarms.clearAndSetSemantics { contentDescription = time }) {
+                    val stackedFormat = remember(locale, is24h, alarmChecks) { SimpleDateFormat(if (is24h) "HH\nmm" else "hh\nmm", locale) }
+                    Text(stackedFormat.format(Date(now)), style = style.clockStacked, modifier = Modifier.endBelowBaseline())
+                }
             }
         }
         Text(
@@ -147,29 +159,48 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
         )
 
         val showBatteryChip = battery != null && (battery.charging || battery.level <= LOW_BATTERY)
-        if (alarm != null || timers.isNotEmpty() || event != null || showBatteryChip) {
+        // Chips fade in and out while their neighbours glide over, and the row folds away with the last one. Each keeps
+        // its last value to draw while it leaves. Chips there at first composition start at rest; the battery (read on
+        // start) and the event (queried on IO) fade in once, when they arrive.
+        val shownTimers = rememberLatest(timers.takeIf { it.isNotEmpty() })
+        val shownEvent = rememberLatest(event)
+        val shownAlarm = rememberLatest(alarm)
+        val shownBattery = rememberLatest(battery?.takeIf { showBatteryChip })
+        AnimatedVisibility(
+            visible = alarm != null || timers.isNotEmpty() || event != null || showBatteryChip,
+            enter = Motion.ExpandDown,
+            exit = Motion.CollapseUp,
+        ) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(top = 12.dp),
             ) {
-                if (timers.isNotEmpty()) TimerChips(timers)
-                event?.let { e ->
-                    val (title, whenText, spokenWhen) = eventText(e, now, is24h, locale)
-                    InfoChip(ExtraIcons.Event, title, "Next event: $title, $spokenWhen", "Open event", trailing = whenText) {
-                        LauncherActions.openCalendarEvent(context, e.id, e.begin, e.end)
+                AnimatedVisibility(timers.isNotEmpty(), enter = ChipIn, exit = ChipOut) {
+                    shownTimers?.let { TimerChips(it) }
+                }
+                AnimatedVisibility(event != null, enter = ChipIn, exit = ChipOut) {
+                    shownEvent?.let { e ->
+                        val (title, whenText, spokenWhen) = eventText(e, now, is24h, locale)
+                        InfoChip(ExtraIcons.Event, title, "Next event: $title, $spokenWhen", "Open event", trailing = whenText) {
+                            LauncherActions.openCalendarEvent(context, e.id, e.begin, e.end)
+                        }
                     }
                 }
-                if (alarm != null) {
-                    val (text, spoken) = alarmText(alarm.triggerTime, now, is24h, locale)
-                    InfoChip(ExtraIcons.Alarm, text, "Alarm $spoken", "Open alarms") {
-                        // That exact alarm when the clock app offers it, else the alarm list.
-                        if (alarm.showIntent?.sendFromLauncher(context) != true) LauncherActions.openAlarms(context)
+                AnimatedVisibility(alarm != null, enter = ChipIn, exit = ChipOut) {
+                    shownAlarm?.let { a ->
+                        val (text, spoken) = alarmText(a.triggerTime, now, is24h, locale)
+                        InfoChip(ExtraIcons.Alarm, text, "Alarm $spoken", "Open alarms") {
+                            // That exact alarm when the clock app offers it, else the alarm list.
+                            if (a.showIntent?.sendFromLauncher(context) != true) LauncherActions.openAlarms(context)
+                        }
                     }
                 }
-                if (showBatteryChip && battery != null) {
-                    val (text, spoken) = batteryText(battery)
-                    InfoChip(if (battery.charging) ExtraIcons.Bolt else ExtraIcons.BatteryAlert, text, spoken, null, accent = !battery.charging) {}
+                AnimatedVisibility(showBatteryChip, enter = ChipIn, exit = ChipOut) {
+                    shownBattery?.let { b ->
+                        val (text, spoken) = batteryText(b)
+                        InfoChip(if (b.charging) ExtraIcons.Bolt else ExtraIcons.BatteryAlert, text, spoken, null, accent = !b.charging) {}
+                    }
                 }
             }
         }
@@ -177,6 +208,14 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
 }
 
 private const val LOW_BATTERY = 15
+
+/** A chip arriving or leaving: it fades while its width opens from, or closes to, its start edge. */
+private val ChipIn: EnterTransition = expandHorizontally(Motion.Size, Alignment.Start) + Motion.FadeIn
+private val ChipOut: ExitTransition = shrinkHorizontally(Motion.Size, Alignment.Start) + Motion.FadeOut
+
+/** [value], or while it's null the last non-null one, so a chip that's leaving still has something to draw. */
+@Composable
+private fun <T : Any> rememberLatest(value: T?): T? = remember { Latest<T>() }.also { if (value != null) it.value = value }.value
 
 /** From the digits' baseline to the bottom of the clock; the date's own space above its capitals adds about 4dp. */
 private val ClockToDate = 9.dp
@@ -195,7 +234,8 @@ private fun Modifier.endBelowBaseline() = layout { measurable, constraints ->
 
 /**
  * A pill with an icon and a label. [text] is ellipsized when space runs out; [trailing] (a time) never is.
- * TalkBack reads [description] instead of the raw text.
+ * TalkBack reads [description] instead of the raw text. When the text gets wider or narrower, the width glides there
+ * if [animateSize].
  */
 @Composable
 private fun InfoChip(
@@ -205,6 +245,7 @@ private fun InfoChip(
     clickLabel: String?,
     trailing: String? = null,
     accent: Boolean = false,
+    animateSize: Boolean = true,
     onClick: () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -214,6 +255,9 @@ private fun InfoChip(
             .background(style.scrim.copy(alpha = 0.30f))
             .then(if (clickLabel != null) Modifier.clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onClick) else Modifier)
             .semantics { contentDescription = description }
+            // Inside the pill's clip and background, so they follow the width. Off for timer chips: their text changes
+            // every second, and with a font that ignores tnum the width would glide on every tick.
+            .then(if (animateSize) Modifier.animateContentSize(Motion.Size) else Modifier)
             .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -232,7 +276,11 @@ private fun InfoChip(
     }
 }
 
-/** Running clocks from notifications, ticking every second while home is visible. */
+/**
+ * Running clocks from notifications, ticking every second while home is visible. The digits change in place, with no
+ * animation per tick: that would draw frames every second for as long as a timer runs.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TimerChips(timers: List<LiveTimer>) {
     val context = LocalContext.current
@@ -246,18 +294,22 @@ private fun TimerChips(timers: List<LiveTimer>) {
             }
         }
     }
-    for (timer in timers) {
-        val seconds = (if (timer.countDown) timer.base - now else now - timer.base).coerceAtLeast(0) / 1_000
-        val time = DateUtils.formatElapsedTime(seconds)
-        val label = timer.title.takeIf { it.isNotEmpty() && it.length <= 18 }
-        val kind = if (timer.countDown) "remaining" else "elapsed"
-        InfoChip(
-            ExtraIcons.Timer,
-            text = label ?: time,
-            description = listOfNotNull(label, "${spokenDuration(seconds * 1_000)} $kind").joinToString(", "),
-            clickLabel = "Open",
-            trailing = if (label != null) time else null,
-        ) { timer.contentIntent?.sendFromLauncher(context) }
+    // The timers arrive and leave together, as one chip; inside, they still wrap like the chips around them.
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (timer in timers) {
+            val seconds = (if (timer.countDown) timer.base - now else now - timer.base).coerceAtLeast(0) / 1_000
+            val time = DateUtils.formatElapsedTime(seconds)
+            val label = timer.title.takeIf { it.isNotEmpty() && it.length <= 18 }
+            val kind = if (timer.countDown) "remaining" else "elapsed"
+            InfoChip(
+                ExtraIcons.Timer,
+                text = label ?: time,
+                description = listOfNotNull(label, "${spokenDuration(seconds * 1_000)} $kind").joinToString(", "),
+                clickLabel = "Open",
+                trailing = if (label != null) time else null,
+                animateSize = false,
+            ) { timer.contentIntent?.sendFromLauncher(context) }
+        }
     }
 }
 

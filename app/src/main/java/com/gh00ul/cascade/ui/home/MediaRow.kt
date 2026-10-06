@@ -6,23 +6,18 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -105,6 +100,7 @@ import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.Motion
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.min
@@ -195,11 +191,12 @@ fun MediaRow(
     val haptics = LocalHapticFeedback.current
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val target = remember(state.artSeed, style, monochrome) { mediaColors(state.artSeed, style, monochrome) }
-    val washStart by animateColorAsState(target.washStart, tween(600), label = "washStart")
-    val washEnd by animateColorAsState(target.washEnd, tween(600), label = "washEnd")
-    val button by animateColorAsState(target.button, tween(600), label = "button")
-    val onButton by animateColorAsState(target.onButton, tween(600), label = "onButton")
-    val line by animateColorAsState(target.line, tween(600), label = "line")
+    val washStart by animateColorAsState(target.washStart, tween(Motion.BLEND), label = "washStart")
+    val washEnd by animateColorAsState(target.washEnd, tween(Motion.BLEND), label = "washEnd")
+    val button by animateColorAsState(target.button, tween(Motion.BLEND), label = "button")
+    val onButton by animateColorAsState(target.onButton, tween(Motion.BLEND), label = "onButton")
+    val line by animateColorAsState(target.line, tween(Motion.BLEND), label = "line")
+    // No Motion match for the pause dim: it follows a tap, so it is quicker than the art's BLEND, but a QUICK one flashes.
     val washAlpha by animateFloatAsState(if (state.isPaused) 0.6f else 1f, tween(400), label = "washAlpha")
 
     var skipDir by remember { mutableIntStateOf(0) }
@@ -231,6 +228,7 @@ fun MediaRow(
     val restFraction = if (resting && state.hasDuration) {
         (state.positionAt(SystemClock.elapsedRealtime()).toFloat() / state.durationMs).coerceIn(0f, 1f)
     } else null
+    val press = rememberPressIndication()
 
     Column(modifier.fillMaxWidth()) {
         Column(
@@ -255,6 +253,9 @@ fun MediaRow(
                     .rowSwipe(onSwipeRight = onToggleExpand.takeIf { hasNotifications }, onSwipeLeft = next.takeIf { state.canSkipNext })
                     .clip(if (tier2) PlayerTopShape else PlayerShape)
                     .combinedClickable(
+                        // Built on the first press, as on AppRow.
+                        interactionSource = null,
+                        indication = press ?: LocalIndication.current,
                         onClickLabel = "Open player",
                         onLongClickLabel = onLongClickLabel,
                         hapticFeedbackEnabled = false,
@@ -266,6 +267,9 @@ fun MediaRow(
                         },
                         onClick = onOpen,
                     )
+                    // After the clickable, so the ripple still fills the card's shape; the play/pause button has its own
+                    // clickable, so pressing it doesn't shrink the row.
+                    .pressScale(press)
                     .semantics {
                         contentDescription = listOfNotNull(state.title, state.subtitle.ifEmpty { null }, appLabel).joinToString(", ")
                         val playback = when {
@@ -321,10 +325,8 @@ fun MediaRow(
             }
             AnimatedVisibility(
                 visible = tier2,
-                enter = expandVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Top) +
-                    fadeIn(tween(180, 60)),
-                exit = shrinkVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), shrinkTowards = Alignment.Top) +
-                    fadeOut(tween(90)),
+                enter = Motion.ExpandDown,
+                exit = Motion.CollapseUp,
             ) {
                 Row(
                     Modifier
@@ -358,8 +360,8 @@ fun MediaRow(
         }
         AnimatedVisibility(
             visible = expanded && hasNotifications,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
+            enter = Motion.ExpandDown,
+            exit = Motion.CollapseUp,
         ) {
             // The title's x: 4dp padding, the art (iconSize + 8dp) and its 12dp gap; 8dp padding without art.
             ExpandedNotifications(notifications, textStart = if (showArt) iconSize + 24.dp else 8.dp, onOpen = onNotificationClick)
@@ -379,10 +381,11 @@ private fun TrackText(state: NowPlayingState, appLabel: String?, scrubMs: Long?,
         transitionSpec = {
             val dir = if (rtl) -skipDir else skipDir
             if (dir == 0) {
-                fadeIn(tween(220, 60)) togetherWith fadeOut(tween(120))
+                Motion.swap()
             } else {
-                (slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { dir * it / 6 } + fadeIn(tween(220, 60))) togetherWith
-                    (slideOutHorizontally(tween(200, easing = FastOutLinearInEasing)) { -dir * it / 6 } + fadeOut(tween(120)))
+                // Each slide runs with its fade: the new title decelerates in from the skip's side, the old one leaves fast.
+                (slideInHorizontally(tween(Motion.ENTER, Motion.EXIT, Motion.Decelerate)) { dir * it / 6 } + Motion.FadeIn) togetherWith
+                    (slideOutHorizontally(tween(Motion.EXIT, easing = Motion.Accelerate)) { -dir * it / 6 } + Motion.FadeOut)
             }
         },
         contentAlignment = Alignment.CenterStart,
@@ -394,7 +397,7 @@ private fun TrackText(state: NowPlayingState, appLabel: String?, scrubMs: Long?,
             // Keyed on whether a scrub is running, not its value, so each drag step updates the readout in place.
             AnimatedContent(
                 targetState = scrubMs,
-                transitionSpec = { (fadeIn(tween(120)) togetherWith fadeOut(tween(120))) using null },
+                transitionSpec = { (fadeIn(tween(Motion.QUICK)) togetherWith fadeOut(tween(Motion.QUICK))) using null },
                 label = "subtitle",
                 contentKey = { it != null },
             ) { scrub ->
@@ -412,7 +415,8 @@ private fun TrackText(state: NowPlayingState, appLabel: String?, scrubMs: Long?,
 private fun MediaArt(art: ImageBitmap?, icon: IconImage?, showDot: Boolean, monochrome: Boolean, size: Dp) {
     val style = LocalLauncherStyle.current
     Box {
-        Crossfade(art, animationSpec = tween(300), label = "art") { bitmap ->
+        // Both arts show at once, so the crossfade spans a whole swap (EXIT, then ENTER) rather than splitting into the two.
+        Crossfade(art, animationSpec = tween(Motion.EXIT + Motion.ENTER), label = "art") { bitmap ->
             when {
                 bitmap != null -> Image(
                     bitmap,
@@ -484,7 +488,7 @@ private fun PlayPauseButton(state: NowPlayingState, container: Color, content: C
             .semantics { contentDescription = if (paused) "Play" else "Pause" },
         contentAlignment = Alignment.Center,
     ) {
-        Crossfade(paused, animationSpec = tween(150), label = "playPause") { isPaused ->
+        Crossfade(paused, animationSpec = tween(Motion.QUICK), label = "playPause") { isPaused ->
             Icon(if (isPaused) ExtraIcons.Play else ExtraIcons.Pause, contentDescription = null, tint = content, modifier = Modifier.size(24.dp))
         }
         if (ring) {
@@ -534,7 +538,7 @@ private fun SeekBar(state: NowPlayingState, line: Color, track: Color, onScrub: 
     }
     val duration = state.durationMs.toFloat()
     val shown = (scrub ?: pending?.toFloat() ?: position.toFloat()).coerceIn(0f, duration)
-    val thumbRadius by animateDpAsState(if (scrub != null) 8.dp else 4.dp, tween(120), label = "thumb")
+    val thumbRadius by animateDpAsState(if (scrub != null) 8.dp else 4.dp, tween(Motion.QUICK), label = "thumb")
     Slider(
         value = shown,
         onValueChange = {

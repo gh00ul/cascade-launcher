@@ -3,18 +3,16 @@ package com.gh00ul.cascade.ui.home
 import android.text.format.DateUtils
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,20 +33,29 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.node.DelegatableNode
+import androidx.compose.ui.node.DelegatingNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -68,6 +75,8 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.ui.theme.Motion
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -112,6 +121,7 @@ fun AppRow(
     val showDot = notifications.any { it.showBadge }
     val canExpand = hasNotifications && onToggleExpand != null
     val showExpanded = expanded && hasNotifications
+    val press = rememberPressIndication()
 
     Column(modifier.fillMaxWidth()) {
         Row(
@@ -121,6 +131,11 @@ fun AppRow(
                 .onPlaced { bounds.coordinates = it }
                 .clip(RowShape)
                 .combinedClickable(
+                    // No interaction source of our own, so clickable builds the ripple and the press listener on the
+                    // row's first press, not each time the row is bound.
+                    interactionSource = null,
+                    // The ripple stays as the press darken; pressScale adds the shrink.
+                    indication = press ?: LocalIndication.current,
                     // The long-press haptic is fired by hand below; the default would fire it twice.
                     hapticFeedbackEnabled = false,
                     onLongClickLabel = "App options",
@@ -130,6 +145,9 @@ fun AppRow(
                         onLongClick()
                     },
                 )
+                // After the clickable: the ripple fills the row's shape (and the search tint) while only the content
+                // shrinks; drawn only, so the launch still reveals from the row's real bounds.
+                .pressScale(press)
                 .semantics {
                     // The badge dot is visual only.
                     if (hasNotifications) stateDescription = notificationCount(notifications.size)
@@ -190,8 +208,8 @@ fun AppRow(
 
         AnimatedVisibility(
             visible = showExpanded,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
+            enter = Motion.ExpandDown,
+            exit = Motion.CollapseUp,
         ) {
             ExpandedNotifications(
                 notifications = notifications,
@@ -332,9 +350,9 @@ internal fun Modifier.rowSwipe(onSwipeRight: (() -> Unit)?, onSwipeLeft: (() -> 
             onDragStart = { crossed = false },
             onDragEnd = {
                 if (crossed) (if (dragX.value > 0f) right else left)?.invoke()
-                scope.launch { dragX.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow)) }
+                scope.launch { dragX.animateTo(0f, Motion.SwipeBack) }
             },
-            onDragCancel = { scope.launch { dragX.animateTo(0f) } },
+            onDragCancel = { scope.launch { dragX.animateTo(0f, Motion.SwipeBack) } },
             onHorizontalDrag = { change, amount ->
                 change.consume()
                 val hasRight = right != null
@@ -352,4 +370,78 @@ internal fun Modifier.rowSwipe(onSwipeRight: (() -> Unit)?, onSwipeLeft: (() -> 
             },
         )
     }.graphicsLayer { translationX = dragX.value }
+}
+
+/** The theme's ripple with the press shrink added, one per row; null when the theme's indication isn't a node factory. */
+@Composable
+internal fun rememberPressIndication(): PressIndication? {
+    val indication = LocalIndication.current
+    return remember(indication) { (indication as? IndicationNodeFactory)?.let(::PressIndication) }
+}
+
+/**
+ * A row's indication: the theme [ripple], plus a listener that eases [pressed] for [pressScale] to draw. Clickable
+ * builds the node, and the interaction source it listens to, on the row's first press and drops them when the row is
+ * detached, so binding a row while scrolling builds neither.
+ */
+internal class PressIndication(private val ripple: IndicationNodeFactory) : IndicationNodeFactory {
+    /**
+     * How pressed the row is, 0 to 1, rather than the scale itself: the springs' default 0.01 visibility threshold
+     * would end each 3% change of scale with a visible snap.
+     */
+    var pressed by mutableFloatStateOf(0f)
+        private set
+
+    override fun create(interactionSource: InteractionSource): DelegatableNode = PressNode(interactionSource, ripple.create(interactionSource))
+
+    // By identity: each row has its own, holding that row's press.
+    override fun equals(other: Any?) = other === this
+    override fun hashCode() = System.identityHashCode(this)
+
+    private inner class PressNode(private val source: InteractionSource, ripple: DelegatableNode) : DelegatingNode() {
+        init {
+            delegate(ripple)
+        }
+
+        override fun onAttach() {
+            val animation = Animatable(0f)
+            // Undispatched, so it listens before clickable sends the press that built it.
+            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                source.interactions.collect { interaction ->
+                    when (interaction) {
+                        is PressInteraction.Press -> launch { animation.animateTo(1f, Motion.PressIn) { pressed = value } }
+                        is PressInteraction.Release, is PressInteraction.Cancel ->
+                            launch { animation.animateTo(0f, Motion.PressOut) { pressed = value } }
+                    }
+                }
+            }
+        }
+
+        // A row left mid-press (scrolled away, reused) must never come back shrunk.
+        override fun onDetach() {
+            pressed = 0f
+        }
+    }
+}
+
+/**
+ * Shrinks what follows it while [press] reports a press. A node reading [PressIndication.pressed] while drawing, so a
+ * press neither recomposes the row nor costs a scrolling row anything; the shrink is drawn only, leaving bounds and
+ * touch targets as they are.
+ */
+internal fun Modifier.pressScale(press: PressIndication?): Modifier = if (press == null) this else this then PressScaleElement(press)
+
+private data class PressScaleElement(val press: PressIndication) : ModifierNodeElement<PressScaleNode>() {
+    override fun create() = PressScaleNode(press)
+    override fun update(node: PressScaleNode) {
+        node.press = press
+        node.invalidateDraw()
+    }
+}
+
+private class PressScaleNode(var press: PressIndication) : Modifier.Node(), DrawModifierNode {
+    override fun ContentDrawScope.draw() {
+        val p = press.pressed
+        if (p == 0f) drawContent() else scale(1f - (1f - Motion.PRESSED_SCALE) * p) { this@draw.drawContent() }
+    }
 }

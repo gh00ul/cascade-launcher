@@ -29,6 +29,8 @@ and Android won't update an app across a key change.
   *Show less*.
 - **Glass.** Chips, cards, the widget stack and the player share one translucent look, with a hairline edge
   that catches the light, and soft washes behind the clock and favorites keep them readable on any wallpaper.
+- **Glow with the music.** While music plays, the soft shade behind your favorites takes on the album art's
+  color and blends into the next track's.
 - **Music in the row.** The playing app's favorite row turns into the player, with album art, title,
   play/pause, previous/next and a seek bar you can drag. Its colors come from the album art and stay readable
   in both text modes. Swipe the row left to skip to the next track. If the app isn't a favorite, a temporary
@@ -42,6 +44,16 @@ and Android won't update an app across a key change.
   Settings → Favorites.
 - **Calculator and contacts in search.** Type `24*7`, `20% of 85` or `(2+3)^2` and the answer shows first; tap to
   copy it. Turn on contacts in Settings → Search to find people and call or text them from search.
+- **Commands in search.** `10m` (or `1h30m`, `timer 5`) starts a timer and `7:30` (or `6pm`, `alarm 7`) sets an
+  alarm, both without opening the clock. `nav home` gets directions, `maps coffee` searches Maps, `yt lofi`,
+  `sp …`, `w …`, `r …` and `gh …` search YouTube, Spotify, Wikipedia, Reddit and GitHub, and `play …` asks your
+  music app to play it. A command never takes over an app that matches what you typed: `play store` still opens
+  the Play Store.
+- **Shortcuts and Settings in search.** Find things inside apps (`new tab`, `incognito`) and pages of the phone's
+  Settings (`hotspot`, `wi-fi`, `dnd`, `battery`).
+- **Login codes, ready to paste.** When a notification brings a verification code ("482913 is your code"), it goes
+  straight to the clipboard, marked sensitive so Android shows dots instead of the code. The code also sits on
+  the preview under the favorite as a pill you can tap to copy again. Turn it off in Settings → Home screen.
 - **Resume with headphones.** With headphones (wired, USB or Bluetooth) connected and nothing playing, a
   "Resume Spotify" row (or whichever app played last) shows above your favorites, with the track it stopped on.
   Tap it to pick up where you left off; long-press for "Not now" until the next time headphones connect.
@@ -65,6 +77,8 @@ and Android won't update an app across a key change.
   place you pick; tap it for the forecast). Chips under the date show what's next, each one optional:
   - running timers, stopwatches and calls, ticking live (from apps that use Android's standard notification
     chronometer)
+  - things under way: a ride or a delivery (Android 16 Live Updates, with their short status like "3 min"), a
+    route you're navigating, and downloads, which fill their chip as they go
   - the next alarm, with a countdown when it's less than a day away
   - the next calendar event (optional; asks for calendar access)
   - charging progress with "full in…", or a warning when the battery is low (or the level all the time)
@@ -143,7 +157,7 @@ Keep a backup of the key. If it's lost, existing installs can't be updated.
 | Notification access (optional) | Powers the notification dots and previews, and the music controls. Nothing leaves the device. |
 | `EXPAND_STATUS_BAR` | Lets swipe-down open the notification shade. |
 | `REQUEST_DELETE_PACKAGES` | Powers "Uninstall" in the app menu. |
-| `SET_ALARM` | Lets a tap on the clock open the alarm list; clock apps require it. Cascade never sets alarms. |
+| `SET_ALARM` | Lets a tap on the clock open the alarm list; clock apps require it. Cascade sets a timer or an alarm only when you run one from search. |
 | `READ_CALENDAR` (optional) | Shows the next event under the clock. Only requested when you turn that on. |
 | `INTERNET` | Only for self-update: asking GitHub for the latest release and downloading its APK. |
 | `REQUEST_INSTALL_PACKAGES`, `UPDATE_PACKAGES_WITHOUT_USER_ACTION` | Installing those updates; the second lets Android skip the confirmation once Cascade installed itself. |

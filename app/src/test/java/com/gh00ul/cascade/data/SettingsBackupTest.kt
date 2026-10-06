@@ -48,6 +48,11 @@ class SettingsBackupTest {
         showWeather = true,
         weatherPlace = WeatherPlace("Zürich", 47.3769, 8.5417),
         tempUnit = TempUnit.FAHRENHEIT,
+        showLiveUpdates = false,
+        searchCommands = false,
+        searchShortcuts = false,
+        musicGlow = false,
+        copyLoginCodes = false,
     )
 
     private fun decode(json: String, current: LauncherSettings = LauncherSettings()) = SettingsBackup.decode(json, current)

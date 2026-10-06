@@ -119,6 +119,90 @@ class NotificationStoreTest {
         assertEquals(mapOf(FakeApps.messages.notificationKey to listOf("Kept")), NotificationStore.byApp.value.mapValues { (_, v) -> v.map { it.title } })
     }
 
+    // Things under way: Live Updates, navigation and progress bars, as chips.
+
+    private fun download(title: String, progress: Int, max: Int = 100) = builder().setContentTitle(title).setOngoing(true)
+        .setProgress(max, progress, false).build()
+
+    private fun live() = NotificationStore.liveUpdates.value
+
+    @Test fun ongoingNotificationsUnderWayBecomeLiveUpdates() {
+        val route = builder().setContentTitle("Turn left onto Pike St").setContentText("4 min").setOngoing(true)
+            .setCategory(Notification.CATEGORY_NAVIGATION).build()
+        val ride = builder().setContentTitle("Driver on the way").setOngoing(true)
+            .addExtras(Bundle().apply {
+                putBoolean("android.requestPromotedOngoing", true)
+                putCharSequence("android.shortCriticalText", "3 min")
+            }).build()
+        val service = builder().setContentTitle("Tasker is running").setOngoing(true).build()
+        NotificationStore.reset(
+            arrayOf(
+                sbn("com.example.files", download("report.pdf", 42), id = 1),
+                sbn("com.example.maps", route, id = 2),
+                sbn("com.example.rides", ride, id = 3),
+                sbn("com.example.tasker", service, id = 4),
+                sbn(clock, FakeNotifications.timer(context, "Pasta", FIXED_NOW + 60_000), id = 5),
+                sbn(own, download("Update", 10), id = 6),
+            ),
+            null,
+            own,
+        )
+        val updates = live()
+        assertEquals(listOf("report.pdf", "Turn left onto Pike St", "Driver on the way"), updates.map { it.title })
+        assertEquals(listOf(LiveUpdate.Kind.PROGRESS, LiveUpdate.Kind.NAVIGATION, LiveUpdate.Kind.OTHER), updates.map { it.kind })
+        assertEquals(listOf("42%", "", "3 min"), updates.map { it.status })
+        assertEquals(42, updates[0].percent)
+        // The timer is a timer chip, and none of these is a row notification.
+        assertEquals(1, NotificationStore.timers.value.size)
+        assertTrue(NotificationStore.byApp.value.isEmpty())
+    }
+
+    @Test fun anIndeterminateProgressHasNoPercent() {
+        val syncing = builder().setContentTitle("Backing up").setOngoing(true).setProgress(0, 0, true).build()
+        NotificationStore.reset(arrayOf(sbn("com.example.photos", syncing)), null, own)
+        assertEquals(null, live().single().percent)
+        assertEquals("", live().single().status)
+    }
+
+    @Test fun minimumImportanceWorkGetsNoChip() {
+        val quiet = sbn("com.example.photos", download("Backing up", 3))
+        val r = ranking(quiet.key).apply { ReflectionHelpers.setField(this, "mImportance", android.app.NotificationManager.IMPORTANCE_MIN) }
+        NotificationStore.reset(arrayOf(quiet), rankingMap(r), own)
+        assertTrue(live().isEmpty())
+    }
+
+    @Test fun progressUpdatesInPlaceAndLeavesWhenDone() {
+        val first = sbn("com.example.files", download("report.pdf", 10))
+        NotificationStore.reset(arrayOf(first), null, own)
+        NotificationStore.posted(sbn("com.example.files", download("report.pdf", 60)), null, own)
+        assertEquals(listOf(60), live().map { it.percent })
+        val emitted = live()
+        // A repost that changes nothing a chip shows emits nothing.
+        NotificationStore.posted(sbn("com.example.files", download("report.pdf", 60)), null, own)
+        assertSame(emitted, live())
+        NotificationStore.removed(first.key, null)
+        assertTrue(live().isEmpty())
+    }
+
+    @Test fun livePostsWaitWhilePaused() {
+        NotificationStore.reset(emptyArray(), null, own)
+        NotificationStore.pause()
+        NotificationStore.posted(sbn("com.example.files", download("report.pdf", 5)), null, own)
+        NotificationStore.posted(sbn("com.example.files", download("report.pdf", 50)), null, own)
+        assertTrue("Nothing collects them while home is stopped", live().isEmpty())
+        NotificationStore.resume()
+        assertEquals(listOf(50), live().map { it.percent })
+    }
+
+    @Test fun aLoginCodeComesWithItsNotification() {
+        NotificationStore.reset(emptyArray(), null, own)
+        val posted = NotificationStore.posted(sbn(messages, message("Google", "G-482913 is your Google verification code")), null, own)
+        assertEquals("482913", posted?.code)
+        assertEquals("482913", NotificationStore.byApp.value[FakeApps.messages.notificationKey]?.single()?.code)
+        assertEquals(null, NotificationStore.posted(sbn(messages, message("Maya", "See you at 7"), id = 2), null, own)?.code)
+        assertEquals("Ongoing posts aren't row notifications", null, NotificationStore.posted(sbn(messages, download("x", 1), id = 3), null, own))
+    }
+
     @Test fun chronometerBecomesLiveTimer() {
         val endsAt = FIXED_NOW + 272_000
         NotificationStore.reset(arrayOf(sbn("com.example.clock", FakeNotifications.timer(context, "Pasta", endsAt))), null, own)

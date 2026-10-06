@@ -1,11 +1,11 @@
 package com.gh00ul.cascade.ui.home
 
 import android.content.ActivityNotFoundException
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.os.Build
+import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
@@ -25,6 +25,9 @@ import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -42,9 +45,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -55,18 +60,30 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.Calculation
+import com.gh00ul.cascade.data.Command
 import com.gh00ul.cascade.data.Contact
+import com.gh00ul.cascade.data.FoundShortcut
+import com.gh00ul.cascade.data.SettingsPage
+import com.gh00ul.cascade.data.commandIntents
 import com.gh00ul.cascade.data.contactInitial
 import com.gh00ul.cascade.data.findContacts
 import com.gh00ul.cascade.data.loadContactPhoto
+import com.gh00ul.cascade.data.loadSearchShortcuts
+import com.gh00ul.cascade.data.matchShortcuts
+import com.gh00ul.cascade.data.renderTo
+import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.util.copyToClipboard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
 
 /*
- * What search finds besides apps: the calculator's answer above them, and contacts below them.
+ * What search finds besides apps: the calculator's answer and commands, app shortcuts and Settings pages, and contacts.
  */
 
 /**
@@ -111,12 +128,8 @@ internal fun CalculationRow(calculation: Calculation, showIcon: Boolean, iconSiz
     }
 }
 
-/** Copies [calculation]'s answer. Android 13+ confirms a copy itself, showing what was copied; before that, a toast does. */
-internal fun copyAnswer(context: Context, calculation: Calculation) {
-    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
-    clipboard.setPrimaryClip(ClipData.newPlainText("Answer", calculation.plain))
-    if (Build.VERSION.SDK_INT < 33) Toast.makeText(context, "Copied ${calculation.plain}", Toast.LENGTH_SHORT).show()
-}
+/** Copies [calculation]'s answer. */
+internal fun copyAnswer(context: Context, calculation: Calculation) = copyToClipboard(context, "Answer", calculation.plain)
 
 /** A contact search found, with its photo when it has one and icons show. */
 @Immutable
@@ -236,6 +249,187 @@ internal fun startFromSearch(context: Context, intent: Intent, failure: String):
     }
     if (!started) Toast.makeText(context, failure, Toast.LENGTH_SHORT).show()
     return started
+}
+
+/*
+ * Commands, app shortcuts and Settings pages in search.
+ */
+
+/**
+ * A row of search's that isn't an app: [icon] on the icon column (or before the title without icons), [title] in the
+ * app rows' style, and [detail] under it. Tapping runs [onClick].
+ */
+@Composable
+internal fun ActionRow(
+    icon: @Composable () -> Unit,
+    title: String,
+    detail: String,
+    showIcon: Boolean,
+    iconSize: Dp,
+    clickLabel: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val style = LocalLauncherStyle.current
+    val press = rememberPressIndication()
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(EnterTargetShape)
+            .clickable(interactionSource = null, indication = press ?: LocalIndication.current, onClickLabel = clickLabel, onClick = onClick)
+            .pressScale(press)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(if (showIcon) iconSize else 24.dp), contentAlignment = Alignment.Center) { icon() }
+        Spacer(Modifier.width(if (showIcon) 16.dp else 12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = style.app, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = style.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** A glyph on an action row's icon column, in the text color a step back from full. */
+@Composable
+internal fun ActionGlyph(icon: ImageVector) {
+    Icon(icon, contentDescription = null, tint = LocalLauncherStyle.current.content.copy(alpha = 0.75f), modifier = Modifier.size(24.dp))
+}
+
+/** A command's row: what it will do, and where. [playerLabel] names the music app a [Command.Play] goes to. */
+@Composable
+internal fun CommandRow(
+    command: Command,
+    showIcon: Boolean,
+    iconSize: Dp,
+    playerLabel: String?,
+    onRun: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val locale = LocalConfiguration.current.locales[0]
+    val now = LocalNow.current()
+    val (title, detail) = when (command) {
+        is Command.Timer -> "Start a ${timerLength(command.seconds)} timer" to "Clock"
+        is Command.Alarm -> {
+            val is24h = DateFormat.is24HourFormat(context)
+            val time = SimpleDateFormat(clockPattern(locale, is24h, withDay = false), locale).format(Date(command.nextAt))
+            "Set an alarm for $time" to "Clock · in ${duration(command.nextAt - now)}"
+        }
+        is Command.Directions -> "Directions to ${command.place}" to "Maps"
+        is Command.MapSearch -> "Search Maps for “${command.query}”" to "Maps"
+        is Command.SiteSearch -> "Search ${command.site.label} for “${command.query}”" to command.site.label
+        is Command.Play -> "Play “${command.query}”" to (playerLabel ?: "Your music app")
+    }
+    val glyph = when (command) {
+        is Command.Timer -> ExtraIcons.Timer
+        is Command.Alarm -> ExtraIcons.Alarm
+        is Command.Directions -> ExtraIcons.Navigation
+        is Command.MapSearch -> Icons.Filled.Place
+        is Command.SiteSearch -> Icons.Filled.Search
+        is Command.Play -> Icons.Filled.PlayArrow
+    }
+    ActionRow({ ActionGlyph(glyph) }, title, detail, showIcon, iconSize, clickLabel = "Run", onClick = onRun, modifier = modifier)
+}
+
+/** "10 min", "1 h 30 min", "45 sec": a timer's length as its row says it. */
+internal fun timerLength(seconds: Int): String {
+    val h = seconds / 3600
+    val m = seconds % 3600 / 60
+    val s = seconds % 60
+    return listOfNotNull(
+        h.takeIf { it > 0 }?.let { "$it h" },
+        m.takeIf { it > 0 }?.let { "$it min" },
+        s.takeIf { it > 0 }?.let { "$it sec" },
+    ).joinToString(" ")
+}
+
+/**
+ * Runs [command]: the first of its intents an app takes. A timer or alarm is set without opening the clock, so a toast
+ * says it's done (and its chip shows under the clock). Returns whether something ran.
+ */
+internal fun runCommand(context: Context, command: Command, player: String?): Boolean {
+    val ran = commandIntents(command, player).any { intent ->
+        try {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (e: ActivityNotFoundException) {
+            false
+        } catch (e: SecurityException) {
+            false
+        }
+    }
+    val done = when (command) {
+        is Command.Timer -> "Timer started: ${timerLength(command.seconds)}"
+        is Command.Alarm -> "Alarm set"
+        else -> null
+    }
+    when {
+        !ran -> Toast.makeText(context, "No app can do that", Toast.LENGTH_SHORT).show()
+        done != null -> Toast.makeText(context, done, Toast.LENGTH_SHORT).show()
+    }
+    return ran
+}
+
+/** A shortcut search found, with its icon when it has one and icons show. */
+@Immutable
+internal class ShortcutResult(val shortcut: FoundShortcut, val icon: ImageBitmap?)
+
+/**
+ * App shortcuts matching [query]. They're all read once, when search opens with [enabled] on; each query then only
+ * matches them. Icons are drawn off the main thread at [iconPx] (none at 0) before the rows show, and kept for the
+ * rest of this search.
+ */
+@Composable
+internal fun rememberShortcutResults(query: String, enabled: Boolean, open: Boolean, apps: List<AppEntry>, iconPx: Int): List<ShortcutResult> {
+    val context = LocalContext.current
+    var all by remember { mutableStateOf<List<FoundShortcut>?>(null) }
+    var results by remember { mutableStateOf(emptyList<ShortcutResult>()) }
+    // Read and written on the main thread only: the IO work hands its icons back.
+    val icons = remember { HashMap<String, ImageBitmap?>() }
+    LaunchedEffect(enabled, open) {
+        if (enabled && open && all == null) all = withContext(Dispatchers.IO) { loadSearchShortcuts(context, apps) }
+    }
+    LaunchedEffect(query, all, enabled) {
+        val found = if (!enabled) emptyList() else matchShortcuts(all.orEmpty(), query)
+        val missing = if (iconPx <= 0) emptyList() else found.filter { it.id !in icons }
+        if (missing.isNotEmpty()) {
+            icons += withContext(Dispatchers.IO) {
+                val launcherApps = context.getSystemService(LauncherApps::class.java)
+                val dpi = context.resources.displayMetrics.densityDpi
+                missing.associate { s ->
+                    s.id to runCatching { launcherApps.getShortcutIconDrawable(s.info, dpi)?.renderTo(iconPx)?.asImageBitmap() }.getOrNull()
+                }
+            }
+        }
+        results = found.map { ShortcutResult(it, icons[it.id]) }
+    }
+    return results
+}
+
+/** Opens a shortcut search found; false, after a toast, when its app won't start it. */
+internal fun openShortcut(context: Context, shortcut: FoundShortcut): Boolean = try {
+    context.getSystemService(LauncherApps::class.java).startShortcut(shortcut.info, null, null)
+    true
+} catch (e: Exception) {
+    Toast.makeText(context, "Couldn't open ${shortcut.label}", Toast.LENGTH_SHORT).show()
+    false
+}
+
+/** Opens [page]: the first of its actions this phone has. */
+internal fun openSettingsPage(context: Context, page: SettingsPage): Boolean {
+    val opened = page.intents().any { intent ->
+        try {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (e: ActivityNotFoundException) {
+            false
+        } catch (e: SecurityException) {
+            false
+        }
+    }
+    if (!opened) Toast.makeText(context, "Couldn't open ${page.title}", Toast.LENGTH_SHORT).show()
+    return opened
 }
 
 /** Icons search needs that aren't in material-icons-core (paths from Material Icons, Apache 2.0). */

@@ -280,6 +280,12 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
                 prefs.update { it.copy(showTimers = on) }
             }
             SwitchRow(
+                "Live activity",
+                "Rides, deliveries, a route and downloads under way, with their progress",
+                settings.showLiveUpdates,
+                key = "live",
+            ) { on -> prefs.update { it.copy(showLiveUpdates = on) } }
+            SwitchRow(
                 "Next calendar event",
                 when {
                     calendarBlocked -> "Calendar access is blocked. Tap to allow it in App info."

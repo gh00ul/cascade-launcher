@@ -117,6 +117,16 @@ data class LauncherSettings(
     val swipeDownApp: String? = null,
     /** The app (by key) a double-tap opens, with [DoubleTapAction.OPEN_APP]. */
     val doubleTapApp: String? = null,
+    /** Things under way (rides, deliveries, a route, downloads) as chips under the clock, from their notifications. */
+    val showLiveUpdates: Boolean = true,
+    /** Search runs commands: a timer ("10m"), an alarm ("7:30"), directions ("nav home"), quick searches ("yt lofi"). */
+    val searchCommands: Boolean = true,
+    /** Search finds app shortcuts ("incognito") and Settings pages ("hotspot"). */
+    val searchShortcuts: Boolean = true,
+    /** While music plays, the wash behind the favorites takes on the album art's color. */
+    val musicGlow: Boolean = true,
+    /** A login code arriving in a notification goes straight to the clipboard. */
+    val copyLoginCodes: Boolean = true,
 )
 
 class Prefs(context: Context) {
@@ -183,6 +193,11 @@ class Prefs(context: Context) {
         searchContacts = sp.getBoolean(SEARCH_CONTACTS, false),
         swipeDownApp = sp.getString(SWIPE_DOWN_APP, null),
         doubleTapApp = sp.getString(DOUBLE_TAP_APP, null),
+        showLiveUpdates = sp.getBoolean(SHOW_LIVE_UPDATES, true),
+        searchCommands = sp.getBoolean(SEARCH_COMMANDS, true),
+        searchShortcuts = sp.getBoolean(SEARCH_SHORTCUTS, true),
+        musicGlow = sp.getBoolean(MUSIC_GLOW, true),
+        copyLoginCodes = sp.getBoolean(COPY_LOGIN_CODES, true),
     )
 
     private fun write(s: LauncherSettings) {
@@ -225,6 +240,11 @@ class Prefs(context: Context) {
             .putBoolean(SEARCH_CONTACTS, s.searchContacts)
             .putString(SWIPE_DOWN_APP, s.swipeDownApp)
             .putString(DOUBLE_TAP_APP, s.doubleTapApp)
+            .putBoolean(SHOW_LIVE_UPDATES, s.showLiveUpdates)
+            .putBoolean(SEARCH_COMMANDS, s.searchCommands)
+            .putBoolean(SEARCH_SHORTCUTS, s.searchShortcuts)
+            .putBoolean(MUSIC_GLOW, s.musicGlow)
+            .putBoolean(COPY_LOGIN_CODES, s.copyLoginCodes)
             .apply()
     }
 
@@ -267,6 +287,11 @@ class Prefs(context: Context) {
         const val SEARCH_CONTACTS = "search_contacts"
         const val SWIPE_DOWN_APP = "swipe_down_app"
         const val DOUBLE_TAP_APP = "double_tap_app"
+        const val SHOW_LIVE_UPDATES = "show_live_updates"
+        const val SEARCH_COMMANDS = "search_commands"
+        const val SEARCH_SHORTCUTS = "search_shortcuts"
+        const val MUSIC_GLOW = "music_glow"
+        const val COPY_LOGIN_CODES = "copy_login_codes"
     }
 }
 

@@ -120,6 +120,8 @@ fun HomePage(
     onReorderFavorites: ((List<String>) -> Unit)? = null,
     /** Home settling in, 0 to 1, read while placing: the favorites rise into place one after another. */
     entrance: () -> Float = { 1f },
+    /** An app's icon by package, for the clock's chips of things under way. */
+    appIcon: (String) -> IconImage? = { null },
     onboarding: @Composable () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -162,7 +164,7 @@ fun HomePage(
             }
             .padding(start = 20.dp, end = 44.dp, top = 36.dp, bottom = bottomInset + 28.dp),
     ) {
-        ClockHeader(settings, Modifier.padding(horizontal = 8.dp))
+        ClockHeader(settings, Modifier.padding(horizontal = 8.dp), appIcon)
         Spacer(Modifier.height(20.dp))
         onboarding()
         widgets()

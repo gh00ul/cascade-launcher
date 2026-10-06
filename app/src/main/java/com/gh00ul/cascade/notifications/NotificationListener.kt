@@ -23,7 +23,9 @@ class NotificationListener : NotificationListenerService() {
 
     // Apply what each callback delivers: re-reading every notification is a binder call on the main thread.
     override fun onNotificationPosted(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
-        if (sbn != null) NotificationStore.posted(sbn, rankingMap, packageName)
+        if (sbn == null) return
+        // A login code goes to the clipboard as it arrives (never for the ones already there when the listener connects).
+        NotificationStore.posted(sbn, rankingMap, packageName)?.let { offerLoginCode(this, it) }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?, rankingMap: RankingMap?) {

@@ -136,8 +136,19 @@ internal fun HomeScreenPage(
             SwitchRow("Notification previews", "The latest notification under each favorite", settings.showNotificationPreviews, key = "previews") { on ->
                 prefs.update { it.copy(showNotificationPreviews = on) }
             }
+            SwitchRow(
+                "Copy login codes",
+                "A verification code in a notification is ready to paste the moment it arrives",
+                settings.copyLoginCodes,
+                key = "codes",
+            ) { on ->
+                prefs.update { it.copy(copyLoginCodes = on) }
+            }
             SwitchRow("Music player", "The playing app's row turns into a player", settings.showMediaControls, key = "media") { on ->
                 prefs.update { it.copy(showMediaControls = on) }
+            }
+            SwitchRow("Glow with the music", "While music plays, your favorites pick up the album's color", settings.musicGlow, key = "musicGlow") { on ->
+                prefs.update { it.copy(musicGlow = on) }
             }
             SwitchRow(
                 "Resume with headphones",

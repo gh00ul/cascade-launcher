@@ -60,6 +60,11 @@ object SettingsBackup {
         .put("searchContacts", settings.searchContacts)
         .put("swipeDownApp", settings.swipeDownApp ?: JSONObject.NULL)
         .put("doubleTapApp", settings.doubleTapApp ?: JSONObject.NULL)
+        .put("showLiveUpdates", settings.showLiveUpdates)
+        .put("searchCommands", settings.searchCommands)
+        .put("searchShortcuts", settings.searchShortcuts)
+        .put("musicGlow", settings.musicGlow)
+        .put("copyLoginCodes", settings.copyLoginCodes)
         .toString(2)
 
     /** [current] with every field the backup carries replaced; null when [json] isn't a Cascade settings backup. */
@@ -131,6 +136,11 @@ object SettingsBackup {
             // A JSON null is "no app", as for the weather place.
             swipeDownApp = if (root.has("swipeDownApp")) root.opt("swipeDownApp") as? String else current.swipeDownApp,
             doubleTapApp = if (root.has("doubleTapApp")) root.opt("doubleTapApp") as? String else current.doubleTapApp,
+            showLiveUpdates = root.bool("showLiveUpdates") ?: current.showLiveUpdates,
+            searchCommands = root.bool("searchCommands") ?: current.searchCommands,
+            searchShortcuts = root.bool("searchShortcuts") ?: current.searchShortcuts,
+            musicGlow = root.bool("musicGlow") ?: current.musicGlow,
+            copyLoginCodes = root.bool("copyLoginCodes") ?: current.copyLoginCodes,
         )
     }
 
@@ -187,6 +197,11 @@ object SettingsBackup {
         LauncherSettings::searchContacts,
         LauncherSettings::swipeDownApp,
         LauncherSettings::doubleTapApp,
+        LauncherSettings::showLiveUpdates,
+        LauncherSettings::searchCommands,
+        LauncherSettings::searchShortcuts,
+        LauncherSettings::musicGlow,
+        LauncherSettings::copyLoginCodes,
     )
 
     /** "6 favorites (now 5)"; null when both are empty. The same count with other contents still reads "now". */

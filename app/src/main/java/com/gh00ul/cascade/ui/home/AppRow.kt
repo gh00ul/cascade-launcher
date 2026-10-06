@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.Icon
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +64,7 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
@@ -81,9 +83,11 @@ import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.AppIcon
+import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
+import com.gh00ul.cascade.util.copyToClipboard
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -271,7 +275,28 @@ private fun NotificationPreview(notification: AppNotification, more: Int, onClic
             Text(text, style = style.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
             if (more > 0 && onMore == null) Text("  +$more", style = style.small.copy(color = style.accent))
         }
+        notification.code?.let { CodeButton(it) }
         if (more > 0 && onMore != null) MoreButton(more, onMore)
+    }
+}
+
+/** A notification's login code as a pill: a copy glyph and the digits. Tapping copies it (again). */
+@Composable
+private fun CodeButton(code: String) {
+    val style = LocalLauncherStyle.current
+    val context = LocalContext.current
+    Row(
+        Modifier
+            .padding(start = 6.dp)
+            .clip(CircleShape)
+            .background(style.accent.copy(alpha = 0.18f))
+            .clickable(onClickLabel = "Copy code $code", role = Role.Button) { copyToClipboard(context, "Login code", code, sensitive = true) }
+            .padding(horizontal = 8.dp, vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(ExtraIcons.Copy, contentDescription = null, tint = style.accent, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(code, style = style.small.copy(color = style.accent, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"), maxLines = 1)
     }
 }
 
@@ -404,6 +429,7 @@ private fun NotificationItem(notification: AppNotification, onOpen: (AppNotifica
                     maxLines = 1,
                     modifier = Modifier.alignByBaseline(),
                 )
+                notification.code?.let { Box(Modifier.alignBy { it.measuredHeight / 2 }) { CodeButton(it) } }
             }
             if (notification.title.isNotEmpty() && notification.text.isNotEmpty()) {
                 Text(notification.text, style = style.small, maxLines = 3, overflow = TextOverflow.Ellipsis)

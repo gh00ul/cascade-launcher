@@ -12,8 +12,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -103,10 +105,12 @@ import com.gh00ul.cascade.data.newFolder
 import com.gh00ul.cascade.data.nextFolderId
 import com.gh00ul.cascade.data.renameFolder
 import com.gh00ul.cascade.data.reorderFavorites
+import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.data.SwipeDownAction
 import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.notifications.AppNotification
+import com.gh00ul.cascade.notifications.NowPlayingState
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.notifications.NowPlaying
 import com.gh00ul.cascade.settings.SettingsActivity
@@ -211,19 +215,46 @@ internal fun ListAppRow(
  * The tint over the wallpaper: light on the home page and heavier once the list covers it ([progress], read only while
  * drawing), with soft washes behind the clock and behind the favorites so both read on bright or busy wallpapers. The
  * washes fade as the list scrolls up. [dim] (Settings' wallpaper dim) is layered onto the light tint, and the list's
- * tint rises from there to its usual level, or stays at the dim if that's heavier, so the two never stack.
+ * tint rises from there to its usual level, or stays at the dim if that's heavier, so the two never stack. [glow]
+ * (read while drawing) tints the wash behind the favorites with the music's color; its gradient is rebuilt only while
+ * that color changes.
  */
-internal fun Modifier.homeScrim(scrim: Color, dim: Float, progress: () -> Float) = drawWithCache {
+internal fun Modifier.homeScrim(scrim: Color, dim: Float, progress: () -> Float, glow: () -> Color = { Color.Transparent }) = drawWithCache {
     val top = Brush.verticalGradient(listOf(scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f)
     val bottom = Brush.verticalGradient(listOf(Color.Transparent, scrim.copy(alpha = 0.28f)), startY = size.height * 0.5f, endY = size.height)
     val rest = 0.12f + 0.88f * dim
     val covered = maxOf(0.7f, rest)
+    var glowColor = Color.Transparent
+    var glowBrush: Brush? = null
     onDrawBehind {
         val p = progress()
         drawRect(scrim, alpha = rest + (covered - rest) * p)
         drawRect(top, alpha = 1f - p)
         drawRect(bottom, alpha = 1f - p)
+        val g = glow()
+        if (g.alpha > 0f && p < 1f) {
+            if (g != glowColor || glowBrush == null) {
+                glowColor = g
+                glowBrush = Brush.verticalGradient(listOf(g.copy(alpha = 0f), g), startY = size.height * 0.45f, endY = size.height)
+            }
+            drawRect(glowBrush!!, alpha = 1f - p)
+        }
     }
+}
+
+/**
+ * The music glow behind the favorites, for [homeScrim]: the playing track's color (see [glowColor]) while [media]
+ * plays and Settings allow it, blending into the next track's over [Motion.BLEND] and fading out when it stops. Read
+ * the state only while drawing.
+ */
+@Composable
+internal fun rememberMusicGlow(media: NowPlayingState?, settings: LauncherSettings, style: LauncherStyle): State<Color> {
+    val seed = media?.takeIf { settings.musicGlow && it.isPlaying }?.artSeed
+    val monochrome = settings.showIcons && settings.monochromeIcons
+    val target = remember(seed, style, monochrome) { glowColor(seed, style, monochrome) }
+    // Fading out keeps the last color, so it never passes through black on the way.
+    val last = remember { Latest<Color>() }.also { if (target != null) it.value = target }
+    return animateColorAsState(target ?: last.value?.copy(alpha = 0f) ?: Color.Transparent, tween(Motion.BLEND), label = "musicGlow")
 }
 
 /** How strongly the alphabet strip shows over home, where it rests; it rises to full as the list comes up. */
@@ -446,6 +477,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     }
 
     val byKey = remember(apps) { apps.associateBy { it.key } }
+    // The personal app for each package, for the clock's chips of things under way.
+    val keyByPackage = remember(apps) { apps.asReversed().filterNot { it.isWork }.associateBy({ it.packageName }, { it.key }) }
     // Collapse for good once the expanded row has no notifications left, so the next one doesn't reopen it by itself.
     // Watched from inside the effect, so neither expanding a row nor a regroup recomposes this whole screen.
     val currentByKey by rememberUpdatedState(byKey)
@@ -581,7 +614,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             // 0 on the home page, 1 once the app list covers the screen. Read only while drawing.
             val progress = { listState.listCover(homeHeightPx) }
 
-            Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress))
+            val glow = rememberMusicGlow(media, settings, style)
+            Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress) { glow.value })
 
             LazyColumn(
                 state = listState,
@@ -636,6 +670,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onFolderLongPress = { folderSheet = it.id },
                         onReorderFavorites = { order -> launcher.prefs.update { it.reorderFavorites(order) } },
                         entrance = { settle.value },
+                        appIcon = { pkg -> keyByPackage[pkg]?.let { icons.value[it] } },
                         onEmptyDoubleTap = emptyDoubleTap,
                         expandedKey = expandedKey,
                         onToggleExpand = toggleExpand,
@@ -819,6 +854,9 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     onDismiss = { searchOpen = false },
                     searchCalculator = settings.searchCalculator,
                     searchContacts = settings.searchContacts,
+                    searchCommands = settings.searchCommands,
+                    searchShortcuts = settings.searchShortcuts,
+                    player = lastPlayed?.packageName,
                 )
             }
         }

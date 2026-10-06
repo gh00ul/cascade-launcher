@@ -234,6 +234,18 @@ internal fun SearchPage(settings: LauncherSettings, nav: SettingsNav) {
                 prefs.update { it.copy(searchCalculator = on) }
             }
             SwitchRow(
+                "Commands",
+                "10m starts a timer, 7:30 sets an alarm, nav home gets directions, yt lofi or play a song searches the app",
+                settings.searchCommands,
+                key = "commands",
+            ) { on -> prefs.update { it.copy(searchCommands = on) } }
+            SwitchRow(
+                "Shortcuts and settings",
+                "Finds things inside apps, like incognito or a new message, and Settings pages, like Wi-Fi or hotspot",
+                settings.searchShortcuts,
+                key = "shortcuts",
+            ) { on -> prefs.update { it.copy(searchShortcuts = on) } }
+            SwitchRow(
                 "Contacts",
                 when {
                     contactsBlocked && !contactsAllowed -> "Contacts access is blocked. Tap to allow it in App info."

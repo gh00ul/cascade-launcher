@@ -44,6 +44,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -86,10 +87,14 @@ import androidx.compose.ui.unit.sp
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.calculate
+import com.gh00ul.cascade.data.Command
 import com.gh00ul.cascade.data.dialIntent
 import com.gh00ul.cascade.data.messageIntent
+import com.gh00ul.cascade.data.findSettingsPages
+import com.gh00ul.cascade.data.parseCommand
 import com.gh00ul.cascade.data.searchApps
 import com.gh00ul.cascade.data.viewIntent
+import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.util.LauncherActions
@@ -114,6 +119,9 @@ internal fun SearchGlyph(showIcons: Boolean, iconSize: Dp) {
         Spacer(Modifier.width(12.dp))
     }
 }
+
+/** What Go acts on in search, in the order it looks for one. */
+private enum class GoTarget { ANSWER, COMMAND, APP, SHORTCUT, SETTINGS, WEB, NONE }
 
 /** The rows' shape: their press ripple, and the tint on the row Go acts on. */
 internal val EnterTargetShape = RoundedCornerShape(16.dp)
@@ -173,6 +181,11 @@ private fun Modifier.staggered(delay: Int): Modifier {
  *
  * With [searchCalculator], arithmetic gets its answer above the apps, and Enter copies it. With [searchContacts]
  * (and READ_CONTACTS), up to four contacts follow the apps, looked up once typing pauses.
+ *
+ * With [searchCommands], a timer or an alarm ("10m", "7:30") shows above the apps and Go sets it; a keyword command
+ * ("nav home", "yt lofi", "play …") comes after any app that matches, so "play store" still opens the Play Store.
+ * [player] is the music app that played last, where "play …" goes first. With [searchShortcuts], app shortcuts
+ * ("incognito") and Settings pages ("hotspot") follow the apps.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -189,6 +202,9 @@ fun AnimatedVisibilityScope.SearchOverlay(
     onDismiss: () -> Unit,
     searchCalculator: Boolean = true,
     searchContacts: Boolean = false,
+    searchCommands: Boolean = true,
+    searchShortcuts: Boolean = true,
+    player: String? = null,
 ) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -197,13 +213,15 @@ fun AnimatedVisibilityScope.SearchOverlay(
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query, apps, excluded) { searchApps(apps, query, excluded) }
     val calculation = remember(query, searchCalculator) { if (searchCalculator) calculate(query) else null }
+    val command = remember(query, searchCommands) { if (searchCommands && calculation == null) parseCommand(query) else null }
+    val pages = remember(query, searchShortcuts) { if (searchShortcuts) findSettingsPages(query) else emptyList() }
     // Whether the last edit made the query longer: only typing opens a lone match, never a deletion, Clear, or a
     // query kept from before.
     var grew by remember { mutableStateOf(false) }
     if (autoLaunchSingleMatch) {
         LaunchedEffect(query) {
-            // Arithmetic is answered, never launched.
-            if (grew && calculation == null && query.trim().length >= 2) results.singleOrNull()?.let { onLaunch(it, null) }
+            // Arithmetic is answered and a timer or alarm set, never launched.
+            if (grew && calculation == null && command?.exact != true && query.trim().length >= 2) results.singleOrNull()?.let { onLaunch(it, null) }
         }
     }
     val style = LocalLauncherStyle.current
@@ -213,6 +231,23 @@ fun AnimatedVisibilityScope.SearchOverlay(
     // Photos only where icons show, at their size.
     val photoPx = if (showIcons) with(LocalDensity.current) { iconSize.roundToPx() } else 0
     val contacts = rememberContactResults(query, enabled = searchContacts, open = open, photoPx = photoPx)
+    val searchable = remember(apps, excluded) { apps.filter { it.key !in excluded } }
+    val shortcuts = rememberShortcutResults(query, enabled = searchShortcuts, open = open, apps = searchable, iconPx = photoPx)
+    val playerLabel = remember(apps, player) { player?.let { p -> apps.firstOrNull { it.packageName == p }?.label } }
+    // Opening a shortcut or a Settings page, or running a command, closes search as opening an app does.
+    val run = { command: Command -> if (runCommand(context, command, player)) onDismiss() }
+    // What Go does: copy the answer, set a timer or alarm, open the top app, run a keyword command, open the top
+    // shortcut or Settings page, or search the web. That row is tinted.
+    val target = when {
+        calculation != null -> GoTarget.ANSWER
+        command?.exact == true -> GoTarget.COMMAND
+        results.isNotEmpty() -> GoTarget.APP
+        command != null -> GoTarget.COMMAND
+        shortcuts.isNotEmpty() -> GoTarget.SHORTCUT
+        pages.isNotEmpty() -> GoTarget.SETTINGS
+        searchWeb && query.isNotBlank() -> GoTarget.WEB
+        else -> GoTarget.NONE
+    }
     // Opening a contact, the dialer or a message closes search, as opening an app does.
     val startContact = { intent: Intent, failure: String -> if (startFromSearch(context, intent, failure)) onDismiss() }
     // 0 at rest; follows a predictive back gesture. Read only in the overlay's layer.
@@ -228,15 +263,16 @@ fun AnimatedVisibilityScope.SearchOverlay(
     }
 
     fun submit() {
-        val top = results.firstOrNull()
-        if (calculation != null) {
+        when (target) {
             // An answer is what was asked for, even when an app matches too.
-            copyAnswer(context, calculation)
-        } else if (top != null) {
-            onLaunch(top, null)
-        } else if (searchWeb && query.isNotBlank()) {
+            GoTarget.ANSWER -> calculation?.let { copyAnswer(context, it) }
+            GoTarget.COMMAND -> command?.let(run)
+            GoTarget.APP -> results.firstOrNull()?.let { onLaunch(it, null) }
+            GoTarget.SHORTCUT -> shortcuts.firstOrNull()?.let { if (openShortcut(context, it.shortcut)) onDismiss() }
+            GoTarget.SETTINGS -> pages.firstOrNull()?.let { if (openSettingsPage(context, it)) onDismiss() }
             // Stays open when no app could take the search, so the query isn't lost.
-            if (LauncherActions.webSearch(context, query.trim())) onDismiss()
+            GoTarget.WEB -> if (LauncherActions.webSearch(context, query.trim())) onDismiss()
+            GoTarget.NONE -> {}
         }
     }
 
@@ -360,6 +396,11 @@ fun AnimatedVisibilityScope.SearchOverlay(
                         )
                     }
                 }
+                if (command != null && command.exact) {
+                    item(key = "command") {
+                        CommandRow(command, showIcons, iconSize, playerLabel, onRun = { run(command) }, modifier = Modifier.enterTarget(style.content))
+                    }
+                }
                 itemsIndexed(results, key = { _, app -> app.key }) { index, app ->
                     val delay = remember { stagger.delayFor(results, index) }
                     AppRow(
@@ -373,9 +414,48 @@ fun AnimatedVisibilityScope.SearchOverlay(
                         onClick = { onLaunch(app, it) },
                         onLongClick = { onLongPress(app) },
                         onNotificationClick = {},
-                        // Go opens the top hit, unless there's an answer to copy; a blank query has no results, so this
-                        // is only ever set with a query.
-                        modifier = Modifier.staggered(delay).then(if (index == 0 && calculation == null) Modifier.enterTarget(style.content) else Modifier),
+                        // Go opens the top hit, unless there's an answer to copy or a timer to set; a blank query has no
+                        // results, so this is only ever set with a query.
+                        modifier = Modifier.staggered(delay).then(if (index == 0 && target == GoTarget.APP) Modifier.enterTarget(style.content) else Modifier),
+                    )
+                }
+                if (command != null && !command.exact) {
+                    item(key = "command") {
+                        CommandRow(
+                            command,
+                            showIcons,
+                            iconSize,
+                            playerLabel,
+                            onRun = { run(command) },
+                            modifier = if (target == GoTarget.COMMAND) Modifier.enterTarget(style.content) else Modifier,
+                        )
+                    }
+                }
+                itemsIndexed(shortcuts, key = { _, it -> "shortcut:${it.shortcut.id}" }) { index, result ->
+                    ActionRow(
+                        icon = {
+                            val image = result.icon
+                            if (image != null) AppIcon(image, iconSize) else AppIcon(icons[result.shortcut.app.key], iconSize)
+                        },
+                        title = result.shortcut.label,
+                        detail = result.shortcut.app.label,
+                        showIcon = showIcons,
+                        iconSize = iconSize,
+                        clickLabel = "Open",
+                        onClick = { if (openShortcut(context, result.shortcut)) onDismiss() },
+                        modifier = if (index == 0 && target == GoTarget.SHORTCUT) Modifier.enterTarget(style.content) else Modifier,
+                    )
+                }
+                itemsIndexed(pages, key = { _, it -> "settings:${it.title}" }) { index, page ->
+                    ActionRow(
+                        icon = { ActionGlyph(Icons.Filled.Settings) },
+                        title = page.title,
+                        detail = "Settings",
+                        showIcon = showIcons,
+                        iconSize = iconSize,
+                        clickLabel = "Open",
+                        onClick = { if (openSettingsPage(context, page)) onDismiss() },
+                        modifier = if (index == 0 && target == GoTarget.SETTINGS) Modifier.enterTarget(style.content) else Modifier,
                     )
                 }
                 // They come a moment after the apps, so they show at once rather than fading in late.
@@ -397,8 +477,8 @@ fun AnimatedVisibilityScope.SearchOverlay(
                             Modifier
                                 .staggered(delay)
                                 .fillMaxWidth()
-                                // With no app hits (and no answer), Go searches the web.
-                                .then(if (results.isEmpty() && calculation == null) Modifier.enterTarget(style.content) else Modifier)
+                                // With nothing else to open, Go searches the web.
+                                .then(if (target == GoTarget.WEB) Modifier.enterTarget(style.content) else Modifier)
                                 .clip(EnterTargetShape)
                                 .clickable { if (LauncherActions.webSearch(context, query.trim())) onDismiss() }
                                 .padding(horizontal = 8.dp, vertical = 14.dp),

@@ -40,9 +40,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.AlignmentLine
 import androidx.compose.ui.layout.LastBaseline
@@ -55,6 +60,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -64,10 +70,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.gh00ul.cascade.data.ClockStyle
+import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.data.TimeFormat
 import com.gh00ul.cascade.notifications.LiveTimer
+import com.gh00ul.cascade.notifications.LiveUpdate
 import com.gh00ul.cascade.notifications.NotificationStore
+import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
@@ -90,12 +99,13 @@ import kotlin.math.abs
 internal val LocalNow = staticCompositionLocalOf<() -> Long> { System::currentTimeMillis }
 
 /**
- * Time, date, and a row of chips for what's next: the alarm, running timers/stopwatches/calls (ticking live),
- * the next calendar event and charging progress. Tap the time for alarms and the date for the calendar.
+ * Time, date, and a row of chips for what's next: the alarm, running timers/stopwatches/calls (ticking live), things
+ * under way (a ride, a route, a download), the next calendar event and charging progress. Tap the time for alarms and
+ * the date for the calendar. [appIcon] finds an app's icon by package, for the chips of things under way.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
+fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier, appIcon: (String) -> IconImage? = { null }) {
     val context = LocalContext.current
     val clock = LocalNow.current
     var now by remember { mutableLongStateOf(clock()) }
@@ -135,6 +145,8 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
     }
     val liveTimers by NotificationStore.timers.collectAsStateWithLifecycle()
     val timers = if (settings.showTimers) liveTimers else emptyList()
+    val liveUpdates by NotificationStore.liveUpdates.collectAsStateWithLifecycle()
+    val underWay = if (settings.showLiveUpdates) liveUpdates.take(MAX_LIVE_CHIPS) else emptyList()
     val event = rememberNextEvent(settings.showCalendar, now)
     val battery = rememberBattery(settings.showBattery)
     val openAlarms = Modifier.clickable(interactionSource = null, indication = null, onClickLabel = "Open alarms", role = Role.Button) {
@@ -177,11 +189,12 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
         // its last value to draw while it leaves. Chips there at first composition start at rest; the battery (read on
         // start) and the event (queried on IO) fade in once, when they arrive.
         val shownTimers = rememberLatest(timers.takeIf { it.isNotEmpty() })
+        val shownUnderWay = rememberLatest(underWay.takeIf { it.isNotEmpty() })
         val shownEvent = rememberLatest(event)
         val shownAlarm = rememberLatest(alarm)
         val shownBattery = rememberLatest(battery?.takeIf { showBatteryChip })
         AnimatedVisibility(
-            visible = alarm != null || timers.isNotEmpty() || event != null || showBatteryChip,
+            visible = alarm != null || timers.isNotEmpty() || underWay.isNotEmpty() || event != null || showBatteryChip,
             enter = Motion.ExpandDown,
             exit = Motion.CollapseUp,
         ) {
@@ -192,6 +205,9 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
             ) {
                 AnimatedVisibility(timers.isNotEmpty(), enter = ChipIn, exit = ChipOut) {
                     shownTimers?.let { TimerChips(it) }
+                }
+                AnimatedVisibility(underWay.isNotEmpty(), enter = ChipIn, exit = ChipOut) {
+                    shownUnderWay?.let { LiveChips(it, appIcon) }
                 }
                 AnimatedVisibility(event != null, enter = ChipIn, exit = ChipOut) {
                     shownEvent?.let { e ->
@@ -224,6 +240,9 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
 }
 
 private const val LOW_BATTERY = 15
+
+/** At most this many things under way show at once, the oldest first. */
+private const val MAX_LIVE_CHIPS = 3
 
 /**
  * The date, then the weather after a dot on the same line. When the two don't fit side by side (a narrow screen, a
@@ -288,7 +307,8 @@ private fun Modifier.endBelowBaseline() = layout { measurable, constraints ->
 /**
  * A pill with an icon and a label. [text] is ellipsized when space runs out; [trailing] (a time) never is.
  * TalkBack reads [description] instead of the raw text. When the text gets wider or narrower, the width glides there
- * if [animateSize].
+ * if [animateSize]. [image] (an app's icon) takes the glyph's place, and [progress] (0 to 1) fills the pill that far
+ * with a tint of the accent.
  */
 @Composable
 private fun InfoChip(
@@ -299,6 +319,8 @@ private fun InfoChip(
     trailing: String? = null,
     accent: Boolean = false,
     animateSize: Boolean = true,
+    image: IconImage? = null,
+    progress: Float? = null,
     onClick: () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -306,6 +328,7 @@ private fun InfoChip(
         Modifier
             .clip(CircleShape)
             .glass(style, CircleShape, fill = 0.28f)
+            .then(if (progress == null) Modifier else Modifier.progressFill(style.accent.copy(alpha = 0.24f), progress))
             .then(if (clickLabel != null) Modifier.clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onClick) else Modifier)
             .semantics { contentDescription = description }
             // Inside the pill's clip and background, so they follow the width. Off for timer chips: their text changes
@@ -314,7 +337,11 @@ private fun InfoChip(
             .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = if (accent) style.accent else style.content, modifier = Modifier.size(16.dp))
+        if (image != null) {
+            AppIcon(image, 18.dp)
+        } else {
+            Icon(icon, contentDescription = null, tint = if (accent) style.accent else style.content, modifier = Modifier.size(16.dp))
+        }
         Spacer(Modifier.width(6.dp))
         Text(
             text,
@@ -325,6 +352,43 @@ private fun InfoChip(
         )
         if (trailing != null) {
             Text("  ·  $trailing", style = style.chip, maxLines = 1, modifier = Modifier.clearAndSetSemantics {})
+        }
+    }
+}
+
+/** Fills from the start edge to [progress] of the width with [color], under the content. */
+private fun Modifier.progressFill(color: Color, progress: Float) = drawBehind {
+    val width = size.width * progress.coerceIn(0f, 1f)
+    val left = if (layoutDirection == LayoutDirection.Rtl) size.width - width else 0f
+    drawRect(color, topLeft = Offset(left, 0f), size = Size(width, size.height))
+}
+
+/**
+ * Things under way, from ongoing notifications: the app's icon (or a glyph for the kind of thing), what it is, and its
+ * short status ("4 min", "42%"); a download fills its pill as it goes. Tapping one opens it. They change only when
+ * their notification does, and the store holds those changes back while home isn't visible.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LiveChips(updates: List<LiveUpdate>, appIcon: (String) -> IconImage?) {
+    val context = LocalContext.current
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (update in updates) {
+            key(update.key) {
+                InfoChip(
+                    icon = when (update.kind) {
+                        LiveUpdate.Kind.NAVIGATION -> ExtraIcons.Navigation
+                        LiveUpdate.Kind.PROGRESS -> ExtraIcons.Download
+                        LiveUpdate.Kind.OTHER -> ExtraIcons.Live
+                    },
+                    text = update.title,
+                    description = listOf(update.title, update.status).filter { it.isNotEmpty() }.joinToString(", "),
+                    clickLabel = "Open",
+                    trailing = update.status.ifEmpty { null },
+                    image = appIcon(update.packageName),
+                    progress = update.percent?.let { it / 100f },
+                ) { update.contentIntent?.sendFromLauncher(context) }
+            }
         }
     }
 }

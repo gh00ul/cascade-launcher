@@ -17,6 +17,7 @@ import com.gh00ul.cascade.data.WeatherNow
 import com.gh00ul.cascade.data.WeatherPlace
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.notifications.LastPlayed
+import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.testing.FIXED_NOW
 import com.gh00ul.cascade.ui.home.ResumeRow
 import com.gh00ul.cascade.testing.FakeApps
@@ -131,6 +132,37 @@ class HomeScreenshots : ScreenshotTest() {
         },
     ) {
         HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp(), onReorderFavorites = {})
+    }
+
+    /**
+     * Things under way as chips: a route in Maps, a download in Files filling its pill, and a ride from an app not on
+     * this phone's list (its glyph instead of an icon), with the short status Android 16 lets it show.
+     */
+    @Test fun liveChips() {
+        val context = compose.activity
+        fun builder() = android.app.Notification.Builder(context, "live").setSmallIcon(android.R.drawable.sym_def_app_icon).setOngoing(true)
+        val route = builder().setContentTitle("Turn left onto Pike St").setCategory(android.app.Notification.CATEGORY_NAVIGATION).build()
+        val download = builder().setContentTitle("trip-photos.zip").setProgress(100, 64, false).build()
+        val ride = builder().setContentTitle("Driver arriving").addExtras(
+            android.os.Bundle().apply {
+                putBoolean("android.requestPromotedOngoing", true)
+                putCharSequence("android.shortCriticalText", "3 min")
+            },
+        ).build()
+        NotificationStore.reset(
+            arrayOf(
+                FakeNotifications.sbn(FakeApps.byLabel("Maps").packageName, route, id = 1),
+                FakeNotifications.sbn(FakeApps.byLabel("Files").packageName, download, id = 2),
+                FakeNotifications.sbn("com.example.rides", ride, id = 3),
+            ),
+            null,
+            context.packageName,
+        )
+        try {
+            snap("Home_LiveChips") { HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp()) }
+        } finally {
+            NotificationStore.clear()
+        }
     }
 
     @Test fun notificationsExpanded() = snap("Home_NotificationsExpanded") {

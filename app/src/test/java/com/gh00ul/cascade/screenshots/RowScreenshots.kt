@@ -42,6 +42,13 @@ class RowScreenshots : ScreenshotTest() {
         }
     }
 
+    /** A login code under Messages, as a pill to copy it again, beside "+1". */
+    @Test fun loginCode() = snap("AppRow_LoginCode", Frame.Component) {
+        val code = FakeNotifications.notification("0|messages|9", "Google", "G-482913 is your Google verification code", 60_000L)
+            .copy(code = "482913")
+        RowBackdrop { Row(FakeApps.messages, listOf(code) + FakeNotifications.messages().take(1), large = true) }
+    }
+
     @Test fun expanded() = snap("AppRow_Expanded", Frame.Component) {
         RowBackdrop { Row(FakeApps.messages, FakeNotifications.messages(), large = true, expanded = true) }
     }

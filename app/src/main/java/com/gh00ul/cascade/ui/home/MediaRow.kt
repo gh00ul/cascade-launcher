@@ -157,6 +157,19 @@ internal fun mediaColors(seed: Int?, style: LauncherStyle, monochrome: Boolean):
     }
 }
 
+/**
+ * The color the wash behind the favorites takes on while [seed]'s art plays: a deep tone of it under white text, a pale
+ * one under dark text, and soft enough that the favorites over it still read. Null for art with too little color, or
+ * with [monochrome] icons, which get no glow.
+ */
+internal fun glowColor(seed: Int?, style: LauncherStyle, monochrome: Boolean): Color? {
+    if (seed == null || monochrome) return null
+    val hct = FloatArray(3).also { ColorUtils.colorToM3HCT(seed, it) }
+    if (hct[1] < 12f) return null
+    val color = Color(ColorUtils.M3HCTToColor(hct[0], hct[1].coerceIn(24f, 48f), if (style.darkText) 88f else 32f))
+    return color.copy(alpha = if (style.darkText) 0.55f else 0.5f)
+}
+
 /** Holds the last non-null value so an exit animation still has something to draw. */
 internal class Latest<T>(var value: T? = null)
 

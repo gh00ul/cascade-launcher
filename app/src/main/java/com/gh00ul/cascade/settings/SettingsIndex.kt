@@ -17,7 +17,9 @@ internal val SettingsIndex = listOf(
     SettingEntry("Widgets", SettingsScreen.WIDGETS, keywords = "widget stack calendar agenda weather forecast app widgets"),
     SettingEntry("Folders", SettingsScreen.FAVORITES, keywords = "folder group pop-up popup organize"),
     SettingEntry("Notification previews", SettingsScreen.HOME, "previews", "notifications messages dot latest"),
+    SettingEntry("Copy login codes", SettingsScreen.HOME, "codes", "verification code otp 2fa one-time password sms clipboard paste"),
     SettingEntry("Music player", SettingsScreen.HOME, "media", "music media controls player song playing"),
+    SettingEntry("Glow with the music", SettingsScreen.HOME, "musicGlow", "album art color colour tint playing"),
     SettingEntry("Resume with headphones", SettingsScreen.HOME, "resume", "listen mode bluetooth earbuds spotify music continue"),
 
     SettingEntry("Text color", SettingsScreen.LOOK, "textColor", "white dark light contrast automatic readable"),
@@ -36,6 +38,7 @@ internal val SettingsIndex = listOf(
     SettingEntry("Temperature units", SettingsScreen.CLOCK, "units", "celsius fahrenheit degrees"),
     SettingEntry("Next alarm", SettingsScreen.CLOCK, "alarm", "wake up alarms"),
     SettingEntry("Timers and stopwatches", SettingsScreen.CLOCK, "timers", "stopwatch call countdown running"),
+    SettingEntry("Live activity", SettingsScreen.CLOCK, "live", "live updates ride delivery uber navigation maps route download progress"),
     SettingEntry("Next calendar event", SettingsScreen.CLOCK, "calendar", "events agenda meeting appointment"),
     SettingEntry("Battery", SettingsScreen.CLOCK, "battery", "charging low power percent"),
 
@@ -48,6 +51,8 @@ internal val SettingsIndex = listOf(
     SettingEntry("Open single match", SettingsScreen.SEARCH, "autoLaunch", "launch automatically instant open"),
     SettingEntry("Calculator", SettingsScreen.SEARCH, "calculator", "math calculate sum arithmetic percent"),
     SettingEntry("Contacts in search", SettingsScreen.SEARCH, "contacts", "people call text message phone number"),
+    SettingEntry("Commands", SettingsScreen.SEARCH, "commands", "timer alarm directions navigate youtube play song quick actions"),
+    SettingEntry("Shortcuts and settings in search", SettingsScreen.SEARCH, "shortcuts", "app shortcuts incognito settings pages wifi hotspot bluetooth"),
 
     SettingEntry("Back up settings", SettingsScreen.BACKUP, "backup", "export save file copy"),
     SettingEntry("Restore settings", SettingsScreen.BACKUP, "restore", "import load file new phone"),

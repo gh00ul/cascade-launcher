@@ -61,6 +61,7 @@ import com.gh00ul.cascade.ui.home.SectionHeader
 import com.gh00ul.cascade.ui.home.animateHomeAlpha
 import com.gh00ul.cascade.ui.home.homeScrim
 import com.gh00ul.cascade.ui.home.listCover
+import com.gh00ul.cascade.ui.home.rememberMusicGlow
 import com.gh00ul.cascade.ui.home.rememberHomeSnapFling
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
@@ -234,7 +235,8 @@ internal fun HomeScreen(
         val homeHeightPx = with(density) { homeHeight.toPx() }.coerceAtLeast(1f)
         val progress = { listState.listCover(homeHeightPx) }
 
-        Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress))
+        val glow = rememberMusicGlow(media, settings, style)
+        Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress) { glow.value })
 
         LazyColumn(
             state = listState,
@@ -273,6 +275,8 @@ internal fun HomeScreen(
                     widgets = widgets,
                     onOpenFolder = { folder, bounds -> openFolder = OpenFolder(folder.id, bounds) },
                     onReorderFavorites = onReorderFavorites,
+                    // As LauncherScreen finds them: the personal app with that package.
+                    appIcon = { pkg -> apps.firstOrNull { it.packageName == pkg && !it.isWork }?.let { icons[it.key] } },
                     onboarding = onboarding,
                 )
             }

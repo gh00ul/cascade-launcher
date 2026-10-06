@@ -19,6 +19,21 @@ class ListScreenshots : ScreenshotTest() {
         HomeScreen(settings, apps, favorites, icons, searchOpen = true)
     }
 
+    /** "10m": a timer to start, above the apps and tinted, since Go starts it. */
+    @Test fun searchTimer() = snap("Search_Timer", afterContent = { onNode(hasSetTextAction()).performTextInput("10m") }) {
+        HomeScreen(settings, apps, favorites, icons, searchOpen = true)
+    }
+
+    /** "nav pike place market": no app matches, so directions are what Go does. */
+    @Test fun searchDirections() = snap("Search_Directions", afterContent = { onNode(hasSetTextAction()).performTextInput("nav pike place market") }) {
+        HomeScreen(settings, apps, favorites, icons, searchOpen = true)
+    }
+
+    /** "hotspot": the Settings page for it. */
+    @Test fun searchSettings() = snap("Search_Settings", afterContent = { onNode(hasSetTextAction()).performTextInput("hotspot") }) {
+        HomeScreen(settings, apps, favorites, icons, searchOpen = true)
+    }
+
     /** The top of the list: the search pill and the gear, then the first sections, letters on the icon column. */
     @Test fun top() = snap("List_Top") {
         HomeScreen(settings, apps, favorites, icons, FakeNotifications.byApp(), firstItem = 1)

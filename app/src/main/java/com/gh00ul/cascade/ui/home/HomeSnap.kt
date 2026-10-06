@@ -134,9 +134,13 @@ private class HomeSnapFling(
         return if (end > home / 2) 0f else home
     }
 
-    /** The A–Z header's height while it is the first row on screen, else 0. */
+    /**
+     * The A–Z header's height while it is on screen, else 0. Looked for among every row laid out, not only the first:
+     * under a status bar, home's last pixels are laid out in the list's top padding while the header is a little off
+     * the top, and that must still count as the header showing.
+     */
     private fun headerHeight(): Float =
-        list.layoutInfo.visibleItemsInfo.firstOrNull()?.takeIf { it.index == 1 }?.size?.toFloat() ?: 0f
+        list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 1 }?.size?.toFloat() ?: 0f
 
     /**
      * Scrolls from [from] to [rest] on a critically damped spring that starts at the fling's [velocity]. Heading there

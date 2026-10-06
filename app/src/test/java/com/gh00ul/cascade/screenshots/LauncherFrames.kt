@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.HomeApp
@@ -218,6 +219,8 @@ internal fun HomeScreen(
     /** A favorite held for its menu started to move instead, and the menu closed. */
     onAppMenuClose: () -> Unit = {},
     onReorderFavorites: ((List<String>) -> Unit)? = null,
+    /** A status bar's height over the list's top, as LauncherScreen pads it on a phone; none by default. */
+    statusTop: Dp = 0.dp,
 ) {
     val style = LocalLauncherStyle.current
     val density = LocalDensity.current
@@ -242,7 +245,7 @@ internal fun HomeScreen(
     val shownFolder = openFolder?.let { open -> homeRows.firstOrNull { it.key == folderKey(open.id) } as? HomeFolder }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val homeHeight = maxHeight
+        val homeHeight = maxHeight - statusTop
         val homeHeightPx = with(density) { homeHeight.toPx() }.coerceAtLeast(1f)
         val progress = { listState.listCover(homeHeightPx) }
 
@@ -258,7 +261,7 @@ internal fun HomeScreen(
                     compositingStrategy = CompositingStrategy.Offscreen
                     alpha = listAlpha.value
                 },
-            contentPadding = PaddingValues(bottom = 16.dp),
+            contentPadding = PaddingValues(top = statusTop, bottom = 16.dp),
             flingBehavior = rememberHomeSnapFling(listState, homeHeightPx),
         ) {
             item(key = "home", contentType = "home") {

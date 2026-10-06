@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
@@ -127,6 +129,22 @@ class HomeSnapTest {
         }
     }
 
+    /**
+     * The same with a status bar over the list's top, as on a phone: home's last pixels are laid out under it while the
+     * header sits a little off the top, and a gentle fling toward home from there still settles rather than stopping with
+     * the search pill cut off.
+     */
+    @Test fun underAStatusBarFlingsStillNeverLeaveTheHeaderCutOff() {
+        show(statusTop = 24.dp)
+        val px = with(compose.density) { 1.dp.toPx() }
+        for (off in listOf(8, 12, 18)) {
+            scrollTo(1, (off * px).toInt())
+            // A gentle fling toward home that would stop short of the list's top.
+            flick(from = 0.5f, to = 0.52f, durationMillis = 400)
+            assertEquals("From ${off}dp off the top", "row 1 + 0px", where())
+        }
+    }
+
     /** With more favorites than fit, home's own overflow scrolls freely; only its last screen snaps. */
     @Test fun aTallHomeScrollsItsOverflowFreely() {
         show(favorites = FakeApps.all.take(20).map { it.key })
@@ -158,7 +176,7 @@ class HomeSnapTest {
         assertEquals(1f, list.listCover(screen))
     }
 
-    private fun show(firstItem: Int = 0, favorites: List<String> = FakeApps.favorites.map { it.key }) {
+    private fun show(firstItem: Int = 0, favorites: List<String> = FakeApps.favorites.map { it.key }, statusTop: Dp = 0.dp) {
         compose.setContent {
             CompositionLocalProvider(LocalNow provides { FIXED_NOW }) {
                 LauncherTheme {
@@ -170,6 +188,7 @@ class HomeSnapTest {
                             icons = emptyMap(),
                             items = favorites.map { key -> HomeApp(FakeApps.all.first { it.key == key }) },
                             listState = list,
+                            statusTop = statusTop,
                         )
                     }
                 }

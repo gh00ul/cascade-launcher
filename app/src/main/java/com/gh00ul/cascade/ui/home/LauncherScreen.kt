@@ -574,6 +574,9 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         if (started == null && app != null) launch(app, null)
         resuming = false
     }
+    // Home left meanwhile (another app opened, or the player's own screen): the wait ends there, so the fallback never
+    // opens the app on top of what's in front.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { resuming = false }
 
     LaunchedEffect(homePresses) {
         homePresses.collect {

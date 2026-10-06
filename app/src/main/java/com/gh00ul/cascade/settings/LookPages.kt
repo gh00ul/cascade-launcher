@@ -192,7 +192,13 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
     val system24h = remember { DateFormat.is24HourFormat(context) }
 
     var calendarAllowed by remember { mutableStateOf(hasCalendarAccess(context)) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { calendarAllowed = hasCalendarAccess(context) }
+    // Sent to App info to allow access: turn the event on once it's allowed there.
+    var awaitingAppInfo by remember { mutableStateOf(false) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        calendarAllowed = hasCalendarAccess(context)
+        if (calendarAllowed && awaitingAppInfo) prefs.update { it.copy(showCalendar = true) }
+        awaitingAppInfo = false
+    }
     // After "Don't allow" twice, Android stops asking and the request fails at once; send the user to App info then.
     var calendarBlocked by remember { mutableStateOf(false) }
     val calendarRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -288,7 +294,7 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
             SwitchRow(
                 "Next calendar event",
                 when {
-                    calendarBlocked -> "Calendar access is blocked. Tap to allow it in App info."
+                    calendarBlocked && !calendarAllowed -> "Calendar access is blocked. Tap to allow it in App info."
                     settings.showCalendar && !calendarAllowed -> "Calendar access is off. Allow it in App info."
                     else -> "What's coming up today, with how long until it starts"
                 },
@@ -296,7 +302,10 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
                 key = "calendar",
             ) { on ->
                 when {
-                    on && !hasCalendarAccess(context) && calendarBlocked -> LauncherActions.openOwnAppInfo(context)
+                    on && !hasCalendarAccess(context) && calendarBlocked -> {
+                        awaitingAppInfo = true
+                        LauncherActions.openOwnAppInfo(context)
+                    }
                     on && !hasCalendarAccess(context) -> calendarRequest.launch(Manifest.permission.READ_CALENDAR)
                     else -> prefs.update { it.copy(showCalendar = on) }
                 }

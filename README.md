@@ -62,7 +62,9 @@ and Android won't update an app across a key change.
 - **Long-press menu.** Pops from the row you're holding, the moment the long press lands, with the app's icon and
   name, round buttons for what you reach for most (favorite, rename, app info, uninstall), its notifications,
   shortcuts (loaded while your finger is still down, so they're there on the first frame) and the rest (folders,
-  hide). Hold a favorite and drag instead, and the menu steps aside so you can move it.
+  hide). Hold a favorite and drag instead, and the menu steps aside so you can move it. Long presses on home take
+  three quarters of Android's usual wait, as Pixel's launcher does. Over search, the keyboard steps aside while the
+  menu is open and comes back when you close it.
 - **Home menu.** Long-press empty space and a small card pops up at your finger with Wallpaper, Widgets,
   Favorites and Settings.
 - **Search.** Matches app names by prefix, word start, initials ("gm" finds Google Maps), or fuzzy match.

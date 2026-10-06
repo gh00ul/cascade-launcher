@@ -78,7 +78,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.ObserverModifierNode
 import androidx.compose.ui.node.SemanticsModifierNode
@@ -271,6 +274,17 @@ private object NoHaptics : HapticFeedback {
     override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {}
 }
 
+/** How much of the system's long-press timeout a long press on home takes: Launcher3's 0.75, so menus come sooner. */
+internal const val LongPressScale = 0.75f
+
+/**
+ * The system's view configuration with a shorter long press ([LongPressScale]). Every long press on home reads it:
+ * rows, a favorite lifting, empty space, the widget stack and the player.
+ */
+private class QuickLongPress(private val base: ViewConfiguration) : ViewConfiguration by base {
+    override val longPressTimeoutMillis: Long get() = (base.longPressTimeoutMillis * LongPressScale).toLong()
+}
+
 /** How much smaller the list starts when home settles in, and how far its alpha starts below 1 (it never vanishes). */
 private const val SettleShrink = 0.05f
 private const val SettleFade = 0.7f
@@ -395,6 +409,13 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     var expandedKey by remember { mutableStateOf<String?>(null) }
     val toggleExpand: (String) -> Unit = { key -> expandedKey = if (expandedKey == key) null else key }
     val showMenu: (AppEntry, Rect?) -> Unit = { app, anchor -> menu = AppMenuTarget(app, anchor) }
+    // A menu over search sends the keyboard away: the card gets the whole screen, and Back reaches the menu (with the
+    // keyboard up, the keyboard takes the first Back). Closing the menu without picking anything brings it back.
+    val keyboard = LocalSoftwareKeyboardController.current
+    val showMenuOverSearch: (AppEntry, Rect?) -> Unit = { app, anchor ->
+        keyboard?.hide()
+        showMenu(app, anchor)
+    }
     // Whether a pop-up (the open folder, a menu) covers home. Read by the nodes that hide what's under it from TalkBack
     // and by Back, never in a body, so one opening or closing recomposes nothing around it.
     val popupOpen: () -> Boolean = remember { { openFolder != null || homeMenuAt != null || menu != null } }
@@ -614,8 +635,15 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // With haptics off, one no-op stands in for every haptic on home: rows, the alphabet wave and the player all go
     // through LocalHapticFeedback. Sheets and dialogs are windows of their own, which provide their own (they play none).
     val haptics = if (settings.haptics) LocalHapticFeedback.current else NoHaptics
+    val systemViewConfiguration = LocalViewConfiguration.current
+    val viewConfiguration = remember(systemViewConfiguration) { QuickLongPress(systemViewConfiguration) }
 
-    CompositionLocalProvider(LocalLauncherStyle provides style, LocalContentColor provides style.content, LocalHapticFeedback provides haptics) {
+    CompositionLocalProvider(
+        LocalLauncherStyle provides style,
+        LocalContentColor provides style.content,
+        LocalHapticFeedback provides haptics,
+        LocalViewConfiguration provides viewConfiguration,
+    ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             // Where the status bar is even while it's hidden, so nothing moves as it hides or shows.
             val statusTop = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues().calculateTopPadding()
@@ -906,7 +934,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         launch(app, bounds)
                         searchOpen = false
                     },
-                    onLongPress = showMenu,
+                    onLongPress = showMenuOverSearch,
                     onDismiss = { searchOpen = false },
                     searchCalculator = settings.searchCalculator,
                     searchContacts = settings.searchContacts,
@@ -922,7 +950,11 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     ContextMenuPopup(
                         target = shownMenu,
                         iconOrigin = 8.dp + settings.iconSize.listDp.dp / 2,
-                        onDismiss = { menu = null },
+                        // Back or a tap beside it: over search, back to typing.
+                        onDismiss = {
+                            menu = null
+                            if (searchOpen) keyboard?.show()
+                        },
                         contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
                     ) { target ->
                         when (target) {

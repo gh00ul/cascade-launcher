@@ -8,6 +8,8 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.click
@@ -92,18 +94,27 @@ class LongPressMenuTest {
         }
     }
 
-    /** The screen as MainActivity shows it; with [presses], every row's press goes to it instead of the ripple. */
-    private fun show(presses: PressRecorder? = null) {
+    /**
+     * The screen as MainActivity shows it; with [presses], every row's press goes to it instead of the ripple, and with
+     * [keyboard], the keyboard's shows and hides.
+     */
+    private fun show(presses: PressRecorder? = null, keyboard: KeyboardRecorder? = null) {
         compose.setContent {
             LauncherTheme {
-                if (presses == null) {
-                    LauncherScreen(emptyFlow())
-                } else {
-                    CompositionLocalProvider(LocalIndication provides presses) { LauncherScreen(emptyFlow()) }
-                }
+                CompositionLocalProvider(
+                    LocalIndication provides (presses ?: LocalIndication.current),
+                    LocalSoftwareKeyboardController provides (keyboard ?: LocalSoftwareKeyboardController.current),
+                ) { LauncherScreen(emptyFlow()) }
             }
         }
         compose.waitForIdle()
+    }
+
+    /** Records what's asked of the keyboard, which Robolectric has none of. */
+    private class KeyboardRecorder : SoftwareKeyboardController {
+        val calls = ArrayList<String>()
+        override fun show() { calls += "show" }
+        override fun hide() { calls += "hide" }
     }
 
     private fun row(text: String): SemanticsNodeInteraction = compose.onAllNodesWithText(text).onFirst()
@@ -272,6 +283,42 @@ class LongPressMenuTest {
         assertTrue(appMenuOpen())
     }
 
+    /**
+     * Home's long press takes [LongPressScale] of the system's timeout, on a favorite (the lift watches for it) and on
+     * an A–Z row (clickable does): each menu opens within a couple of frames of that, well before the system's.
+     */
+    @Test fun aLongPressLandsBeforeTheSystemTimeout() {
+        show()
+        val system = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        val quick = (system * LongPressScale).toLong()
+        // From the finger landing to the menu's first frame, frame by frame; then the menu is closed again.
+        fun millisToMenu(row: SemanticsNodeInteraction): Long {
+            compose.mainClock.autoAdvance = false
+            row.performTouchInput { down(center) }
+            val start = compose.mainClock.currentTime
+            while (!appMenuOpen()) {
+                check(compose.mainClock.currentTime - start < system * 2) { "The menu didn't open" }
+                compose.mainClock.advanceTimeByFrame()
+                compose.waitForIdle()
+            }
+            val millis = compose.mainClock.currentTime - start
+            row.performTouchInput { cancel() }
+            compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.mainClock.autoAdvance = true
+            compose.mainClock.advanceTimeBy(1_000)
+            compose.waitForIdle()
+            return millis
+        }
+        val favorite = millisToMenu(row(label("Messages")))
+        compose.onRoot().performTouchInput { swipeUp() }
+        compose.waitForIdle()
+        val listRow = millisToMenu(compose.onNodeWithText(label("Maps")))
+        for ((what, millis) in listOf("favorite" to favorite, "list row" to listRow)) {
+            assertTrue("A $what's menu waits for the long press ($millis ms)", millis >= quick)
+            assertTrue("A $what's menu opens at $quick ms, not the system's $system ($millis ms)", millis < quick + 50)
+        }
+    }
+
     /** Whether an app came with the system is known from the app list: it can be hidden, not uninstalled. */
     @Test fun aSystemAppsMenuOffersHideNotUninstall() {
         FakeLauncherApps.install(app, "Clock", system = true)
@@ -353,6 +400,31 @@ class LongPressMenuTest {
         compose.waitForIdle()
         compose.onNode(hasSetTextAction()).performTextInput(query)
         compose.waitForIdle()
+    }
+
+    /** The keyboard goes as a menu opens over search, and comes back when it's closed without a pick, not with one. */
+    @Test fun aMenuOverSearchSendsTheKeyboardAway() {
+        val keyboard = KeyboardRecorder()
+        show(keyboard = keyboard)
+        openSearch("maps")
+        keyboard.calls.clear()
+        compose.onAllNodesWithText(label("Maps")).onFirst().performTouchInput { longClick() }
+        compose.waitForIdle()
+        assertTrue(appMenuOpen())
+        assertEquals("Gone as the menu opens", listOf("hide"), keyboard.calls)
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        assertEquals("Back to typing", listOf("hide", "show"), keyboard.calls)
+
+        keyboard.calls.clear()
+        compose.onAllNodesWithText(label("Maps")).onFirst().performTouchInput { longClick() }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Add to favorites").performClick()
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        assertFalse(appMenuOpen())
+        assertEquals("A pick doesn't bring it back", listOf("hide"), keyboard.calls)
     }
 
     /** A search result's menu opens over search, and Back closes the menu, not search. */

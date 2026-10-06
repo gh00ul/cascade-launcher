@@ -13,3 +13,8 @@
 # rewrites the result to the obfuscated names, so the rules survive minification. Debug builds ignore profiles.
 HSPLcom/gh00ul/cascade/**->**(**)**
 Lcom/gh00ul/cascade/**;
+
+# The Material icons Cascade draws (menu buttons, tiles, settings rows) have no rules of their own: each icon is built
+# by code on first use, which ran interpreted on the first menu after an install. Marked hot like Cascade's own.
+HSPLandroidx/compose/material/icons/**->**(**)**
+Landroidx/compose/material/icons/**;

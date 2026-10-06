@@ -55,6 +55,17 @@ class LoginCodeTest {
         assertNull(code("Your verification code expires in 1,500 seconds"))
     }
 
+    /** A bank's fraud alert says "verify" and ends with the card's last digits: those are no code. */
+    @Test fun cardAndAccountDigitsAreNotCodes() {
+        assertNull(code("Did you attempt a \$1,250.00 purchase with card ending 4821? Reply Y or N to verify."))
+        assertNull(code("Card ending in 4821 was used to sign in to a new device"))
+        assertNull(code("Acct ****4821: verify this login attempt"))
+        assertNull(code("Purchase on card xxxx 4821. Verify it in the app"))
+        assertNull(code("Your account # 55123: verification needed"))
+        assertEquals("773311", code("Your verification code is 773311. Card ending 4821."))
+        assertEquals("4821", code("Use code 4821 to finish your purchase"))
+    }
+
     @Test fun theNumberNearestTheCodeWordWins() {
         assertEquals("7712", code("Your verification code is 7712. Reference 20261006."))
         assertEquals("778899", code("Expires at 10:30. Code: 778899"))

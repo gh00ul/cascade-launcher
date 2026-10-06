@@ -25,6 +25,18 @@ private val Candidate = Regex(
 )
 
 /**
+ * What comes just before a card's or an account's last digits ("card ending in 4821", "acct ****4821"): a bank's fraud
+ * alert says "verify", but that number is no code.
+ */
+private val CardDigitsBefore = Regex(
+    """(?:\b(?:ending|ends|end)(?:\s+(?:in|with))?|\b(?:card|acct|account)(?:\s*(?:no\.?|number|#))?|[*•·xX]{2,})\s*[:#]?\s*$""",
+    RegexOption.IGNORE_CASE,
+)
+
+/** Whether the number found at [start] of [all] is a card's or an account's last digits. */
+private fun isCardDigits(all: String, start: Int) = CardDigitsBefore.containsMatchIn(all.substring((start - 24).coerceAtLeast(0), start))
+
+/**
  * The login code in a notification's [title] and [text], digits only, or null. Several numbers: the one nearest a word
  * like "code", then the longer. A number in the title is often the sender (a short code like 72975 that Messages shows
  * as the title), so it counts only when the text has none and the title itself says it's a code.
@@ -33,7 +45,7 @@ internal fun findLoginCode(title: String, text: String): String? {
     val all = "$title\n$text"
     val words = CodeWords.findAll(all).map { it.range }.toList()
     if (words.isEmpty()) return null
-    val found = Candidate.findAll(all).toList()
+    val found = Candidate.findAll(all).filterNot { isCardDigits(all, it.range.first) }.toList()
     val inText = found.filter { it.range.first > title.length }
     val candidates = inText.ifEmpty { if (CodeWords.containsMatchIn(title)) found else emptyList() }
     return candidates

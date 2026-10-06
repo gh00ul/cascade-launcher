@@ -88,6 +88,7 @@ import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.calculate
 import com.gh00ul.cascade.data.Command
+import com.gh00ul.cascade.data.TimeFormat
 import com.gh00ul.cascade.data.dialIntent
 import com.gh00ul.cascade.data.messageIntent
 import com.gh00ul.cascade.data.findSettingsPages
@@ -205,6 +206,7 @@ fun AnimatedVisibilityScope.SearchOverlay(
     searchCommands: Boolean = true,
     searchShortcuts: Boolean = true,
     player: String? = null,
+    timeFormat: TimeFormat = TimeFormat.SYSTEM,
 ) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -398,7 +400,15 @@ fun AnimatedVisibilityScope.SearchOverlay(
                 }
                 if (command != null && command.exact) {
                     item(key = "command") {
-                        CommandRow(command, showIcons, iconSize, playerLabel, onRun = { run(command) }, modifier = Modifier.enterTarget(style.content))
+                        CommandRow(
+                            command,
+                            showIcons,
+                            iconSize,
+                            playerLabel,
+                            onRun = { run(command) },
+                            modifier = Modifier.enterTarget(style.content),
+                            timeFormat = timeFormat,
+                        )
                     }
                 }
                 itemsIndexed(results, key = { _, app -> app.key }) { index, app ->
@@ -428,6 +438,7 @@ fun AnimatedVisibilityScope.SearchOverlay(
                             playerLabel,
                             onRun = { run(command) },
                             modifier = if (target == GoTarget.COMMAND) Modifier.enterTarget(style.content) else Modifier,
+                            timeFormat = timeFormat,
                         )
                     }
                 }

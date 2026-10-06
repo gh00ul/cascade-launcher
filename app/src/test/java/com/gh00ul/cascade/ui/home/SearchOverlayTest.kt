@@ -13,6 +13,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -23,6 +24,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.TimeFormat
 import com.gh00ul.cascade.screenshots.LauncherSurface
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeContactsProvider
@@ -77,6 +79,7 @@ class SearchOverlayTest {
         contacts: Boolean = false,
         apps: List<AppEntry> = this.apps,
         showIcons: Boolean = false,
+        timeFormat: TimeFormat = TimeFormat.SYSTEM,
     ) {
         compose.setContent {
             LauncherTheme {
@@ -95,11 +98,22 @@ class SearchOverlayTest {
                             onDismiss = { dismissed++ },
                             searchCalculator = calculator,
                             searchContacts = contacts,
+                            timeFormat = timeFormat,
                         )
                     }
                 }
             }
         }
+    }
+
+    /** An alarm reads in Cascade's own 12/24-hour setting, as the home clock does, not the phone's. */
+    @Test fun anAlarmFollowsCascadesTimeFormat() {
+        show(timeFormat = TimeFormat.H24)
+        field.performTextInput("7:30")
+        compose.waitForIdle()
+        val row = compose.onNode(hasText("Set an alarm for", substring = true)).fetchSemanticsNode()
+            .config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text }.orEmpty()
+        assertTrue(row, Regex("""^Set an alarm for (7|19):30, """).containsMatchIn(row))
     }
 
     @Test fun typingDownToOneMatchOpensIt() {

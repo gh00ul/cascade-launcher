@@ -66,6 +66,7 @@ import com.gh00ul.cascade.data.Command
 import com.gh00ul.cascade.data.Contact
 import com.gh00ul.cascade.data.FoundShortcut
 import com.gh00ul.cascade.data.SettingsPage
+import com.gh00ul.cascade.data.TimeFormat
 import com.gh00ul.cascade.data.commandIntents
 import com.gh00ul.cascade.data.contactInitial
 import com.gh00ul.cascade.data.findContacts
@@ -305,6 +306,8 @@ internal fun CommandRow(
     playerLabel: String?,
     onRun: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Cascade's 12/24-hour setting, which the home clock follows too. */
+    timeFormat: TimeFormat = TimeFormat.SYSTEM,
 ) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
@@ -312,7 +315,7 @@ internal fun CommandRow(
     val (title, detail) = when (command) {
         is Command.Timer -> "Start a ${timerLength(command.seconds)} timer" to "Clock"
         is Command.Alarm -> {
-            val is24h = DateFormat.is24HourFormat(context)
+            val is24h = is24Hour(timeFormat, DateFormat.is24HourFormat(context))
             val time = SimpleDateFormat(clockPattern(locale, is24h, withDay = false), locale).format(Date(command.nextAt))
             "Set an alarm for $time" to "Clock · in ${duration(command.nextAt - now)}"
         }

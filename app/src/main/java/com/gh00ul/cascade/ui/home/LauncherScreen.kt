@@ -944,6 +944,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     searchCommands = settings.searchCommands,
                     searchShortcuts = settings.searchShortcuts,
                     player = lastPlayed?.packageName,
+                    timeFormat = settings.timeFormat,
                 )
             }
 

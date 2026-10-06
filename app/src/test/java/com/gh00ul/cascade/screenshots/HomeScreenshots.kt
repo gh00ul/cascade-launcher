@@ -1,8 +1,17 @@
 package com.gh00ul.cascade.screenshots
 
+import android.content.Intent
+import android.os.BatteryManager
+import androidx.compose.ui.test.hasContentDescription
 import com.gh00ul.cascade.data.ClockStyle
 import com.gh00ul.cascade.data.IconSize
 import com.gh00ul.cascade.data.LauncherSettings
+import com.gh00ul.cascade.data.TempUnit
+import com.gh00ul.cascade.data.TimeFormat
+import com.gh00ul.cascade.data.Weather
+import com.gh00ul.cascade.data.WeatherNow
+import com.gh00ul.cascade.data.WeatherPlace
+import com.gh00ul.cascade.testing.FIXED_NOW
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeNotifications
 import com.gh00ul.cascade.ui.home.OnboardingCard
@@ -23,6 +32,34 @@ class HomeScreenshots : ScreenshotTest() {
         ClockFixtures.install(compose.activity)
         snap("Home_Classic_Chips", afterContent = ClockFixtures.awaitEventChip) {
             HomeScreen(settings(showCalendar = true), apps, favorites, icons, FakeNotifications.byApp())
+        }
+    }
+
+    /**
+     * The glance options on: weather beside the date (a fresh reading, so nothing is fetched), a 24-hour clock, and the
+     * battery level shown while it's neither charging nor low.
+     */
+    @Test fun glance() {
+        val seattle = WeatherPlace("Seattle, Washington, United States", 47.61, -122.33)
+        Weather.showForTest(WeatherNow(18, 21, 12, code = 2, isDay = true, fahrenheit = false, fetchedAt = FIXED_NOW, place = seattle))
+        @Suppress("DEPRECATION") // The only way to fake the battery broadcast.
+        compose.activity.application.sendStickyBroadcast(
+            Intent(Intent.ACTION_BATTERY_CHANGED)
+                .putExtra(BatteryManager.EXTRA_LEVEL, 82)
+                .putExtra(BatteryManager.EXTRA_SCALE, 100)
+                .putExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_DISCHARGING),
+        )
+        val glance = settings().copy(
+            timeFormat = TimeFormat.H24,
+            showWeather = true,
+            weatherPlace = seattle,
+            tempUnit = TempUnit.CELSIUS,
+            batteryAlways = true,
+        )
+        snap("Home_Glance", afterContent = {
+            waitUntil(5_000) { onAllNodes(hasContentDescription("Weather:", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        }) {
+            HomeScreen(glance, apps, favorites, icons, FakeNotifications.byApp())
         }
     }
 

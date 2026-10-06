@@ -3,6 +3,7 @@ package com.gh00ul.cascade.data
 import android.app.Application
 import android.content.Context
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -33,9 +34,24 @@ class PrefsTest {
             showCalendar = true,
             showBattery = false,
             autoUpdateCheck = false,
-            swipeDownAction = SwipeDownAction.SEARCH,
+            swipeDownAction = SwipeDownAction.QUICK_SETTINGS,
             favoritesSeeded = true,
             notificationPromptDismissed = true,
+            timeFormat = TimeFormat.H24,
+            showDate = false,
+            showAlarm = false,
+            showTimers = false,
+            wallpaperDim = WallpaperDim.MEDIUM,
+            hideStatusBar = true,
+            haptics = false,
+            doubleTapAction = DoubleTapAction.LOCK_SCREEN,
+            searchWeb = false,
+            hiddenInSearch = false,
+            autoLaunchSingleMatch = true,
+            batteryAlways = true,
+            showWeather = true,
+            weatherPlace = WeatherPlace("Zürich", 47.3769, 8.5417),
+            tempUnit = TempUnit.FAHRENHEIT,
         )
         Prefs(context).update { stored }
         assertEquals(stored, Prefs(context).settings.value)
@@ -64,10 +80,26 @@ class PrefsTest {
             .putString("icon_size", "HUGE")
             .putString("clock_style", "FLIP")
             .putString("favorites", "not json")
+            .putString("time_format", "H36")
+            .putString("wallpaper_dim", "MAX")
+            .putString("double_tap", "WAVE")
+            .putString("temp_unit", "KELVIN")
+            .putString("weather_place", """{"name":"Nowhere","lat":95,"lon":0}""")
             .commit()
         val settings = Prefs(context).settings.value
         assertEquals(IconSize.MEDIUM, settings.iconSize)
         assertEquals(ClockStyle.CLASSIC, settings.clockStyle)
         assertEquals(emptyList<String>(), settings.favorites)
+        assertEquals(TimeFormat.SYSTEM, settings.timeFormat)
+        assertEquals(WallpaperDim.OFF, settings.wallpaperDim)
+        assertEquals(DoubleTapAction.NOTHING, settings.doubleTapAction)
+        assertEquals(TempUnit.AUTO, settings.tempUnit)
+        assertNull(settings.weatherPlace)
+    }
+
+    @Test fun swipeDownStoredBeforeTheNewActionsStillLoads() {
+        // Stored by name, so adding QUICK_SETTINGS ahead of SEARCH doesn't change what an older install chose.
+        context.getSharedPreferences("launcher", Context.MODE_PRIVATE).edit().putString("swipe_down", "SEARCH").commit()
+        assertEquals(SwipeDownAction.SEARCH, Prefs(context).settings.value.swipeDownAction)
     }
 }

@@ -18,9 +18,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -28,8 +30,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -155,16 +158,21 @@ private fun Modifier.staggered(delay: Int): Modifier {
 
 /**
  * Full-screen search, inside the AnimatedVisibility of LauncherScreen's search transition: the pill drops in as it
- * opens, and the first results fade in one after another. Hidden apps still show up here. Enter opens the top hit, or
- * searches the web; that row is tinted while there's a query. On Android 13+ the overlay shrinks with a predictive
- * back gesture, and closes from there.
+ * opens, and the first results fade in one after another. Apps in [excluded] never show up (hidden apps, unless
+ * Settings lets search find them). Enter opens the top hit, or searches the web with [searchWeb]; that row is tinted
+ * while there's a query. With [autoLaunchSingleMatch], typing that leaves exactly one app opens it. On Android 13+ the
+ * overlay shrinks with a predictive back gesture, and closes from there.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AnimatedVisibilityScope.SearchOverlay(
     apps: List<AppEntry>,
     icons: Map<String, IconImage>,
     showIcons: Boolean,
     iconSize: Dp,
+    excluded: Set<String>,
+    searchWeb: Boolean,
+    autoLaunchSingleMatch: Boolean,
     onLaunch: (AppEntry, Rect?) -> Unit,
     onLongPress: (AppEntry) -> Unit,
     onDismiss: () -> Unit,
@@ -174,7 +182,15 @@ fun AnimatedVisibilityScope.SearchOverlay(
     val focusManager = LocalFocusManager.current
     val focus = remember { FocusRequester() }
     var query by rememberSaveable { mutableStateOf("") }
-    val results = remember(query, apps) { searchApps(apps, query) }
+    val results = remember(query, apps, excluded) { searchApps(apps, query, excluded) }
+    // Whether the last edit made the query longer: only typing opens a lone match, never a deletion, Clear, or a
+    // query kept from before.
+    var grew by remember { mutableStateOf(false) }
+    if (autoLaunchSingleMatch) {
+        LaunchedEffect(query) {
+            if (grew && query.trim().length >= 2) results.singleOrNull()?.let { onLaunch(it, null) }
+        }
+    }
     val style = LocalLauncherStyle.current
     val scope = rememberCoroutineScope()
     // False from the moment search starts to close, while it still fades out.
@@ -195,7 +211,7 @@ fun AnimatedVisibilityScope.SearchOverlay(
         val top = results.firstOrNull()
         if (top != null) {
             onLaunch(top, null)
-        } else if (query.isNotBlank()) {
+        } else if (searchWeb && query.isNotBlank()) {
             // Stays open when no app could take the search, so the query isn't lost.
             if (LauncherActions.webSearch(context, query.trim())) onDismiss()
         }
@@ -246,7 +262,8 @@ fun AnimatedVisibilityScope.SearchOverlay(
         Column(
             Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
+                // Where the status bar is even while it's hidden, so the pill stays put and clear of a camera cutout.
+                .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
                 .navigationBarsPadding()
                 .imePadding()
                 .padding(top = 12.dp),
@@ -273,7 +290,10 @@ fun AnimatedVisibilityScope.SearchOverlay(
                     SearchGlyph(showIcons, iconSize)
                     BasicTextField(
                         value = query,
-                        onValueChange = { query = it },
+                        onValueChange = {
+                            grew = autoLaunchSingleMatch && it.length > query.length
+                            query = it
+                        },
                         singleLine = true,
                         textStyle = TextStyle(color = style.content, fontSize = 17.sp),
                         cursorBrush = SolidColor(style.accent),
@@ -287,7 +307,7 @@ fun AnimatedVisibilityScope.SearchOverlay(
                             Box {
                                 if (query.isEmpty()) {
                                     Text(
-                                        "Search apps or the web",
+                                        if (searchWeb) "Search apps or the web" else "Search apps",
                                         color = style.content.copy(alpha = 0.55f),
                                         fontSize = 17.sp,
                                         maxLines = 1,
@@ -321,7 +341,7 @@ fun AnimatedVisibilityScope.SearchOverlay(
                         modifier = Modifier.staggered(delay).then(if (index == 0) Modifier.enterTarget(style.content) else Modifier),
                     )
                 }
-                if (query.isNotBlank()) {
+                if (searchWeb && query.isNotBlank()) {
                     item(key = "web") {
                         // Last of the first results, when it comes with them.
                         val delay = remember { stagger.delayFor(results, results.size) }

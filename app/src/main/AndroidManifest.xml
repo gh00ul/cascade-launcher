@@ -67,5 +67,19 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Optional: double-tap on the home screen to lock the phone (Android 9+). It only locks; it reads nothing. -->
+        <service
+            android:name=".util.LockService"
+            android:exported="true"
+            android:label="@string/lock_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/lock_service" />
+        </service>
     </application>
 </manifest>

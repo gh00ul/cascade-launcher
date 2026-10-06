@@ -67,7 +67,8 @@ private val Handover = tween<Float>(Motion.QUICK)
  */
 @Composable
 fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Modifier = Modifier) {
-    val haptics = LocalHapticFeedback.current
+    // Read through a state: the gesture below outlives recompositions, and Settings can turn vibration off meanwhile.
+    val haptics by rememberUpdatedState(LocalHapticFeedback.current)
     val style = LocalLauncherStyle.current
     val measurer = rememberTextMeasurer()
     val layouts = remember(letters, measurer, style) { letters.map { measurer.measure(it, style.letter) } }

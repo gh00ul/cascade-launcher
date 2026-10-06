@@ -32,17 +32,22 @@ and Android won't update an app across a key change.
   from the list, open app info, or uninstall.
 - **Search.** Matches app names by prefix, word start, initials ("gm" finds Google Maps), or fuzzy match.
   Enter opens the top result; when no app matches, it searches the web. Hidden apps still show up in search.
+  In settings you can turn web search off, leave hidden apps out, or have an app open by itself once it's the
+  only match.
 - **Gestures.**
-  - Swipe down on the home page to open the notification shade (or search; you can change this in settings).
+  - Swipe down on the home page to open the notification shade (or quick settings, search, or nothing).
+  - Double-tap empty space to lock the screen, open notifications or search (off by default). Locking uses
+    an accessibility service you turn on once; it reads nothing on screen.
   - Press Home to jump back to the top.
   - Long-press empty space for wallpaper and settings.
-- **Clock.** Pick Classic, Bold or Stacked. Tap the time to open your alarms, or tap the date to open your
-  calendar. Chips under the date show what's next:
+- **Clock.** Pick Classic, Bold or Stacked, and 12- or 24-hour time (or follow the phone). Tap the time to open
+  your alarms, or tap the date to open your calendar. Weather can sit beside the date (from Open-Meteo, for a
+  place you pick; tap it for the forecast). Chips under the date show what's next, each one optional:
   - running timers, stopwatches and calls, ticking live (from apps that use Android's standard notification
     chronometer)
   - the next alarm, with a countdown when it's less than a day away
   - the next calendar event (optional; asks for calendar access)
-  - charging progress with "full in…", or a warning when the battery is low
+  - charging progress with "full in…", or a warning when the battery is low (or the level all the time)
 - **Icon size.** Small, Medium, Large or XL for the home screen and the A–Z list. The music player row
   scales with them.
 - **Monochrome icons.** Uses Android 13+ themed icons where apps provide them. Other icons turn grayscale.
@@ -53,6 +58,9 @@ and Android won't update an app across a key change.
   also check from *Settings → About*, or turn automatic checks off.
 - **Settings backup.** *Settings → Backup* saves your favorites, hidden apps, renames and every setting to a
   JSON file you choose. *Restore settings* loads one back after showing what it will replace.
+- **Settings.** Pages for the home screen, appearance, clock, gestures, search, backup and updates, with a live
+  preview of your home screen, search across every setting, and drag-to-reorder for favorites. Also: wallpaper
+  dimming, hiding the status bar, and turning vibration off.
 - **Material You.** Accent colors come from your wallpaper on Android 12+.
 - **Work profile.** Work apps appear with the work badge.
 

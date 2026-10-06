@@ -47,13 +47,17 @@ private fun searchIndex(apps: List<AppEntry>): SearchIndex {
     return SearchIndex(apps, label, original).also { lastIndex = it }
 }
 
-/** Best matches first: prefix, then word start, then initials ("gm" → Google Maps), then substring, then fuzzy. */
-fun searchApps(apps: List<AppEntry>, query: String): List<AppEntry> {
+/**
+ * Best matches first: prefix, then word start, then initials ("gm" → Google Maps), then substring, then fuzzy. Apps
+ * whose keys are in [exclude] never match; they stay in the index, so it isn't rebuilt when that set changes.
+ */
+fun searchApps(apps: List<AppEntry>, query: String, exclude: Set<String> = emptySet()): List<AppEntry> {
     val q = query.trim().normalizedForSearch()
     if (q.isEmpty()) return emptyList()
     val index = searchIndex(apps)
     return apps
         .mapIndexedNotNull { i, app ->
+            if (app.key in exclude) return@mapIndexedNotNull null
             // An unrenamed app's original label is its label; scoring it again can't raise the score.
             val score = maxOf(score(index.label[i], q), index.original[i]?.let { score(it, q) } ?: 0)
             if (score > 0) app to score else null

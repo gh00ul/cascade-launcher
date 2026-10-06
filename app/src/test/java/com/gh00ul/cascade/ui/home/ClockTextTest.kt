@@ -1,6 +1,7 @@
 package com.gh00ul.cascade.ui.home
 
 import android.app.Application
+import com.gh00ul.cascade.data.TimeFormat
 import com.gh00ul.cascade.testing.FIXED_NOW
 import com.gh00ul.cascade.testing.FIXED_ZONE
 import com.gh00ul.cascade.testing.withFixedZone
@@ -176,6 +177,20 @@ class ClockTextTest {
 
     @Test fun batteryLowWhileNotCharging() {
         assertEquals("12% battery" to "Battery low, 12 percent", batteryText(Battery(12, charging = false, fullInMs = -1)))
+        assertEquals("15% battery" to "Battery low, 15 percent", batteryText(Battery(15, charging = false, fullInMs = -1)))
+    }
+
+    @Test fun batteryShownAllTheTimeIsJustTheLevel() {
+        // Only shown with batteryAlways on: neither charging nor low.
+        assertEquals("16%" to "Battery 16 percent", batteryText(Battery(16, charging = false, fullInMs = -1)))
+        assertEquals("100%" to "Battery 100 percent", batteryText(Battery(100, charging = false, fullInMs = -1)))
+    }
+
+    @Test fun timeFormatFollowsTheSystemUnlessForced() {
+        assertEquals(true, is24Hour(TimeFormat.SYSTEM, system = true))
+        assertEquals(false, is24Hour(TimeFormat.SYSTEM, system = false))
+        assertEquals(false, is24Hour(TimeFormat.H12, system = true))
+        assertEquals(true, is24Hour(TimeFormat.H24, system = false))
     }
 
     private fun event(begin: Long, end: Long) = CalendarEvent(7, TITLE, begin, end, allDay = false)

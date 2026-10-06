@@ -46,6 +46,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -64,6 +65,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.DoubleTapAction
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.ui.common.rememberEntry
@@ -92,6 +94,7 @@ fun HomePage(
     onAppLongPress: (AppEntry) -> Unit,
     onOpenNotification: (AppEntry, AppNotification) -> Unit,
     onEmptyLongPress: () -> Unit,
+    onEmptyDoubleTap: () -> Unit,
     expandedKey: String?,
     onToggleExpand: (String) -> Unit,
     media: NowPlayingState?,
@@ -103,6 +106,9 @@ fun HomePage(
 ) {
     val style = LocalLauncherStyle.current
     val longPress by rememberUpdatedState(onEmptyLongPress)
+    val doubleTap by rememberUpdatedState(onEmptyDoubleTap)
+    // Keyed on this, so the gesture restarts as the setting changes; with no double-tap action, none is watched for.
+    val doubleTapOn = settings.doubleTapAction != DoubleTapAction.NOTHING
 
     @Composable
     fun Player(state: NowPlayingState, app: AppEntry?, expandKey: String, expanded: Boolean) {
@@ -133,7 +139,9 @@ fun HomePage(
         Modifier
             .fillMaxWidth()
             .heightIn(min = minHeight)
-            .pointerInput(Unit) { detectTapGestures(onLongPress = { longPress() }) }
+            .pointerInput(doubleTapOn) {
+                detectTapGestures(onDoubleTap = { _: Offset -> doubleTap() }.takeIf { doubleTapOn }, onLongPress = { longPress() })
+            }
             .padding(start = 20.dp, end = 44.dp, top = 28.dp, bottom = bottomInset + 28.dp),
     ) {
         ClockHeader(settings, Modifier.padding(horizontal = 8.dp))

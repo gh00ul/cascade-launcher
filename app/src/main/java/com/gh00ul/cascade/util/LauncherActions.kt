@@ -17,6 +17,7 @@ import android.content.pm.ShortcutInfo
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.provider.Settings
@@ -92,6 +93,13 @@ object LauncherActions {
     fun expandNotifications(context: Context): Boolean = runCatching {
         val statusBar = context.getSystemService("statusbar")
         Class.forName("android.app.StatusBarManager").getMethod("expandNotificationsPanel").invoke(statusBar)
+    }.isSuccess
+
+    /** Pulls down quick settings, through StatusBarManager like [expandNotifications]. */
+    @SuppressLint("WrongConstant")
+    fun expandQuickSettings(context: Context): Boolean = runCatching {
+        val statusBar = context.getSystemService("statusbar")
+        Class.forName("android.app.StatusBarManager").getMethod("expandSettingsPanel").invoke(statusBar)
     }.isSuccess
 
     /** Clock apps guard SHOW_ALARMS with SET_ALARM; if it is still refused, open the next alarm or the clock app itself. */
@@ -173,6 +181,21 @@ object LauncherActions {
             if (start(context, detail)) return
         }
         start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    /**
+     * The accessibility list, where [LockService] is turned on. Its own page (ACCESSIBILITY_DETAILS_SETTINGS) is a
+     * system API that needs a privileged permission, so instead the list is asked to highlight it, as Settings' search
+     * does; a Settings app that doesn't know these extras ignores them.
+     */
+    fun openAccessibilitySettings(context: Context) {
+        val key = ComponentName(context, LockService::class.java).flattenToString()
+        start(
+            context,
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .putExtra(":settings:fragment_args_key", key)
+                .putExtra(":settings:show_fragment_args", Bundle().apply { putString(":settings:fragment_args_key", key) }),
+        )
     }
 
     private fun start(context: Context, intent: Intent): Boolean = try {

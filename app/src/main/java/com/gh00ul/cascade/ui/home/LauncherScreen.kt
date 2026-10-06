@@ -15,6 +15,7 @@ import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -30,7 +31,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -63,12 +64,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -77,10 +81,14 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.DoubleTapAction
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.SwipeDownAction
 import com.gh00ul.cascade.data.TextColor
@@ -89,6 +97,7 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.notifications.NowPlaying
 import com.gh00ul.cascade.settings.SettingsActivity
+import com.gh00ul.cascade.settings.SettingsScreen
 import com.gh00ul.cascade.ui.common.rememberEntry
 import com.gh00ul.cascade.ui.common.rememberReplaySkip
 import com.gh00ul.cascade.ui.theme.LauncherStyle
@@ -97,6 +106,7 @@ import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.ui.theme.colorScheme
 import com.gh00ul.cascade.ui.theme.rememberWallpaperSupportsDarkText
 import com.gh00ul.cascade.util.LauncherActions
+import com.gh00ul.cascade.util.LockService
 import com.gh00ul.cascade.util.sendFromLauncher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
@@ -181,14 +191,23 @@ internal fun ListAppRow(
 /**
  * The tint over the wallpaper: light on the home page and heavier once the list covers it ([progress], read only while
  * drawing), with a soft wash behind the clock so it reads on bright skies. The wash fades as the list scrolls up.
+ * [dim] (Settings' wallpaper dim) is layered onto the light tint, and the list's tint rises from there to its usual
+ * level, or stays at the dim if that's heavier, so the two never stack.
  */
-internal fun Modifier.homeScrim(scrim: Color, progress: () -> Float) = drawWithCache {
+internal fun Modifier.homeScrim(scrim: Color, dim: Float, progress: () -> Float) = drawWithCache {
     val wash = Brush.verticalGradient(listOf(scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f)
+    val rest = 0.12f + 0.88f * dim
+    val covered = maxOf(0.7f, rest)
     onDrawBehind {
         val p = progress()
-        drawRect(scrim, alpha = 0.12f + 0.58f * p)
+        drawRect(scrim, alpha = rest + (covered - rest) * p)
         drawRect(wash, alpha = 1f - p)
     }
+}
+
+/** LocalHapticFeedback with haptics turned off in Settings. */
+private object NoHaptics : HapticFeedback {
+    override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {}
 }
 
 /** How much smaller the list starts when home settles in, and how far its alpha starts below 1 (it never vanishes). */
@@ -273,6 +292,7 @@ internal fun ListBackHandler(enabled: () -> Boolean, scale: Animatable<Float, An
  * One continuous list, like Niagara: the home page (clock + favorites) fills the first screen and the full
  * A–Z app list continues below it. The alphabet wave on the right edge jumps anywhere in the list.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LauncherScreen(homePresses: Flow<Unit>) {
     val context = LocalContext.current
@@ -327,6 +347,17 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             }
         }
         onDispose {}
+    }
+    // Applied again on each start: before Android 11 the system drops the hidden flag once another app is in front. It
+    // registers nothing. A swipe from the top edge still shows the bar for a moment.
+    LifecycleStartEffect(settings.hideStatusBar) {
+        (view.context as? Activity)?.window?.let { window ->
+            WindowCompat.getInsetsController(window, view).apply {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (settings.hideStatusBar) hide(WindowInsetsCompat.Type.statusBars()) else show(WindowInsetsCompat.Type.statusBars())
+            }
+        }
+        onStopOrDispose {}
     }
 
     // Read during composition for the first frame. Composed while resumed, the ON_RESUME below is replayed in the same
@@ -433,13 +464,33 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     val swipeDownAction by rememberUpdatedState(settings.swipeDownAction)
     val pullDown = remember {
         PullDownConnection(threshold = with(density) { 64.dp.toPx() }) {
-            if (swipeDownAction == SwipeDownAction.SEARCH || !LauncherActions.expandNotifications(context)) searchOpen = true
+            // A shade that won't open falls back to the next thing down: quick settings, notifications, then search.
+            when (swipeDownAction) {
+                SwipeDownAction.NOTIFICATIONS -> if (!LauncherActions.expandNotifications(context)) searchOpen = true
+                SwipeDownAction.QUICK_SETTINGS ->
+                    if (!LauncherActions.expandQuickSettings(context) && !LauncherActions.expandNotifications(context)) searchOpen = true
+                SwipeDownAction.SEARCH -> searchOpen = true
+                SwipeDownAction.NOTHING -> {}
+            }
         }
     }
+    // Locking needs Cascade's accessibility service; while it's off, the double-tap opens Settings to turn it on.
+    val emptyDoubleTap: () -> Unit = {
+        when (settings.doubleTapAction) {
+            DoubleTapAction.NOTHING -> {}
+            DoubleTapAction.LOCK_SCREEN -> if (!LockService.lock()) SettingsActivity.open(context, SettingsScreen.GESTURES)
+            DoubleTapAction.NOTIFICATIONS -> LauncherActions.expandNotifications(context)
+            DoubleTapAction.SEARCH -> searchOpen = true
+        }
+    }
+    // With haptics off, one no-op stands in for every haptic on home: rows, the alphabet wave and the player all go
+    // through LocalHapticFeedback. Sheets and dialogs are windows of their own, which provide their own (they play none).
+    val haptics = if (settings.haptics) LocalHapticFeedback.current else NoHaptics
 
-    CompositionLocalProvider(LocalLauncherStyle provides style, LocalContentColor provides style.content) {
+    CompositionLocalProvider(LocalLauncherStyle provides style, LocalContentColor provides style.content, LocalHapticFeedback provides haptics) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            // Where the status bar is even while it's hidden, so nothing moves as it hides or shows.
+            val statusTop = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues().calculateTopPadding()
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
             // Side nav bar (3-button, landscape) and side cutouts.
             val layoutDirection = LocalLayoutDirection.current
@@ -454,7 +505,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                 else (listState.firstVisibleItemScrollOffset / homeHeightPx).coerceIn(0f, 1f)
             }
 
-            Box(Modifier.fillMaxSize().homeScrim(style.scrim, progress))
+            Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress))
 
             LazyColumn(
                 state = listState,
@@ -501,6 +552,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onAppLongPress = showSheet,
                         onOpenNotification = openNotification,
                         onEmptyLongPress = { homeMenuOpen = true },
+                        onEmptyDoubleTap = emptyDoubleTap,
                         expandedKey = expandedKey,
                         onToggleExpand = toggleExpand,
                         media = media,
@@ -620,6 +672,9 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     icons = icons.value,
                     showIcons = settings.showIcons,
                     iconSize = settings.iconSize.listDp.dp,
+                    excluded = if (settings.hiddenInSearch) emptySet() else settings.hidden,
+                    searchWeb = settings.searchWeb,
+                    autoLaunchSingleMatch = settings.autoLaunchSingleMatch,
                     onLaunch = { app, bounds ->
                         launch(app, bounds)
                         searchOpen = false

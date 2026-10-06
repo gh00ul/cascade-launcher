@@ -339,7 +339,8 @@ private fun NotificationItem(notification: AppNotification, onOpen: (AppNotifica
 internal fun Modifier.rowSwipe(onSwipeRight: (() -> Unit)?, onSwipeLeft: (() -> Unit)? = null): Modifier {
     val dragX = remember { Animatable(0f) }
     val threshold = with(LocalDensity.current) { 64.dp.toPx() }
-    val haptics = LocalHapticFeedback.current
+    // Read through a state: the gesture below outlives recompositions, and Settings can turn vibration off meanwhile.
+    val haptics by rememberUpdatedState(LocalHapticFeedback.current)
     val scope = rememberCoroutineScope()
     val right by rememberUpdatedState(onSwipeRight)
     val left by rememberUpdatedState(onSwipeLeft)

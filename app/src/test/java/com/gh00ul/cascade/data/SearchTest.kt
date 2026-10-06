@@ -54,6 +54,14 @@ class SearchTest {
         assertEquals(listOf("Chat"), labels(listOf(renamed, app("Phone")), "chat"))
     }
 
+    @Test fun excludedAppsNeverMatch() {
+        val maps = app("Maps")
+        val apps = listOf(maps, app("Mail"), app("Phone"))
+        // Hidden apps, when search leaves them out.
+        assertEquals(listOf("Mail"), searchApps(apps, "ma", exclude = setOf(maps.key)).map { it.label })
+        assertEquals(listOf("Maps", "Mail"), labels(apps, "ma"))
+    }
+
     @Test fun singleLetterNeedsMoreThanAFuzzyMatch() {
         // One letter is a prefix, word start or substring match, never a fuzzy one.
         assertEquals(listOf("Maps", "Camera"), labels(listOf(app("Maps"), app("Camera"), app("Phone")), "m"))

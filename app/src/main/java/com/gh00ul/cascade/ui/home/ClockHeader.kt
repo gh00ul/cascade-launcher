@@ -19,6 +19,7 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -45,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.AlignmentLine
 import androidx.compose.ui.layout.LastBaseline
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -63,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.gh00ul.cascade.data.ClockStyle
 import com.gh00ul.cascade.data.LauncherSettings
+import com.gh00ul.cascade.data.TimeFormat
 import com.gh00ul.cascade.notifications.LiveTimer
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.ExtraIcons
@@ -121,13 +124,16 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
 
     val style = LocalLauncherStyle.current
     val locale = LocalConfiguration.current.locales[0]
-    val is24h = DateFormat.is24HourFormat(context)
+    val is24h = is24Hour(settings.timeFormat, DateFormat.is24HourFormat(context))
     // Formats are reused across minute ticks. A SimpleDateFormat keeps the time zone it was made in, so they are rebuilt
     // on the broadcasts that bump alarmChecks (which include a time zone change) and on each start.
     val dateFormat = remember(locale, alarmChecks) { SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd"), locale) }
-    val date = dateFormat.format(Date(now))
-    val alarm = remember(alarmChecks) { context.getSystemService(AlarmManager::class.java).nextAlarmClock }
-    val timers by NotificationStore.timers.collectAsStateWithLifecycle()
+    // Not asked for at all while its chip is off.
+    val alarm = remember(alarmChecks, settings.showAlarm) {
+        if (settings.showAlarm) context.getSystemService(AlarmManager::class.java).nextAlarmClock else null
+    }
+    val liveTimers by NotificationStore.timers.collectAsStateWithLifecycle()
+    val timers = if (settings.showTimers) liveTimers else emptyList()
     val event = rememberNextEvent(settings.showCalendar, now)
     val battery = rememberBattery(settings.showBattery)
     val openAlarms = Modifier.clickable(interactionSource = null, indication = null, onClickLabel = "Open alarms", role = Role.Button) {
@@ -150,15 +156,22 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
                 }
             }
         }
-        Text(
-            date,
-            style = style.date,
-            modifier = Modifier.clickable(interactionSource = null, indication = null, onClickLabel = "Open calendar", role = Role.Button) {
-                LauncherActions.openCalendar(context)
+        DateLine(
+            date = if (!settings.showDate) null else {
+                {
+                    Text(
+                        dateFormat.format(Date(now)),
+                        style = style.date,
+                        modifier = Modifier.clickable(interactionSource = null, indication = null, onClickLabel = "Open calendar", role = Role.Button) {
+                            LauncherActions.openCalendar(context)
+                        },
+                    )
+                }
             },
+            weather = { WeatherReadout(settings) },
         )
 
-        val showBatteryChip = battery != null && (battery.charging || battery.level <= LOW_BATTERY)
+        val showBatteryChip = battery != null && (settings.batteryAlways || battery.charging || battery.level <= LOW_BATTERY)
         // Chips fade in and out while their neighbours glide over, and the row folds away with the last one. Each keeps
         // its last value to draw while it leaves. Chips there at first composition start at rest; the battery (read on
         // start) and the event (queried on IO) fade in once, when they arrive.
@@ -199,7 +212,9 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
                 AnimatedVisibility(showBatteryChip, enter = ChipIn, exit = ChipOut) {
                     shownBattery?.let { b ->
                         val (text, spoken) = batteryText(b)
-                        InfoChip(if (b.charging) ExtraIcons.Bolt else ExtraIcons.BatteryAlert, text, spoken, null, accent = !b.charging) {}
+                        val low = !b.charging && b.level <= LOW_BATTERY
+                        val icon = if (b.charging) ExtraIcons.Bolt else if (low) ExtraIcons.BatteryAlert else ExtraIcons.BatteryFull
+                        InfoChip(icon, text, spoken, null, accent = low) {}
                     }
                 }
             }
@@ -208,6 +223,43 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
 }
 
 private const val LOW_BATTERY = 15
+
+/**
+ * The date, then the weather after a dot on the same line. When the two don't fit side by side (a narrow screen, a
+ * large font), the weather goes under the date, without the dot. Either one can be absent; the dot only shows between
+ * two.
+ */
+@Composable
+private fun DateLine(date: (@Composable () -> Unit)?, weather: @Composable () -> Unit) {
+    val style = LocalLauncherStyle.current
+    Layout(
+        content = {
+            Box { date?.invoke() }
+            Text("  ·  ", style = style.date, maxLines = 1, modifier = Modifier.clearAndSetSemantics {})
+            Box { weather() }
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val datePlaceable = measurables[0].measure(loose)
+        val dot = measurables[1].measure(loose)
+        val weatherPlaceable = measurables[2].measure(loose)
+        val both = datePlaceable.width > 0 && weatherPlaceable.width > 0
+        val dotWidth = if (both) dot.width else 0
+        if (datePlaceable.width + dotWidth + weatherPlaceable.width <= constraints.maxWidth) {
+            val height = maxOf(datePlaceable.height, weatherPlaceable.height)
+            layout(datePlaceable.width + dotWidth + weatherPlaceable.width, height) {
+                datePlaceable.place(0, (height - datePlaceable.height) / 2)
+                if (both) dot.place(datePlaceable.width, (height - dot.height) / 2)
+                weatherPlaceable.place(datePlaceable.width + dotWidth, (height - weatherPlaceable.height) / 2)
+            }
+        } else {
+            layout(maxOf(datePlaceable.width, weatherPlaceable.width), datePlaceable.height + weatherPlaceable.height) {
+                datePlaceable.place(0, 0)
+                weatherPlaceable.place(0, datePlaceable.height)
+            }
+        }
+    }
+}
 
 /** A chip arriving or leaving: it fades while its width opens from, or closes to, its start edge. */
 private val ChipIn: EnterTransition = expandHorizontally(Motion.Size, Alignment.Start) + Motion.FadeIn
@@ -387,7 +439,16 @@ internal fun batteryText(b: Battery): Pair<String, String> = when {
     b.charging && b.fullInMs > 0 -> "${b.level}%  ·  full in ${duration(b.fullInMs)}" to
         "Charging, ${b.level} percent, full in ${spokenDuration(roundedUp(b.fullInMs))}"
     b.charging -> "${b.level}%  ·  charging" to "Charging, ${b.level} percent"
+    // Only with the chip set to show all the time.
+    b.level > LOW_BATTERY -> "${b.level}%" to "Battery ${b.level} percent"
     else -> "${b.level}% battery" to "Battery low, ${b.level} percent"
+}
+
+/** Whether the clock and its chips use 24-hour time: the setting, or the system's own when it says to follow that. */
+internal fun is24Hour(format: TimeFormat, system: Boolean) = when (format) {
+    TimeFormat.SYSTEM -> system
+    TimeFormat.H12 -> false
+    TimeFormat.H24 -> true
 }
 
 internal fun clockPattern(locale: Locale, is24h: Boolean, withDay: Boolean) =

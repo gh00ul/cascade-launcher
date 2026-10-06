@@ -1,4 +1,6 @@
 <resources>
     <string name="app_name">Cascade</string>
     <string name="settings_title">Cascade settings</string>
+    <string name="lock_service_label">Cascade double-tap to lock</string>
+    <string name="lock_service_description">Only lets a double-tap on Cascade\'s home screen lock your phone. It doesn\'t read anything on your screen.</string>
 </resources>

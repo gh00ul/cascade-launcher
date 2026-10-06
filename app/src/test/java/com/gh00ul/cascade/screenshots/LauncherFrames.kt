@@ -211,7 +211,7 @@ internal fun HomeScreen(
             else (listState.firstVisibleItemScrollOffset / homeHeightPx).coerceIn(0f, 1f)
         }
 
-        Box(Modifier.fillMaxSize().homeScrim(style.scrim, progress))
+        Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress))
 
         LazyColumn(
             state = listState,
@@ -237,6 +237,7 @@ internal fun HomeScreen(
                     onAppLongPress = {},
                     onOpenNotification = { _, _ -> },
                     onEmptyLongPress = {},
+                    onEmptyDoubleTap = {},
                     expandedKey = expandedKey,
                     onToggleExpand = {},
                     media = media,
@@ -291,6 +292,9 @@ internal fun HomeScreen(
                 icons = icons,
                 showIcons = settings.showIcons,
                 iconSize = settings.iconSize.listDp.dp,
+                excluded = if (settings.hiddenInSearch) emptySet() else settings.hidden,
+                searchWeb = settings.searchWeb,
+                autoLaunchSingleMatch = settings.autoLaunchSingleMatch,
                 onLaunch = { _, _ -> },
                 onLongPress = {},
                 onDismiss = onSearchDismiss,

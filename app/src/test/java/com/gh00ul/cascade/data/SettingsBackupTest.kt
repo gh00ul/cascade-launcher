@@ -4,6 +4,7 @@ import android.app.Application
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -29,9 +30,24 @@ class SettingsBackupTest {
         showCalendar = true,
         showBattery = false,
         autoUpdateCheck = false,
-        swipeDownAction = SwipeDownAction.SEARCH,
+        swipeDownAction = SwipeDownAction.QUICK_SETTINGS,
         favoritesSeeded = true,
         notificationPromptDismissed = true,
+        timeFormat = TimeFormat.H24,
+        showDate = false,
+        showAlarm = false,
+        showTimers = false,
+        wallpaperDim = WallpaperDim.MEDIUM,
+        hideStatusBar = true,
+        haptics = false,
+        doubleTapAction = DoubleTapAction.LOCK_SCREEN,
+        searchWeb = false,
+        hiddenInSearch = false,
+        autoLaunchSingleMatch = true,
+        batteryAlways = true,
+        showWeather = true,
+        weatherPlace = WeatherPlace("Zürich", 47.3769, 8.5417),
+        tempUnit = TempUnit.FAHRENHEIT,
     )
 
     private fun decode(json: String, current: LauncherSettings = LauncherSettings()) = SettingsBackup.decode(json, current)
@@ -79,15 +95,55 @@ class SettingsBackupTest {
     @Test fun unknownEnumNamesKeepTheCurrentValue() {
         val current = LauncherSettings(textColor = TextColor.LIGHT, iconSize = IconSize.LARGE, clockStyle = ClockStyle.BOLD)
         val restored = decode(
-            """{"cascadeSettingsVersion":1,"iconSize":"HUGE","clockStyle":"FLIP","textColor":"PURPLE","swipeDownAction":"SEARCH"}""",
+            """{"cascadeSettingsVersion":1,"iconSize":"HUGE","clockStyle":"FLIP","textColor":"PURPLE","swipeDownAction":"SEARCH",""" +
+                """"timeFormat":"H36","wallpaperDim":"MAX","doubleTapAction":"WAVE","tempUnit":"KELVIN"}""",
             current,
         )
         assertEquals(current.copy(swipeDownAction = SwipeDownAction.SEARCH), restored)
     }
 
+    @Test fun enumsAreStoredByName() {
+        val root = JSONObject(SettingsBackup.encode(full))
+        assertEquals("QUICK_SETTINGS", root.getString("swipeDownAction"))
+        assertEquals("LOCK_SCREEN", root.getString("doubleTapAction"))
+        assertEquals("MEDIUM", root.getString("wallpaperDim"))
+        // A backup from before QUICK_SETTINGS and NOTHING existed still restores its choice.
+        assertEquals(SwipeDownAction.SEARCH, decode("""{"cascadeSettingsVersion":1,"swipeDownAction":"SEARCH"}""")?.swipeDownAction)
+        assertEquals(SwipeDownAction.NOTHING, decode("""{"cascadeSettingsVersion":1,"swipeDownAction":"NOTHING"}""")?.swipeDownAction)
+    }
+
+    @Test fun weatherPlaceIsANestedObject() {
+        val place = JSONObject(SettingsBackup.encode(full)).getJSONObject("weatherPlace")
+        assertEquals(setOf("name", "lat", "lon"), place.keys().asSequence().toSet())
+        assertEquals("Zürich", place.getString("name"))
+        assertEquals(47.3769, place.getDouble("lat"), 0.0)
+        assertEquals(8.5417, place.getDouble("lon"), 0.0)
+        // No place is stored as null, which restores as no place.
+        assertTrue(JSONObject(SettingsBackup.encode(LauncherSettings())).isNull("weatherPlace"))
+        assertNull(decode("""{"cascadeSettingsVersion":1,"weatherPlace":null}""", full)?.weatherPlace)
+    }
+
+    @Test fun malformedWeatherPlaceKeepsTheCurrentOne() {
+        for (place in listOf(
+            """{"name":"Nowhere","lat":95,"lon":0}""",
+            """{"name":"Nowhere","lat":0,"lon":-181}""",
+            """{"lat":1,"lon":2}""",
+            """{"name":"Nowhere","lat":"north","lon":2}""",
+            """"Zürich"""",
+            "[]",
+            "3",
+        )) {
+            assertEquals(place, full.weatherPlace, decode("""{"cascadeSettingsVersion":1,"weatherPlace":$place}""", full)?.weatherPlace)
+        }
+        assertEquals(
+            WeatherPlace("Oslo", 59.91, 10.75),
+            decode("""{"cascadeSettingsVersion":1,"weatherPlace":{"name":"Oslo","lat":59.91,"lon":10.75,"extra":1}}""", full)?.weatherPlace,
+        )
+    }
+
     @Test fun unknownKeysAndNewerVersionsStillLoad() {
         val restored = decode(
-            """{"cascadeSettingsVersion":7,"wallpaperDim":0.4,"gestures":{"up":"drawer"},"monochromeIcons":true}""",
+            """{"cascadeSettingsVersion":7,"dockStyle":0.4,"gestures":{"up":"drawer"},"monochromeIcons":true}""",
             full.copy(monochromeIcons = false),
         )
         assertEquals(full, restored)
@@ -97,7 +153,7 @@ class SettingsBackupTest {
         val current = full.copy(favoritesSeeded = false)
         val restored = decode(
             """{"cascadeSettingsVersion":1,"favorites":"a,b","showIcons":"yes","iconSize":2,"renames":["a"],"hidden":""" +
-                """["h",3,null,true,"i"],"showBattery":null}""",
+                """["h",3,null,true,"i"],"showBattery":null,"wallpaperDim":0.4,"haptics":"off","timeFormat":24}""",
             current,
         )
         // Nothing replaced the favorites, so seeding is left alone too.
@@ -168,6 +224,11 @@ class SettingsBackupTest {
 
     @Test fun summaryLeavesOutEmptyListsAndUnchangedSettings() {
         assertEquals("1 other setting changes", SettingsBackup.summary(LauncherSettings(), LauncherSettings(showCalendar = true)))
+        val place = WeatherPlace("Oslo", 59.91, 10.75)
+        assertEquals(
+            "3 other settings change",
+            SettingsBackup.summary(LauncherSettings(), LauncherSettings(haptics = false, weatherPlace = place, tempUnit = TempUnit.CELSIUS)),
+        )
         // A reordered list has the same count but still changes.
         val current = LauncherSettings(favorites = listOf("a", "b"))
         assertEquals("2 favorites (now 2)", SettingsBackup.summary(current, current.copy(favorites = listOf("b", "a"))))

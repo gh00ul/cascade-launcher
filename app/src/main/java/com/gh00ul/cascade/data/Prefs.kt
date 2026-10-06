@@ -8,10 +8,26 @@ import kotlinx.coroutines.flow.updateAndGet
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class SwipeDownAction { NOTIFICATIONS, SEARCH }
+/** Swiping down on the home page while it's at the top. */
+enum class SwipeDownAction { NOTIFICATIONS, QUICK_SETTINGS, SEARCH, NOTHING }
+
+/** Double-tapping empty space on the home page. LOCK_SCREEN needs Cascade's accessibility service (Android 9+). */
+enum class DoubleTapAction { NOTHING, LOCK_SCREEN, NOTIFICATIONS, SEARCH }
+
+/** The clock and the times on its chips: follow the system setting, or force 12- or 24-hour. */
+enum class TimeFormat { SYSTEM, H12, H24 }
+
+/** A dark (or, with dark text, light) tint over the wallpaper on the home page, for text over busy wallpapers. */
+enum class WallpaperDim(val alpha: Float) { OFF(0f), LOW(0.15f), MEDIUM(0.3f), HIGH(0.45f) }
 
 /** Text over the wallpaper: follow the wallpaper's brightness, or force white / dark. */
 enum class TextColor { AUTO, LIGHT, DARK }
+
+/** Temperatures: by the region's convention (Fahrenheit in the US and a few others), or forced. */
+enum class TempUnit { AUTO, CELSIUS, FAHRENHEIT }
+
+/** Where the weather is for: a place picked in Settings, by name and coordinates. */
+data class WeatherPlace(val name: String, val latitude: Double, val longitude: Double)
 
 /** Icon sizes in dp for the home screen favorites and the A–Z list. */
 enum class IconSize(val homeDp: Int, val listDp: Int) {
@@ -44,6 +60,31 @@ data class LauncherSettings(
     val swipeDownAction: SwipeDownAction = SwipeDownAction.NOTIFICATIONS,
     val favoritesSeeded: Boolean = false,
     val notificationPromptDismissed: Boolean = false,
+    val timeFormat: TimeFormat = TimeFormat.SYSTEM,
+    /** The date line under the clock. */
+    val showDate: Boolean = true,
+    /** The next-alarm chip under the clock. */
+    val showAlarm: Boolean = true,
+    /** Running timers, stopwatches and calls (from notifications) as chips under the clock. */
+    val showTimers: Boolean = true,
+    val wallpaperDim: WallpaperDim = WallpaperDim.OFF,
+    /** Hide the status bar on the home screen; a swipe from the top edge still shows it for a moment. */
+    val hideStatusBar: Boolean = false,
+    /** Vibration on long-press, swipes, the alphabet wave and the player's buttons. */
+    val haptics: Boolean = true,
+    val doubleTapAction: DoubleTapAction = DoubleTapAction.NOTHING,
+    /** The "Search the web" row in search (and Go searching the web when no app matches). */
+    val searchWeb: Boolean = true,
+    /** Hidden apps still show up in search results. */
+    val hiddenInSearch: Boolean = true,
+    /** Search opens the app by itself as soon as exactly one app matches what you typed. */
+    val autoLaunchSingleMatch: Boolean = false,
+    /** The battery chip shows all the time, not only while charging or low. */
+    val batteryAlways: Boolean = false,
+    /** Current weather beside the date, from Open-Meteo for [weatherPlace]. Off until a place is picked. */
+    val showWeather: Boolean = false,
+    val weatherPlace: WeatherPlace? = null,
+    val tempUnit: TempUnit = TempUnit.AUTO,
 )
 
 class Prefs(context: Context) {
@@ -86,6 +127,23 @@ class Prefs(context: Context) {
             ?: SwipeDownAction.NOTIFICATIONS,
         favoritesSeeded = sp.getBoolean(SEEDED, false),
         notificationPromptDismissed = sp.getBoolean(NOTIFICATION_PROMPT, false),
+        timeFormat = sp.getString(TIME_FORMAT, null)?.let { name -> TimeFormat.entries.firstOrNull { it.name == name } } ?: TimeFormat.SYSTEM,
+        showDate = sp.getBoolean(SHOW_DATE, true),
+        showAlarm = sp.getBoolean(SHOW_ALARM, true),
+        showTimers = sp.getBoolean(SHOW_TIMERS, true),
+        wallpaperDim = sp.getString(WALLPAPER_DIM, null)?.let { name -> WallpaperDim.entries.firstOrNull { it.name == name } } ?: WallpaperDim.OFF,
+        hideStatusBar = sp.getBoolean(HIDE_STATUS_BAR, false),
+        haptics = sp.getBoolean(HAPTICS, true),
+        doubleTapAction = sp.getString(DOUBLE_TAP, null)
+            ?.let { name -> DoubleTapAction.entries.firstOrNull { it.name == name } }
+            ?: DoubleTapAction.NOTHING,
+        searchWeb = sp.getBoolean(SEARCH_WEB, true),
+        hiddenInSearch = sp.getBoolean(HIDDEN_IN_SEARCH, true),
+        autoLaunchSingleMatch = sp.getBoolean(AUTO_LAUNCH, false),
+        batteryAlways = sp.getBoolean(BATTERY_ALWAYS, false),
+        showWeather = sp.getBoolean(SHOW_WEATHER, false),
+        weatherPlace = sp.getString(WEATHER_PLACE, null)?.let(::parsePlace),
+        tempUnit = sp.getString(TEMP_UNIT, null)?.let { name -> TempUnit.entries.firstOrNull { it.name == name } } ?: TempUnit.AUTO,
     )
 
     private fun write(s: LauncherSettings) {
@@ -106,6 +164,21 @@ class Prefs(context: Context) {
             .putString(SWIPE_DOWN, s.swipeDownAction.name)
             .putBoolean(SEEDED, s.favoritesSeeded)
             .putBoolean(NOTIFICATION_PROMPT, s.notificationPromptDismissed)
+            .putString(TIME_FORMAT, s.timeFormat.name)
+            .putBoolean(SHOW_DATE, s.showDate)
+            .putBoolean(SHOW_ALARM, s.showAlarm)
+            .putBoolean(SHOW_TIMERS, s.showTimers)
+            .putString(WALLPAPER_DIM, s.wallpaperDim.name)
+            .putBoolean(HIDE_STATUS_BAR, s.hideStatusBar)
+            .putBoolean(HAPTICS, s.haptics)
+            .putString(DOUBLE_TAP, s.doubleTapAction.name)
+            .putBoolean(SEARCH_WEB, s.searchWeb)
+            .putBoolean(HIDDEN_IN_SEARCH, s.hiddenInSearch)
+            .putBoolean(AUTO_LAUNCH, s.autoLaunchSingleMatch)
+            .putBoolean(BATTERY_ALWAYS, s.batteryAlways)
+            .putBoolean(SHOW_WEATHER, s.showWeather)
+            .putString(WEATHER_PLACE, s.weatherPlace?.let(::placeJson))
+            .putString(TEMP_UNIT, s.tempUnit.name)
             .apply()
     }
 
@@ -126,8 +199,34 @@ class Prefs(context: Context) {
         const val SWIPE_DOWN = "swipe_down"
         const val SEEDED = "favorites_seeded"
         const val NOTIFICATION_PROMPT = "notification_prompt_dismissed"
+        const val TIME_FORMAT = "time_format"
+        const val SHOW_DATE = "show_date"
+        const val SHOW_ALARM = "show_alarm"
+        const val SHOW_TIMERS = "show_timers"
+        const val WALLPAPER_DIM = "wallpaper_dim"
+        const val HIDE_STATUS_BAR = "hide_status_bar"
+        const val HAPTICS = "haptics"
+        const val DOUBLE_TAP = "double_tap"
+        const val SEARCH_WEB = "search_web"
+        const val HIDDEN_IN_SEARCH = "hidden_in_search"
+        const val AUTO_LAUNCH = "auto_launch_single_match"
+        const val BATTERY_ALWAYS = "battery_always"
+        const val SHOW_WEATHER = "show_weather"
+        const val WEATHER_PLACE = "weather_place"
+        const val TEMP_UNIT = "temp_unit"
     }
 }
+
+/** A [WeatherPlace] as a JSON object (name, lat, lon); SettingsBackup stores it the same way. */
+internal fun placeJson(place: WeatherPlace): String =
+    JSONObject().put("name", place.name).put("lat", place.latitude).put("lon", place.longitude).toString()
+
+/** The place in [json], or null when it's malformed or its coordinates are out of range. */
+internal fun parsePlace(json: String): WeatherPlace? = runCatching {
+    val obj = JSONObject(json)
+    WeatherPlace(obj.getString("name"), obj.getDouble("lat"), obj.getDouble("lon"))
+        .takeIf { it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 }
+}.getOrNull()
 
 private fun parseList(json: String): List<String> = runCatching {
     val array = JSONArray(json)

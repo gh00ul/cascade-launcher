@@ -36,6 +36,22 @@ object SettingsBackup {
         .put("swipeDownAction", settings.swipeDownAction.name)
         .put("favoritesSeeded", settings.favoritesSeeded)
         .put("notificationPromptDismissed", settings.notificationPromptDismissed)
+        .put("timeFormat", settings.timeFormat.name)
+        .put("showDate", settings.showDate)
+        .put("showAlarm", settings.showAlarm)
+        .put("showTimers", settings.showTimers)
+        .put("wallpaperDim", settings.wallpaperDim.name)
+        .put("hideStatusBar", settings.hideStatusBar)
+        .put("haptics", settings.haptics)
+        .put("doubleTapAction", settings.doubleTapAction.name)
+        .put("searchWeb", settings.searchWeb)
+        .put("hiddenInSearch", settings.hiddenInSearch)
+        .put("autoLaunchSingleMatch", settings.autoLaunchSingleMatch)
+        .put("batteryAlways", settings.batteryAlways)
+        .put("showWeather", settings.showWeather)
+        // {name, lat, lon} as Prefs stores it, or null for no place; put(key, null) would drop the key instead.
+        .put("weatherPlace", settings.weatherPlace?.let { JSONObject(placeJson(it)) } ?: JSONObject.NULL)
+        .put("tempUnit", settings.tempUnit.name)
         .toString(2)
 
     /** [current] with every field the backup carries replaced; null when [json] isn't a Cascade settings backup. */
@@ -72,6 +88,26 @@ object SettingsBackup {
             // Never cleared: AppRepository.seedFavorites would otherwise put the defaults over the restored favorites.
             favoritesSeeded = current.favoritesSeeded || root.bool("favoritesSeeded") == true || favorites != null,
             notificationPromptDismissed = root.bool("notificationPromptDismissed") ?: current.notificationPromptDismissed,
+            timeFormat = root.enum("timeFormat", TimeFormat.entries) ?: current.timeFormat,
+            showDate = root.bool("showDate") ?: current.showDate,
+            showAlarm = root.bool("showAlarm") ?: current.showAlarm,
+            showTimers = root.bool("showTimers") ?: current.showTimers,
+            wallpaperDim = root.enum("wallpaperDim", WallpaperDim.entries) ?: current.wallpaperDim,
+            hideStatusBar = root.bool("hideStatusBar") ?: current.hideStatusBar,
+            haptics = root.bool("haptics") ?: current.haptics,
+            doubleTapAction = root.enum("doubleTapAction", DoubleTapAction.entries) ?: current.doubleTapAction,
+            searchWeb = root.bool("searchWeb") ?: current.searchWeb,
+            hiddenInSearch = root.bool("hiddenInSearch") ?: current.hiddenInSearch,
+            autoLaunchSingleMatch = root.bool("autoLaunchSingleMatch") ?: current.autoLaunchSingleMatch,
+            batteryAlways = root.bool("batteryAlways") ?: current.batteryAlways,
+            showWeather = root.bool("showWeather") ?: current.showWeather,
+            // Null is a value here (no place picked), not a missing key; a malformed or out-of-range place is skipped.
+            weatherPlace = when (val place = root.opt("weatherPlace")) {
+                JSONObject.NULL -> null
+                is JSONObject -> parsePlace(place.toString()) ?: current.weatherPlace
+                else -> current.weatherPlace
+            },
+            tempUnit = root.enum("tempUnit", TempUnit.entries) ?: current.tempUnit,
         )
     }
 
@@ -94,7 +130,7 @@ object SettingsBackup {
     }
 
     /** The user-facing settings besides the three app lists. */
-    private val SCALARS = listOf<(LauncherSettings) -> Any>(
+    private val SCALARS = listOf<(LauncherSettings) -> Any?>(
         LauncherSettings::showIcons,
         LauncherSettings::monochromeIcons,
         LauncherSettings::showNotificationPreviews,
@@ -106,6 +142,21 @@ object SettingsBackup {
         LauncherSettings::showBattery,
         LauncherSettings::autoUpdateCheck,
         LauncherSettings::swipeDownAction,
+        LauncherSettings::timeFormat,
+        LauncherSettings::showDate,
+        LauncherSettings::showAlarm,
+        LauncherSettings::showTimers,
+        LauncherSettings::wallpaperDim,
+        LauncherSettings::hideStatusBar,
+        LauncherSettings::haptics,
+        LauncherSettings::doubleTapAction,
+        LauncherSettings::searchWeb,
+        LauncherSettings::hiddenInSearch,
+        LauncherSettings::autoLaunchSingleMatch,
+        LauncherSettings::batteryAlways,
+        LauncherSettings::showWeather,
+        LauncherSettings::weatherPlace,
+        LauncherSettings::tempUnit,
     )
 
     /** "6 favorites (now 5)"; null when both are empty. The same count with other contents still reads "now". */

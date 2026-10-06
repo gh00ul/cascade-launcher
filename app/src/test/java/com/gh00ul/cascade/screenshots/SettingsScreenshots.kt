@@ -25,8 +25,8 @@ import org.robolectric.annotation.Config
 /**
  * The settings screen, which reads LauncherApplication's prefs and repository. Robolectric lists no launchable
  * apps, so the favorites and hidden counts come straight from the stored keys. Cascade is the default home app
- * (the manifest's HOME filter is the only one) and has notification access, so Setup sits above About; SetupNeeded
- * takes the access away. The About row shows [VERSION], not the build's `git describe` version, so the shot doesn't
+ * (the manifest's HOME filter is the only one) and has notification access, so Setup sits above Backup and About;
+ * SetupNeeded takes the access away. The About row shows [VERSION], not the build's `git describe` version, so the shot doesn't
  * change with every commit.
  */
 @Config(application = LauncherApplication::class)

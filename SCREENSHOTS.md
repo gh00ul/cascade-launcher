@@ -13,7 +13,7 @@ From Git Bash in the repo root:
 - **Only some shots:** add `-PcascadeScreenshotFilter=Home,Media_Live`. Each comma-separated part is a case-insensitive regex matched against shot names, and a shot matching any part is rendered. Use commas rather than `|`, which `gradlew.bat` reads as a pipe. A run narrowed with `-PcascadeScreenshotFilter` or Gradle's `--tests` leaves the other PNGs in place; a full run clears the folder first.
 - **Output:** `app/build/screenshots/<Area>_<Thing>_<variant>.png` (gitignored). The run ends by printing the folder and the PNG count, and each test logs `Screenshot written: <path>`.
 - **Speed:** about 20 s once the build is warm.
-- **Plain runs:** `./gradlew.bat testDebugUnitTest` skips the screenshot classes and runs only the unit tests (search, prefs, notification store, player state, A–Z sections, updater, clock text, clock lifecycle, calendar choice, row recomposition, motion settling).
+- **Plain runs:** `./gradlew.bat testDebugUnitTest` skips the screenshot classes and runs only the unit tests (search, prefs, notification store, player state, A–Z sections, updater, clock text, clock lifecycle, calendar choice, row recomposition, motion settling, settings backup).
 - **Use `testDebugUnitTest`, not `test`:** `test` also runs the release unit tests, which would render everything twice.
 
 ## Variants and canvas
@@ -33,7 +33,7 @@ From Git Bash in the repo root:
 | Rows | `AppRow_FavoritePreview`, `AppRow_Expanded`, `AppRow_List` (with the work-profile twin), `Media_Playing`, `Media_PausedResting`, `Media_NoArt`, `Media_Live`, `Media_Notifications` (the player's notifications swiped open) |
 | List | `Search_Results` ("ca" typed), `List_Top` (the search pill, the gear and the first sections), `AlphabetWave_Idle` (scrolled to the A–Z list), `AlphabetWave_Dragging` (a finger held on M: the wave, the accent letter and the list jumped to M) |
 | Sheets | `Sheet_AppActions` (long-press on Messages: notifications, shortcuts and actions), `Sheet_HomeMenu` (long-press on the home screen) |
-| Settings | `Settings_Main`, `Settings_MainMiddle` (the Appearance section), `Settings_MainBottom` (everything granted, so Setup sits above About), `Settings_SetupNeeded` (notification access off, so Setup comes first) |
+| Settings | `Settings_Main`, `Settings_MainMiddle` (the Appearance section), `Settings_MainBottom` (everything granted, so Setup sits above Backup and About), `Settings_SetupNeeded` (notification access off, so Setup comes first) |
 
 ## Add a shot
 

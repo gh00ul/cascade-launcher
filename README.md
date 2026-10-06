@@ -51,6 +51,8 @@ and Android won't update an app across a key change.
   version, an update card offers it. Cascade downloads the APK, makes sure it's Cascade signed with the same
   key, and hands it to Android's installer. Android restarts the home screen on the new version. You can
   also check from *Settings → About*, or turn automatic checks off.
+- **Settings backup.** *Settings → Backup* saves your favorites, hidden apps, renames and every setting to a
+  JSON file you choose. *Restore settings* loads one back after showing what it will replace.
 - **Material You.** Accent colors come from your wallpaper on Android 12+.
 - **Work profile.** Work apps appear with the work badge.
 

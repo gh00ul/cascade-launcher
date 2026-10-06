@@ -7,9 +7,12 @@ import com.gh00ul.cascade.util.hasCalendarAccess
 import com.gh00ul.cascade.data.IconSize
 import com.gh00ul.cascade.data.ClockStyle
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -39,6 +42,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -73,6 +78,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.LauncherSettings
+import com.gh00ul.cascade.data.SettingsBackup
 import com.gh00ul.cascade.data.SwipeDownAction
 import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.data.searchApps
@@ -80,6 +86,12 @@ import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.theme.LauncherTheme
 import com.gh00ul.cascade.util.LauncherActions
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.time.LocalDate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class SettingsScreen(val title: String) {
     MAIN("Cascade settings"),
@@ -186,8 +198,52 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
             !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.READ_CALENDAR)
         prefs.update { it.copy(showCalendar = granted) }
     }
+    val backupRequest = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val text = SettingsBackup.encode(prefs.settings.value)
+        // The app's scope, not the screen's, so the write still finishes if Settings closes right after the picker.
+        val app = context.launcher
+        app.scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { app.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) } != null }
+                    .getOrDefault(false)
+            }
+            Toast.makeText(app, if (ok) "Settings backed up" else "Couldn't save the backup", Toast.LENGTH_SHORT).show()
+        }
+    }
+    // The picked backup, saved so a rotation or theme switch mid-read or mid-confirmation doesn't drop it; the
+    // file's text and what it restores to are read again from it.
+    var pendingUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var pending by remember { mutableStateOf<Pair<String, LauncherSettings>?>(null) }
+    val restoreRequest = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) pendingUri = uri
+    }
+    LaunchedEffect(pendingUri) {
+        pending = null
+        val uri = pendingUri ?: return@LaunchedEffect
+        val text = withContext(Dispatchers.IO) {
+            runCatching { context.contentResolver.openInputStream(uri)?.use { it.readTextAtMost(BACKUP_MAX_BYTES) } }
+                .getOrNull()
+        }
+        // Off the main thread too: org.json recurses, so a pathologically nested file could overflow the stack.
+        val preview = text?.let {
+            withContext(Dispatchers.Default) { runCatching { SettingsBackup.decode(it, prefs.settings.value) }.getOrNull() }
+        }
+        when {
+            text == null -> {
+                Toast.makeText(context, "Couldn't read that file", Toast.LENGTH_SHORT).show()
+                pendingUri = null
+            }
+            preview == null -> {
+                Toast.makeText(context, "That file isn't a Cascade settings backup", Toast.LENGTH_SHORT).show()
+                pendingUri = null
+            }
+            else -> pending = text to preview
+        }
+    }
+    val closeRestore = { pendingUri = null; pending = null }
 
-    // Setup leads while something still needs doing; once both are granted it waits above About. Placement is
+    // Setup leads while something still needs doing; once both are granted it waits above Backup. Placement is
     // decided when the screen opens so a grant doesn't yank the row away; its summary and icon still update live.
     val setupFirst = remember { !(isDefault && hasAccess) }
     fun LazyListScope.setup() {
@@ -312,6 +368,35 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
 
         if (!setupFirst) setup()
 
+        item { Header("Backup") }
+        item {
+            SettingRow(
+                title = "Back up settings",
+                summary = "Save favorites, hidden apps, renames and all settings to a file",
+                onClick = {
+                    try {
+                        backupRequest.launch(SettingsBackup.fileName(LocalDate.now()))
+                    } catch (e: ActivityNotFoundException) {
+                        Toast.makeText(context, "No app can save files", Toast.LENGTH_SHORT).show()
+                    }
+                },
+            )
+        }
+        item {
+            SettingRow(
+                title = "Restore settings",
+                summary = "Load a backup file",
+                // Some providers type .json files loosely; decode checks the content either way.
+                onClick = {
+                    try {
+                        restoreRequest.launch(arrayOf("application/json", "application/octet-stream", "text/plain"))
+                    } catch (e: ActivityNotFoundException) {
+                        Toast.makeText(context, "No app can open files", Toast.LENGTH_SHORT).show()
+                    }
+                },
+            )
+        }
+
         item { Header("About") }
         item {
             val release = Updater.current()
@@ -340,6 +425,38 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
         }
         item { SettingRow("Free and open source", "MIT License · github.com/gh00ul/cascade-launcher") }
     }
+
+    pending?.let { (json, preview) ->
+        AlertDialog(
+            onDismissRequest = closeRestore,
+            title = { Text("Restore settings?") },
+            text = { Text(SettingsBackup.summary(settings, preview)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    // Merged again onto the latest settings, in one write.
+                    prefs.update { SettingsBackup.decode(json, it) ?: it }
+                    Toast.makeText(context, "Settings restored", Toast.LENGTH_SHORT).show()
+                    closeRestore()
+                }) { Text("Restore") }
+            },
+            dismissButton = { TextButton(onClick = closeRestore) { Text("Cancel") } },
+        )
+    }
+}
+
+/** A backup is a few KB; the cap keeps a wrong pick (a video) from filling memory. */
+private const val BACKUP_MAX_BYTES = 1 shl 20
+
+/** The stream as UTF-8 text, or null when it's longer than [limit] bytes. Reads at most [limit] + 1 bytes. */
+private fun InputStream.readTextAtMost(limit: Int): String? {
+    val out = ByteArrayOutputStream()
+    val buffer = ByteArray(8192)
+    while (out.size() <= limit) {
+        val n = read(buffer, 0, minOf(buffer.size, limit + 1 - out.size()))
+        if (n < 0) return out.toByteArray().decodeToString()
+        out.write(buffer, 0, n)
+    }
+    return null
 }
 
 @Composable

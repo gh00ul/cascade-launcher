@@ -281,8 +281,10 @@ fun MediaRow(
                     .then(
                         if (restFraction != null) {
                             Modifier.drawBehind {
-                                val start = (if (showArt) iconSize + 24.dp else 8.dp).toPx()
-                                val end = size.width - 4.dp.toPx()
+                                // Both ends stay clear of the 20dp corner clip, which cuts in about 11dp at this height.
+                                val inset = 16.dp.toPx()
+                                val start = maxOf((if (showArt) iconSize + 24.dp else 8.dp).toPx(), inset)
+                                val end = size.width - inset
                                 val y = size.height - 3.dp.toPx()
                                 val stroke = 2.dp.toPx()
                                 val stop = start + (end - start) * restFraction

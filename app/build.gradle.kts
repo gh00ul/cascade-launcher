@@ -77,9 +77,40 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        // Robolectric needs the merged debug manifest and resources (HOME activity, themes, versionName).
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+
+// JVM screenshot tests (src/test/.../screenshots, see SCREENSHOTS.md) only run with -PcascadeScreenshots,
+// which also limits the run to them; ordinary unit test runs skip them.
+val screenshots = providers.gradleProperty("cascadeScreenshots").isPresent
+// Gradle's --tests (also what an IDE gutter run passes) narrows a run, like -PcascadeScreenshotFilter does.
+val testsNarrowed = gradle.startParameter.taskRequests.any { request -> request.args.any { it.startsWith("--tests") } }
+tasks.withType<Test>().configureEach {
+    // Robolectric on the JDK 21 runtime reaches into FileDescriptor internals and loads its native graphics library.
+    jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--enable-native-access=ALL-UNNAMED")
+    maxHeapSize = "2g"
+    if (!screenshots) exclude("com/gh00ul/cascade/screenshots/**")
+    else {
+        filter.includeTestsMatching("com.gh00ul.cascade.screenshots.*")
+        val dir = layout.buildDirectory.dir("screenshots").get().asFile
+        val shotFilter = providers.gradleProperty("cascadeScreenshotFilter").getOrElse("")
+        systemProperty("cascade.screenshots.dir", dir.path)
+        systemProperty("cascade.screenshots.filter", shotFilter)
+        outputs.upToDateWhen { false }
+        // A full run starts from an empty folder, so renamed or removed shots don't linger. A run narrowed by
+        // -PcascadeScreenshotFilter or --tests keeps the other PNGs.
+        if (shotFilter.isEmpty() && !testsNarrowed) doFirst { dir.listFiles { f -> f.extension == "png" }?.forEach { it.delete() } }
+        doLast { println("Screenshots: ${dir.path} (${dir.listFiles { f -> f.extension == "png" }?.size ?: 0} PNGs)") }
+    }
+}
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.10.01"))
@@ -92,4 +123,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.76.0")
+    testImplementation(platform("androidx.compose:compose-bom:2025.10.01"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
 }

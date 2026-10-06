@@ -112,7 +112,7 @@ class SettingsActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
+internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
     val launcher = LocalContext.current.launcher
     val settings by launcher.prefs.settings.collectAsStateWithLifecycle()
     val apps by launcher.repository.apps.collectAsStateWithLifecycle()

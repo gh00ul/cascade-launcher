@@ -281,8 +281,11 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     // Hidden from TalkBack while search covers it.
                     .then(if (searchOpen) Modifier.clearAndSetSemantics {} else Modifier)
                     .nestedScroll(pullDown)
-                    // Fade rows out as they slide under the status bar.
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    // Fade rows out as they slide under the status bar. Hidden under search, whose scrim is see-through.
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                        alpha = if (searchOpen) 0f else 1f
+                    }
                     .drawWithContent {
                         drawContent()
                         val top = statusTop.toPx()
@@ -373,7 +376,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     .fillMaxWidth()
                     .height(statusTop + 16.dp)
                     .drawBehind {
-                        drawRect(Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.5f), Color.Transparent)), alpha = progress())
+                        drawRect(Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.5f), Color.Transparent)), alpha = if (searchOpen) 0f else progress())
                     },
             )
 

@@ -17,6 +17,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -214,7 +215,11 @@ internal fun ExpandedNotifications(notifications: List<AppNotification>, startPa
             key(n.key) { NotificationItem(n, onOpen) }
         }
         if (notifications.count { it.clearable } > 1) {
-            TextButton(onClick = { NotificationStore.dismissAll(notifications) }) {
+            // The same 8dp start padding as the notifications above, so "Clear all" lines up with them.
+            TextButton(
+                onClick = { NotificationStore.dismissAll(notifications) },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+            ) {
                 Text("Clear all", style = style.small.copy(color = style.accent, fontWeight = FontWeight.Medium))
             }
         }
@@ -267,7 +272,7 @@ private fun NotificationItem(notification: AppNotification, onOpen: (AppNotifica
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                val now = System.currentTimeMillis()
+                val now = LocalNow.current()
                 val age = if (now - notification.postTime < DateUtils.MINUTE_IN_MILLIS) "now" else {
                     DateUtils.getRelativeTimeSpanString(notification.postTime, now, DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
                 }

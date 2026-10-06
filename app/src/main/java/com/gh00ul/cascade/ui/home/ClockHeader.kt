@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,6 +68,9 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
+/** The wall clock the home screen reads. Screenshot tests provide a fixed instant. */
+internal val LocalNow = staticCompositionLocalOf<() -> Long> { System::currentTimeMillis }
+
 /**
  * Time, date, and a row of chips for what's next: the alarm, running timers/stopwatches/calls (ticking live),
  * the next calendar event and charging progress. Tap the time for alarms and the date for the calendar.
@@ -75,11 +79,12 @@ import kotlin.math.abs
 @Composable
 fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val clock = LocalNow.current
+    var now by remember { mutableLongStateOf(clock()) }
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, intent: Intent) {
-                now = System.currentTimeMillis()
+                now = clock()
             }
         }
         val filter = IntentFilter().apply {
@@ -91,7 +96,7 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
         ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         onDispose { context.unregisterReceiver(receiver) }
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { now = System.currentTimeMillis() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { now = clock() }
 
     val style = LocalLauncherStyle.current
     val locale = LocalConfiguration.current.locales[0]
@@ -110,9 +115,9 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
         when (settings.clockStyle) {
             ClockStyle.CLASSIC -> Text(time, style = style.clock, modifier = openAlarms)
             ClockStyle.BOLD -> Text(time, style = style.clockBold, modifier = openAlarms)
+            // One two-line Text, so clockStacked's line height sets the gap between hours and minutes.
             ClockStyle.STACKED -> Column(openAlarms.clearAndSetSemantics { contentDescription = time }) {
-                Text(SimpleDateFormat(if (is24h) "HH" else "hh", locale).format(Date(now)), style = style.clockStacked)
-                Text(SimpleDateFormat("mm", locale).format(Date(now)), style = style.clockStacked)
+                Text(SimpleDateFormat(if (is24h) "HH\nmm" else "hh\nmm", locale).format(Date(now)), style = style.clockStacked)
             }
         }
         Text(
@@ -201,10 +206,11 @@ private fun InfoChip(
 private fun TimerChips(timers: List<LiveTimer>) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val now by produceState(System.currentTimeMillis(), lifecycle) {
+    val clock = LocalNow.current
+    val now by produceState(clock(), lifecycle, clock) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
-                value = System.currentTimeMillis()
+                value = clock()
                 delay(1_000 - value % 1_000)
             }
         }
@@ -232,6 +238,7 @@ private fun TimerChips(timers: List<LiveTimer>) {
 private fun rememberNextEvent(enabled: Boolean, now: Long): CalendarEvent? {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val clock = LocalNow.current
     val visible by lifecycle.currentStateFlow.collectAsStateWithLifecycle()
     val event by produceState<CalendarEvent?>(null, enabled, now / 300_000, visible.isAtLeast(Lifecycle.State.RESUMED)) {
         if (!enabled) {
@@ -239,7 +246,7 @@ private fun rememberNextEvent(enabled: Boolean, now: Long): CalendarEvent? {
             return@produceState
         }
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@produceState
-        value = withContext(Dispatchers.IO) { nextCalendarEvent(context, System.currentTimeMillis()) }
+        value = withContext(Dispatchers.IO) { nextCalendarEvent(context, clock()) }
     }
     // Drop an event that ended since the last query.
     return event?.takeIf { it.allDay || it.end > now }

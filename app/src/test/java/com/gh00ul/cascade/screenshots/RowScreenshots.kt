@@ -56,17 +56,23 @@ class RowScreenshots : ScreenshotTest() {
     }
 
     @androidx.compose.runtime.Composable
-    private fun Player(state: NowPlayingState, resting: Boolean = false, withIcon: Boolean = true) = RowBackdrop {
+    private fun Player(
+        state: NowPlayingState,
+        resting: Boolean = false,
+        withIcon: Boolean = true,
+        notifications: List<AppNotification> = emptyList(),
+        expanded: Boolean = false,
+    ) = RowBackdrop {
         MediaRow(
             state = state,
             appLabel = FakeApps.music.label,
             icon = if (withIcon) icons[FakeApps.music.key] else null,
-            notifications = emptyList(),
+            notifications = notifications,
             showArt = true,
             iconSize = homeIcon,
             monochrome = false,
             resting = resting,
-            expanded = false,
+            expanded = expanded,
             onOpen = {},
             onLongClick = {},
             onLongClickLabel = "App options",
@@ -97,5 +103,11 @@ class RowScreenshots : ScreenshotTest() {
     @Test fun mediaLive() {
         val state = media.live()
         snap("Media_Live", Frame.Component) { Player(state) }
+    }
+
+    /** Swiped right: the player's notifications open underneath, their text on the title's column. */
+    @Test fun mediaNotifications() {
+        val state = media.playing()
+        snap("Media_Notifications", Frame.Component) { Player(state, notifications = FakeNotifications.messages(), expanded = true) }
     }
 }

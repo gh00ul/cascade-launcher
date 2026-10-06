@@ -19,8 +19,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
@@ -64,7 +66,33 @@ import com.gh00ul.cascade.data.searchApps
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.util.LauncherActions
 
-/** Full-screen search. Hidden apps still show up here. Enter opens the top hit, or searches the web. */
+/** The search pills' start padding inside the pill: tight with icons, where [SearchGlyph] centers the glyph itself. */
+internal fun searchPillStart(showIcons: Boolean) = if (showIcons) 8.dp else 16.dp
+
+/**
+ * The search pills' leading glyph and the gap after it. With icons, the glyph is centered in an [iconSize]-wide box
+ * on the rows' icon column, so the pill's text starts where app labels do; without, the pill keeps its compact layout.
+ */
+@Composable
+internal fun SearchGlyph(showIcons: Boolean, iconSize: Dp) {
+    if (showIcons) {
+        Box(Modifier.width(iconSize), contentAlignment = Alignment.Center) { Icon(Icons.Filled.Search, contentDescription = null) }
+        Spacer(Modifier.width(16.dp))
+    } else {
+        Icon(Icons.Filled.Search, contentDescription = null)
+        Spacer(Modifier.width(12.dp))
+    }
+}
+
+private val EnterTargetShape = RoundedCornerShape(16.dp)
+
+/** A soft tint on the row that Go opens, the same shape as the rows' press ripple. */
+private fun Modifier.enterTarget(content: Color) = background(content.copy(alpha = 0.08f), EnterTargetShape)
+
+/**
+ * Full-screen search. Hidden apps still show up here. Enter opens the top hit, or searches the web; that row is
+ * tinted while there's a query.
+ */
 @Composable
 fun SearchOverlay(
     apps: List<AppEntry>,
@@ -120,7 +148,8 @@ fun SearchOverlay(
                 contentColor = style.content,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                    // The results' side inset, so the field's edges line up with the rows below.
+                    .padding(horizontal = 20.dp)
                     .heightIn(min = 52.dp)
                     // Taps on the icon or padding go to the field, not through to the dismiss handler behind.
                     .pointerInput(Unit) {
@@ -130,9 +159,8 @@ fun SearchOverlay(
                         }
                     },
             ) {
-                Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Search, contentDescription = null)
-                    Spacer(Modifier.width(12.dp))
+                Row(Modifier.padding(start = searchPillStart(showIcons), end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    SearchGlyph(showIcons, iconSize)
                     BasicTextField(
                         value = query,
                         onValueChange = { query = it },
@@ -166,7 +194,7 @@ fun SearchOverlay(
                 }
             }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp)) {
-                items(results, key = { it.key }) { app ->
+                itemsIndexed(results, key = { _, app -> app.key }) { index, app ->
                     AppRow(
                         app = app,
                         icon = icons[app.key],
@@ -178,6 +206,8 @@ fun SearchOverlay(
                         onClick = { onLaunch(app, it) },
                         onLongClick = { onLongPress(app) },
                         onNotificationClick = {},
+                        // Go opens the top hit; a blank query has no results, so this is only ever set with a query.
+                        modifier = if (index == 0) Modifier.enterTarget(style.content) else Modifier,
                     )
                 }
                 if (query.isNotBlank()) {
@@ -185,6 +215,9 @@ fun SearchOverlay(
                         Row(
                             Modifier
                                 .fillMaxWidth()
+                                // With no app hits, Go searches the web.
+                                .then(if (results.isEmpty()) Modifier.enterTarget(style.content) else Modifier)
+                                .clip(EnterTargetShape)
                                 .clickable { if (LauncherActions.webSearch(context, query.trim())) onDismiss() }
                                 .padding(horizontal = 8.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,

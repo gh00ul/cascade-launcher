@@ -36,6 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.AlignmentLine
+import androidx.compose.ui.layout.LastBaseline
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -127,22 +130,20 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
         val timeFormat = remember(locale, is24h, alarmChecks) { SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale) }
         val time = timeFormat.format(Date(now))
         when (settings.clockStyle) {
-            ClockStyle.CLASSIC -> Text(time, style = style.clock, modifier = openAlarms)
-            ClockStyle.BOLD -> Text(time, style = style.clockBold, modifier = openAlarms)
+            ClockStyle.CLASSIC -> Text(time, style = style.clock, modifier = openAlarms.endBelowBaseline())
+            ClockStyle.BOLD -> Text(time, style = style.clockBold, modifier = openAlarms.endBelowBaseline())
             // One two-line Text, so clockStacked's line height sets the gap between hours and minutes.
             ClockStyle.STACKED -> Column(openAlarms.clearAndSetSemantics { contentDescription = time }) {
                 val stackedFormat = remember(locale, is24h, alarmChecks) { SimpleDateFormat(if (is24h) "HH\nmm" else "hh\nmm", locale) }
-                Text(stackedFormat.format(Date(now)), style = style.clockStacked)
+                Text(stackedFormat.format(Date(now)), style = style.clockStacked, modifier = Modifier.endBelowBaseline())
             }
         }
         Text(
             date,
             style = style.date,
-            modifier = Modifier
-                .padding(top = if (settings.clockStyle == ClockStyle.STACKED) 6.dp else 0.dp)
-                .clickable(interactionSource = null, indication = null, onClickLabel = "Open calendar", role = Role.Button) {
-                    LauncherActions.openCalendar(context)
-                },
+            modifier = Modifier.clickable(interactionSource = null, indication = null, onClickLabel = "Open calendar", role = Role.Button) {
+                LauncherActions.openCalendar(context)
+            },
         )
 
         val showBatteryChip = battery != null && (battery.charging || battery.level <= LOW_BATTERY)
@@ -176,6 +177,21 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
 }
 
 private const val LOW_BATTERY = 15
+
+/** From the digits' baseline to the bottom of the clock; the date's own space above its capitals adds about 4dp. */
+private val ClockToDate = 9.dp
+
+/**
+ * Ends the clock [ClockToDate] below its last baseline instead of below the font's descent, which grows with the type
+ * size, so the date sits the same distance under the digits in every style. Digits have no descenders, and nothing
+ * clips, so the glyphs still draw in full.
+ */
+private fun Modifier.endBelowBaseline() = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val baseline = placeable[LastBaseline]
+    val height = if (baseline == AlignmentLine.Unspecified) placeable.height else minOf(placeable.height, baseline + ClockToDate.roundToPx())
+    layout(placeable.width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) { placeable.place(0, 0) }
+}
 
 /**
  * A pill with an icon and a label. [text] is ellipsized when space runs out; [trailing] (a time) never is.

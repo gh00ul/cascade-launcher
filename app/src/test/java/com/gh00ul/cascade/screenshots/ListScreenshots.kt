@@ -15,6 +15,11 @@ class ListScreenshots : ScreenshotTest() {
         HomeScreen(settings, apps, favorites, icons, searchOpen = true)
     }
 
+    /** The top of the list: the search pill and the gear, then the first sections, letters on the icon column. */
+    @Test fun top() = snap("List_Top") {
+        HomeScreen(settings, apps, favorites, icons, FakeNotifications.byApp(), firstItem = 1)
+    }
+
     /** Scrolled to the list: full scrim, section letters, and the strip at rest on the end edge. */
     @Test fun alphabetWaveIdle() = snap("AlphabetWave_Idle") {
         HomeScreen(settings, apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)

@@ -6,12 +6,17 @@ import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeNotifications
 import com.gh00ul.cascade.ui.home.OnboardingCard
+import com.gh00ul.cascade.ui.home.UpdateCard
+import com.gh00ul.cascade.update.Updater
 import org.junit.Test
 
 /** The first screen: clock, chips and favorites over the wallpaper. */
 class HomeScreenshots : ScreenshotTest() {
     private fun settings(clockStyle: ClockStyle = ClockStyle.CLASSIC, iconSize: IconSize = IconSize.MEDIUM, showCalendar: Boolean = false) =
         LauncherSettings(favorites = favorites.map { it.key }, clockStyle = clockStyle, iconSize = iconSize, showCalendar = showCalendar)
+
+    /** An update as Updater would report it. Built here: no shot checks GitHub or downloads anything. */
+    private val release = Updater.Release("v0.6.0", "0.6.0", 600, "https://example.invalid/cascade.apk")
 
     /** Every chip: timer, next event, alarm, charging. The Messages favorite previews its latest message. */
     @Test fun classicWithChips() {
@@ -60,5 +65,23 @@ class HomeScreenshots : ScreenshotTest() {
                 onDismiss = {},
             )
         })
+    }
+
+    /** The update offer, in the onboarding card's place. */
+    @Test fun updateCard() = snap("Home_UpdateCard") {
+        HomeScreen(settings(), apps, favorites, icons, onboarding = {
+            UpdateCard(Updater.State.Available(release), onUpdate = {}, onDismiss = {})
+        })
+    }
+
+    @Test fun updateDownloading() = snap("Home_UpdateDownloading") {
+        HomeScreen(settings(), apps, favorites, icons, onboarding = {
+            UpdateCard(Updater.State.Downloading(release, percent = 42), onUpdate = {}, onDismiss = {})
+        })
+    }
+
+    /** First run: no favorites yet, so the hint sits where they will go. */
+    @Test fun empty() = snap("Home_Empty") {
+        HomeScreen(LauncherSettings(), apps, emptyList(), icons)
     }
 }

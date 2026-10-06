@@ -220,6 +220,7 @@ internal fun HomeScreen(
                     minHeight = homeHeight,
                     bottomInset = 0.dp,
                     favorites = favorites,
+                    showFavoritesHint = favorites.isEmpty() && (settings.favorites.isEmpty() || apps.isNotEmpty()),
                     icons = iconsState,
                     notifications = notificationsState,
                     settings = settings,
@@ -237,10 +238,12 @@ internal fun HomeScreen(
                     onboarding = onboarding,
                 )
             }
-            item(key = "header", contentType = "header") { AllAppsHeader(onSearch = {}, onSettings = {}) }
+            item(key = "header", contentType = "header") {
+                AllAppsHeader(iconSize = settings.iconSize.listDp.dp, showIcons = settings.showIcons, onSearch = {}, onSettings = {})
+            }
             items(rows, key = { it.key }, contentType = { if (it is ListRow.Section) 0 else 1 }) { row ->
                 when (row) {
-                    is ListRow.Section -> SectionHeader(row.letter)
+                    is ListRow.Section -> SectionHeader(row.letter, settings.iconSize.listDp.dp, settings.showIcons)
                     is ListRow.App -> ListAppRow(
                         app = row.app,
                         expandKey = row.expandKey,

@@ -6,6 +6,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -92,6 +100,9 @@ import kotlinx.coroutines.launch
 
 /** Index of the first A–Z row: the home page and the all-apps header come before it. */
 private const val FIRST_APP_ROW = 2
+
+/** Which card the home page shows under the clock: AnimatedContent's key, small and stable, never the cards' state. */
+private enum class HomeCardSlot { NONE, UPDATE, DEFAULT, ACCESS }
 
 /** A–Z list rows. Keys are built once per row, not each time the list asks for them while scrolling. */
 private sealed interface Row {
@@ -293,6 +304,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         }.collect { emptied -> if (emptied) expandedKey = null }
     }
     val favorites = remember(byKey, settings.favorites) { settings.favorites.mapNotNull { byKey[it] } }
+    // The first-run hint follows the visible rows, but until the list first loads it trusts the stored keys so it doesn't flash.
+    val showFavoritesHint = favorites.isEmpty() && (settings.favorites.isEmpty() || apps.isNotEmpty())
     val rows = remember(apps, settings.hidden) { buildRows(apps.filter { it.key !in settings.hidden }) }
     val letterRows = remember(rows) {
         buildMap { rows.forEachIndexed { i, row -> if (row is Row.Section && row.letter !in this) put(row.letter, i + FIRST_APP_ROW) } }
@@ -378,6 +391,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         minHeight = homeHeight,
                         bottomInset = navBottom,
                         favorites = favorites,
+                        showFavoritesHint = showFavoritesHint,
                         icons = icons,
                         notifications = notifications,
                         settings = settings,
@@ -396,36 +410,64 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         },
                         onHideMedia = NowPlaying::hide,
                         onboarding = {
-                            when {
-                                showUpdate -> UpdateCard(
-                                    state = update,
-                                    onUpdate = { Updater.install(context, it) },
-                                    onDismiss = { Updater.dismiss(context, it) },
-                                )
-                                !isDefault && !defaultPromptHidden -> OnboardingCard(
-                                    title = "Make Cascade your home screen",
-                                    body = "Set it as your default home app so the Home button brings you here.",
-                                    action = "Set as default",
-                                    onAction = { LauncherActions.requestDefaultLauncher(context, roleRequest) },
-                                    onDismiss = { defaultPromptHidden = true },
-                                )
-                                !hasNotificationAccess && !settings.notificationPromptDismissed -> OnboardingCard(
-                                    title = "See notifications beside your apps",
-                                    body = "Allow notification access to show a dot and the latest message under each favorite.",
-                                    action = "Allow",
-                                    onAction = { LauncherActions.openNotificationAccess(context) },
-                                    onDismiss = { launcher.prefs.update { it.copy(notificationPromptDismissed = true) } },
-                                )
+                            // Read in here, so granting access or the default role recomposes only this slot, not the screen.
+                            val cardSlot = when {
+                                showUpdate -> HomeCardSlot.UPDATE
+                                !isDefault && !defaultPromptHidden -> HomeCardSlot.DEFAULT
+                                !hasNotificationAccess && !settings.notificationPromptDismissed -> HomeCardSlot.ACCESS
+                                else -> HomeCardSlot.NONE
+                            }
+                            // The update card's latest shown state, so it still has something to draw while it fades out.
+                            val lastUpdate = remember { Latest<Updater.State>() }.also { if (showUpdate) it.value = update }
+                            // One card at a time, cross-faded as one is dismissed or granted and the next takes its place.
+                            // The first composition shows its card without animating; the update card's own steps
+                            // (download, install) change in place under one key.
+                            AnimatedContent(
+                                targetState = cardSlot,
+                                transitionSpec = {
+                                    (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using
+                                        SizeTransform(clip = true) { _, _ -> spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow) }
+                                },
+                                label = "homeCard",
+                            ) { slot ->
+                                when (slot) {
+                                    HomeCardSlot.UPDATE -> UpdateCard(
+                                        state = lastUpdate.value ?: update,
+                                        onUpdate = { Updater.install(context, it) },
+                                        onDismiss = { Updater.dismiss(context, it) },
+                                    )
+                                    HomeCardSlot.DEFAULT -> OnboardingCard(
+                                        title = "Make Cascade your home screen",
+                                        body = "Set it as your default home app so the Home button brings you here.",
+                                        action = "Set as default",
+                                        onAction = { LauncherActions.requestDefaultLauncher(context, roleRequest) },
+                                        onDismiss = { defaultPromptHidden = true },
+                                    )
+                                    HomeCardSlot.ACCESS -> OnboardingCard(
+                                        title = "See notifications beside your apps",
+                                        body = "Allow notification access to show a dot and the latest message under each favorite.",
+                                        action = "Allow",
+                                        onAction = { LauncherActions.openNotificationAccess(context) },
+                                        onDismiss = { launcher.prefs.update { it.copy(notificationPromptDismissed = true) } },
+                                    )
+                                    // Full width, so a card coming or going only animates its height.
+                                    HomeCardSlot.NONE -> Spacer(Modifier.fillMaxWidth())
+                                }
                             }
                         },
                     )
                 }
                 item(key = "header", contentType = "header") {
-                    AllAppsHeader(onSearch = { searchOpen = true }, onSettings = { SettingsActivity.open(context) })
+                    AllAppsHeader(
+                        iconSize = settings.iconSize.listDp.dp,
+                        showIcons = settings.showIcons,
+                        onSearch = { searchOpen = true },
+                        onSettings = { SettingsActivity.open(context) },
+                    )
                 }
                 items(rows, key = { it.key }, contentType = { if (it is Row.Section) 0 else 1 }) { row ->
                     when (row) {
-                        is Row.Section -> SectionHeader(row.letter)
+                        is Row.Section -> SectionHeader(row.letter, settings.iconSize.listDp.dp, settings.showIcons)
                         is Row.App -> ListAppRow(
                             app = row.app,
                             expandKey = row.expandKey,

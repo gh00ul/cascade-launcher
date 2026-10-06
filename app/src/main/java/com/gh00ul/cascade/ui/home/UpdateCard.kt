@@ -1,20 +1,10 @@
 package com.gh00ul.cascade.ui.home
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
@@ -45,16 +35,9 @@ fun UpdateCard(state: Updater.State, onUpdate: (Updater.Release) -> Unit, onDism
         is Updater.State.Failed -> Triple("Update didn't finish", state.message, state.release ?: return)
         else -> return
     }
-    Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = style.scrim.copy(alpha = 0.55f),
-        contentColor = style.content,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(start = 20.dp, end = 12.dp, top = 18.dp, bottom = 8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = style.content.copy(alpha = 0.75f), modifier = Modifier.padding(top = 4.dp))
-            if (state is Updater.State.Downloading) {
+    HomeCard(title, body) {
+        when (state) {
+            is Updater.State.Downloading -> {
                 Spacer(Modifier.height(12.dp))
                 val percent = state.percent
                 if (percent != null) {
@@ -76,17 +59,14 @@ fun UpdateCard(state: Updater.State, onUpdate: (Updater.Release) -> Unit, onDism
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-            } else {
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                    if (state is Updater.State.Available || state is Updater.State.Failed) {
-                        TextButton(onClick = { onDismiss(release) }) { Text("Not now", color = style.content.copy(alpha = 0.8f)) }
-                        Spacer(Modifier.width(4.dp))
-                        Button(onClick = { onUpdate(release) }) { Text(if (state is Updater.State.Failed) "Try again" else "Update") }
-                    } else {
-                        Spacer(Modifier.height(40.dp))
-                    }
-                }
             }
+            is Updater.State.Available, is Updater.State.Failed -> HomeCardActions(
+                action = if (state is Updater.State.Failed) "Try again" else "Update",
+                onAction = { onUpdate(release) },
+                onDismiss = { onDismiss(release) },
+            )
+            // Installing: nothing to tap while Android's installer is up, but the card keeps its height.
+            else -> Spacer(Modifier.padding(top = 8.dp).height(40.dp))
         }
     }
 }

@@ -17,7 +17,10 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gh00ul.cascade.data.IconSize
 
 /** Material You colors from the wallpaper on Android 12+. Menus and sheets on the home screen are always dark. */
 @Composable
@@ -54,6 +57,9 @@ class LauncherStyle(val darkText: Boolean, val accent: Color) {
     val clock = TextStyle(color = content, fontSize = 64.sp, fontWeight = FontWeight.Light, letterSpacing = (-1).sp, shadow = shadow)
     val date = TextStyle(color = content, fontSize = 17.sp, fontWeight = FontWeight.Medium, shadow = shadow)
     val favorite = TextStyle(color = content, fontSize = 26.sp, fontWeight = FontWeight.Medium, shadow = shadow)
+    private val favoriteSmall = favorite.copy(fontSize = 22.sp)
+    private val favoriteLarge = favorite.copy(fontSize = 27.sp)
+    private val favoriteXL = favorite.copy(fontSize = 28.sp)
     val app = TextStyle(color = content, fontSize = 20.sp, shadow = shadow)
     val small = TextStyle(color = content.copy(alpha = 0.8f), fontSize = 14.sp, shadow = shadow)
     val section = TextStyle(color = accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, shadow = shadow)
@@ -63,6 +69,17 @@ class LauncherStyle(val darkText: Boolean, val accent: Color) {
     val chip = TextStyle(color = content, fontSize = 13.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum")
     val mediaTitle = TextStyle(color = content, fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium, shadow = shadow)
     val mediaTime = small.copy(fontFeatureSettings = "tnum")
+
+    /**
+     * The favorite label beside an icon of [iconSize] (an [IconSize.homeDp]): smaller next to small icons, a little
+     * larger next to large ones, [favorite] at Medium. Returns one of the styles above, so rows allocate nothing.
+     */
+    fun favoriteFor(iconSize: Dp): TextStyle = when {
+        iconSize < IconSize.MEDIUM.homeDp.dp -> favoriteSmall
+        iconSize < IconSize.LARGE.homeDp.dp -> favorite
+        iconSize < IconSize.XL.homeDp.dp -> favoriteLarge
+        else -> favoriteXL
+    }
 }
 
 val LocalLauncherStyle = staticCompositionLocalOf { LauncherStyle(darkText = false, accent = Color.White) }

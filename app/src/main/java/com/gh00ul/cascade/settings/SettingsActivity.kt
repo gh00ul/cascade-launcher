@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
@@ -186,7 +187,10 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
         prefs.update { it.copy(showCalendar = granted) }
     }
 
-    LazyColumn(contentPadding = padding) {
+    // Setup leads while something still needs doing; once both are granted it waits above About. Placement is
+    // decided when the screen opens so a grant doesn't yank the row away; its summary and icon still update live.
+    val setupFirst = remember { !(isDefault && hasAccess) }
+    fun LazyListScope.setup() {
         item { Header("Setup") }
         item {
             SettingRow(
@@ -199,11 +203,15 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
         item {
             SettingRow(
                 title = "Notification access",
-                summary = if (hasAccess) "Notification dots and previews are on" else "Needed for notification dots, previews and music controls",
+                summary = if (hasAccess) "Notification dots and previews are on" else "Needed for dots, previews and music controls",
                 onClick = { LauncherActions.openNotificationAccess(context) },
                 trailing = { StatusIcon(hasAccess) },
             )
         }
+    }
+
+    LazyColumn(contentPadding = padding) {
+        if (setupFirst) setup()
 
         item { Header("Home screen") }
         item {
@@ -214,16 +222,28 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
             )
         }
         item {
-            ChoiceRow(
-                title = "Swipe down on home",
-                options = listOf("Notifications", "Search"),
-                selected = settings.swipeDownAction.ordinal,
-            ) { i -> prefs.update { it.copy(swipeDownAction = SwipeDownAction.entries[i]) } }
+            SettingRow(
+                title = "Hidden apps",
+                summary = if (hiddenCount == 0) "None. Long-press an app to hide it." else "$hiddenCount hidden · still found in search",
+                onClick = { onNavigate(SettingsScreen.HIDDEN) },
+            )
+        }
+        item {
+            SwitchRow("Notification previews", "Show the latest notification under each favorite", settings.showNotificationPreviews) { on ->
+                prefs.update { it.copy(showNotificationPreviews = on) }
+            }
         }
         item {
             SwitchRow("Music controls", "Turn the playing app's row into a player", settings.showMediaControls) { on ->
                 prefs.update { it.copy(showMediaControls = on) }
             }
+        }
+        item {
+            ChoiceRow(
+                title = "Swipe down on home",
+                options = listOf("Notifications", "Search"),
+                selected = settings.swipeDownAction.ordinal,
+            ) { i -> prefs.update { it.copy(swipeDownAction = SwipeDownAction.entries[i]) } }
         }
 
         item { Header("Clock") }
@@ -254,7 +274,7 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
             }
         }
         item {
-            SwitchRow("Charging and low battery", "Time to full while charging, and a warning when low", settings.showBattery) { on ->
+            SwitchRow("Charging and low battery", "Time to full, and a warning when low", settings.showBattery) { on ->
                 prefs.update { it.copy(showBattery = on) }
             }
         }
@@ -269,7 +289,7 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
             ) { i -> prefs.update { it.copy(textColor = TextColor.entries[i]) } }
         }
         item {
-            SwitchRow("App icons", null, settings.showIcons) { on -> prefs.update { it.copy(showIcons = on) } }
+            SwitchRow("App icons", "Show an icon next to each app name", settings.showIcons) { on -> prefs.update { it.copy(showIcons = on) } }
         }
         item {
             ChoiceRow(
@@ -283,26 +303,14 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
         item {
             SwitchRow(
                 "Monochrome icons",
-                "Uses themed icons where apps provide them; other icons turn grayscale",
+                "Themed icons if available, grayscale otherwise",
                 settings.monochromeIcons,
                 enabled = settings.showIcons,
             ) { on -> prefs.update { it.copy(monochromeIcons = on) } }
         }
-        item {
-            SwitchRow("Notification previews", "Show the latest notification under each favorite", settings.showNotificationPreviews) { on ->
-                prefs.update { it.copy(showNotificationPreviews = on) }
-            }
-        }
-        item { SettingRow("Wallpaper", "Change your wallpaper", onClick = { LauncherActions.openWallpaperPicker(context) }) }
+        item { SettingRow("Wallpaper", "Opens the wallpaper picker", onClick = { LauncherActions.openWallpaperPicker(context) }) }
 
-        item { Header("Apps") }
-        item {
-            SettingRow(
-                title = "Hidden apps",
-                summary = if (hiddenCount == 0) "None. Long-press an app to hide it." else "$hiddenCount hidden",
-                onClick = { onNavigate(SettingsScreen.HIDDEN) },
-            )
-        }
+        if (!setupFirst) setup()
 
         item { Header("About") }
         item {
@@ -326,7 +334,7 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
             )
         }
         item {
-            SwitchRow("Check for updates automatically", "Looks for a newer release on GitHub when home opens", settings.autoUpdateCheck) { on ->
+            SwitchRow("Check for updates automatically", "Checks GitHub when home opens", settings.autoUpdateCheck) { on ->
                 prefs.update { it.copy(autoUpdateCheck = on) }
             }
         }

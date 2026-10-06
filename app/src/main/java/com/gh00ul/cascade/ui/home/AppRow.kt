@@ -59,7 +59,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.notifications.AppNotification
@@ -163,7 +165,12 @@ fun AppRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         app.label,
-                        style = if (large) style.favorite else style.app,
+                        // Favorite labels follow the icon size; Settings locks that size while icons are hidden.
+                        style = when {
+                            !large -> style.app
+                            showIcon -> style.favoriteFor(iconSize)
+                            else -> style.favorite
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -188,7 +195,8 @@ fun AppRow(
         ) {
             ExpandedNotifications(
                 notifications = notifications,
-                startPadding = if (showIcon) iconSize + 24.dp else 8.dp,
+                // The label's x: the row's 8dp padding, then the icon and its 16dp gap.
+                textStart = if (showIcon) iconSize + 24.dp else 8.dp,
                 onOpen = onNotificationClick,
             )
         }
@@ -214,19 +222,25 @@ private fun NotificationPreview(notification: AppNotification, more: Int, onClic
 /** Spoken state for a row's notification badge. */
 internal fun notificationCount(n: Int) = if (n == 1) "1 notification" else "$n notifications"
 
-/** Every notification of one app; tap to open, swipe sideways to dismiss. */
+/** Inside each notification's tap area (and "Clear all"), before its text. */
+private val NotificationInset = 8.dp
+
+/**
+ * Every notification of one app; tap to open, swipe sideways to dismiss. Their text and "Clear all" start at
+ * [textStart], the x of the row's label.
+ */
 @Composable
-internal fun ExpandedNotifications(notifications: List<AppNotification>, startPadding: androidx.compose.ui.unit.Dp, onOpen: (AppNotification) -> Unit) {
+internal fun ExpandedNotifications(notifications: List<AppNotification>, textStart: Dp, onOpen: (AppNotification) -> Unit) {
     val style = LocalLauncherStyle.current
-    Column(Modifier.fillMaxWidth().padding(start = startPadding, end = 8.dp, bottom = 6.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = (textStart - NotificationInset).coerceAtLeast(0.dp), end = 8.dp, bottom = 6.dp)) {
         for (n in notifications.take(8)) {
             key(n.key) { NotificationItem(n, onOpen) }
         }
         if (notifications.count { it.clearable } > 1) {
-            // The same 8dp start padding as the notifications above, so "Clear all" lines up with them.
+            // The same inset as the notifications above, so "Clear all" lines up with them.
             TextButton(
                 onClick = { NotificationStore.dismissAll(notifications) },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(horizontal = NotificationInset, vertical = 8.dp),
             ) {
                 Text("Clear all", style = style.small.copy(color = style.accent, fontWeight = FontWeight.Medium))
             }
@@ -270,15 +284,16 @@ private fun NotificationItem(notification: AppNotification, onOpen: (AppNotifica
                         )
                     }
                 }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = NotificationInset, vertical = 8.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Baselines, not centers: the age is a step smaller than the title.
+            Row {
                 Text(
                     notification.title.ifEmpty { notification.text },
                     style = style.small.copy(color = style.content, fontWeight = FontWeight.SemiBold),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f, fill = false).alignByBaseline(),
                 )
                 val now = LocalNow.current()
                 val age = if (now - notification.postTime < DateUtils.MINUTE_IN_MILLIS) "now" else {
@@ -286,8 +301,9 @@ private fun NotificationItem(notification: AppNotification, onOpen: (AppNotifica
                 }
                 Text(
                     "  $age",
-                    style = style.small.copy(color = style.content.copy(alpha = 0.55f)),
+                    style = style.small.copy(color = style.content.copy(alpha = 0.55f), fontSize = 12.sp),
                     maxLines = 1,
+                    modifier = Modifier.alignByBaseline(),
                 )
             }
             if (notification.title.isNotEmpty() && notification.text.isNotEmpty()) {

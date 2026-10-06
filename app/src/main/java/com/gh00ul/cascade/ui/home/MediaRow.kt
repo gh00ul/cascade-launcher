@@ -361,7 +361,8 @@ fun MediaRow(
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut(),
         ) {
-            ExpandedNotifications(notifications, startPadding = if (showArt) iconSize + 24.dp else 8.dp, onOpen = onNotificationClick)
+            // The title's x: 4dp padding, the art (iconSize + 8dp) and its 12dp gap; 8dp padding without art.
+            ExpandedNotifications(notifications, textStart = if (showArt) iconSize + 24.dp else 8.dp, onOpen = onNotificationClick)
         }
     }
 }

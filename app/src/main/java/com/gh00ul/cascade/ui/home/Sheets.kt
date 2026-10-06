@@ -1,6 +1,7 @@
 package com.gh00ul.cascade.ui.home
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -91,69 +92,113 @@ fun AppActionsSheet(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
-            Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppIcon(icon, 44.dp)
-                Spacer(Modifier.width(16.dp))
-                Column {
-                    Text(app.label, style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        app.packageName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+        AppActionsContent(
+            app = app,
+            icon = icon,
+            isFavorite = isFavorite,
+            isHidden = isHidden,
+            notifications = notifications,
+            shortcuts = shortcuts,
+            canUninstall = canUninstall,
+            showHidePlayer = onHidePlayer != null,
+            onOpenNotification = { n -> closeThen { onOpenNotification(n) } },
+            onClearNotifications = { closeThen { NotificationStore.dismissAll(notifications) } },
+            onShortcut = { shortcut -> closeThen { LauncherActions.launchShortcut(context, shortcut) } },
+            onHidePlayer = { if (onHidePlayer != null) closeThen(onHidePlayer) },
+            onToggleFavorite = { closeThen { prefs.toggleFavorite(app.key) } },
+            onRename = { closeThen(onRename) },
+            onToggleHidden = { closeThen { prefs.setHidden(app.key, !isHidden) } },
+            onAppInfo = { closeThen { LauncherActions.openAppInfo(context, app) } },
+            onUninstall = { closeThen { LauncherActions.uninstall(context, app) } },
+        )
+    }
+}
 
-            if (notifications.isNotEmpty()) {
-                SheetLabel("Notifications")
-                for (n in notifications.take(5)) {
-                    ListItem(
-                        headlineContent = { Text(n.title.ifEmpty { app.label }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = if (n.text.isNotEmpty()) {
-                            { Text(n.text, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                        } else null,
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier.clickable { closeThen { onOpenNotification(n) } },
-                    )
-                }
-                if (notifications.any { it.clearable }) {
-                    TextButton(
-                        onClick = { closeThen { NotificationStore.dismissAll(notifications) } },
-                        modifier = Modifier.padding(start = 12.dp),
-                    ) { Text("Clear notifications") }
-                }
+/**
+ * What [AppActionsSheet] shows, with its [shortcuts] already loaded and every action passed in, so it can be drawn
+ * without the sheet or the app. All content starts on the sheet's 24dp edge, and shortcut icons and action glyphs
+ * share one 28dp leading column, so their labels line up.
+ */
+@Composable
+internal fun AppActionsContent(
+    app: AppEntry,
+    icon: IconImage?,
+    isFavorite: Boolean,
+    isHidden: Boolean,
+    notifications: List<AppNotification>,
+    shortcuts: List<AppShortcut>,
+    canUninstall: Boolean,
+    showHidePlayer: Boolean,
+    onOpenNotification: (AppNotification) -> Unit,
+    onClearNotifications: () -> Unit,
+    onShortcut: (AppShortcut) -> Unit,
+    onHidePlayer: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onRename: () -> Unit,
+    onToggleHidden: () -> Unit,
+    onAppInfo: () -> Unit,
+    onUninstall: () -> Unit,
+) {
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
+        Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            AppIcon(icon, 44.dp)
+            Spacer(Modifier.width(16.dp))
+            Column {
+                Text(app.label, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    app.packageName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+        }
 
-            if (shortcuts.isNotEmpty()) {
-                SheetLabel("Shortcuts")
-                for (shortcut in shortcuts) {
-                    ListItem(
-                        headlineContent = { Text(shortcut.label) },
-                        leadingContent = { AppIcon(shortcut.icon, 28.dp) },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier.clickable { closeThen { LauncherActions.launchShortcut(context, shortcut) } },
-                    )
-                }
+        if (notifications.isNotEmpty()) {
+            SheetLabel("Notifications")
+            for (n in notifications.take(5)) {
+                SheetRow(
+                    onClick = { onOpenNotification(n) },
+                    headline = { Text(n.title.ifEmpty { app.label }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    supporting = if (n.text.isNotEmpty()) {
+                        { Text(n.text, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    } else null,
+                )
             }
+            if (notifications.any { it.clearable }) {
+                // TextButton pads its text 12dp more, which puts it on the 24dp edge too.
+                TextButton(onClick = onClearNotifications, modifier = Modifier.padding(start = 12.dp)) { Text("Clear notifications") }
+            }
+        }
 
-            if (onHidePlayer != null) {
-                SheetAction(Icons.Outlined.Close, "Hide player") { closeThen(onHidePlayer) }
+        if (shortcuts.isNotEmpty()) {
+            SheetLabel("Shortcuts")
+            for (shortcut in shortcuts) {
+                SheetRow(
+                    onClick = { onShortcut(shortcut) },
+                    headline = { Text(shortcut.label) },
+                    leading = { AppIcon(shortcut.icon, 28.dp) },
+                )
             }
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            SheetAction(
-                if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
-                if (isFavorite) "Remove from favorites" else "Add to favorites",
-            ) { closeThen { prefs.toggleFavorite(app.key) } }
-            SheetAction(Icons.Outlined.Edit, "Rename") { closeThen(onRename) }
-            SheetAction(
-                if (isHidden) ExtraIcons.Visibility else ExtraIcons.VisibilityOff,
-                if (isHidden) "Show in app list" else "Hide from app list",
-            ) { closeThen { prefs.setHidden(app.key, !isHidden) } }
-            SheetAction(Icons.Outlined.Info, "App info") { closeThen { LauncherActions.openAppInfo(context, app) } }
-            if (canUninstall) {
-                SheetAction(Icons.Outlined.Delete, "Uninstall") { closeThen { LauncherActions.uninstall(context, app) } }
-            }
+        }
+
+        if (showHidePlayer) {
+            SheetAction(Icons.Outlined.Close, "Hide player", onHidePlayer)
+        }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        SheetAction(
+            if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+            if (isFavorite) "Remove from favorites" else "Add to favorites",
+            onToggleFavorite,
+        )
+        SheetAction(Icons.Outlined.Edit, "Rename", onRename)
+        SheetAction(
+            if (isHidden) ExtraIcons.Visibility else ExtraIcons.VisibilityOff,
+            if (isHidden) "Show in app list" else "Hide from app list",
+            onToggleHidden,
+        )
+        SheetAction(Icons.Outlined.Info, "App info", onAppInfo)
+        if (canUninstall) {
+            SheetAction(Icons.Outlined.Delete, "Uninstall", onUninstall)
         }
     }
 }
@@ -172,13 +217,21 @@ fun HomeMenuSheet(onDismiss: () -> Unit) {
         }
     }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.padding(bottom = 12.dp)) {
-            SheetAction(ExtraIcons.Wallpaper, "Wallpaper") { closeThen { LauncherActions.openWallpaperPicker(context) } }
-            SheetAction(Icons.Outlined.FavoriteBorder, "Edit favorites") {
-                closeThen { SettingsActivity.open(context, SettingsScreen.FAVORITES) }
-            }
-            SheetAction(Icons.Outlined.Settings, "Launcher settings") { closeThen { SettingsActivity.open(context) } }
-        }
+        HomeMenuContent(
+            onWallpaper = { closeThen { LauncherActions.openWallpaperPicker(context) } },
+            onEditFavorites = { closeThen { SettingsActivity.open(context, SettingsScreen.FAVORITES) } },
+            onSettings = { closeThen { SettingsActivity.open(context) } },
+        )
+    }
+}
+
+/** What [HomeMenuSheet] shows, without the sheet. */
+@Composable
+internal fun HomeMenuContent(onWallpaper: () -> Unit, onEditFavorites: () -> Unit, onSettings: () -> Unit) {
+    Column(Modifier.padding(bottom = 12.dp)) {
+        SheetAction(ExtraIcons.Wallpaper, "Wallpaper", onWallpaper)
+        SheetAction(Icons.Outlined.FavoriteBorder, "Edit favorites", onEditFavorites)
+        SheetAction(Icons.Outlined.Settings, "Launcher settings", onSettings)
     }
 }
 
@@ -228,9 +281,30 @@ private fun SheetLabel(text: String) {
 
 @Composable
 private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    SheetRow(
+        onClick = onClick,
+        headline = { Text(label) },
+        leading = { Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp)) },
+    )
+}
+
+/**
+ * A row of a sheet. ListItem insets its content 16dp; 8dp more puts it on the 24dp edge of the header and labels,
+ * while the ripple still spans the full width. [leading] is centered in a 28dp column.
+ */
+@Composable
+private fun SheetRow(
+    onClick: () -> Unit,
+    headline: @Composable () -> Unit,
+    supporting: (@Composable () -> Unit)? = null,
+    leading: (@Composable () -> Unit)? = null,
+) {
     ListItem(
-        headlineContent = { Text(label) },
-        leadingContent = { Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp)) },
+        headlineContent = headline,
+        supportingContent = supporting,
+        leadingContent = if (leading != null) {
+            { Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { leading() } }
+        } else null,
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 8.dp),
     )

@@ -3,6 +3,7 @@ package com.gh00ul.cascade.data
 import android.content.Context
 import android.content.pm.LauncherApps
 import android.content.pm.ShortcutInfo
+import android.os.UserManager
 
 /** An app shortcut search can find ("New incognito tab"), with the app it opens in. */
 class FoundShortcut(val info: ShortcutInfo, val label: String, val longLabel: String, val app: AppEntry) {
@@ -12,16 +13,19 @@ class FoundShortcut(val info: ShortcutInfo, val label: String, val longLabel: St
 
 /**
  * Every enabled static and dynamic shortcut of [apps], read once per search. Cross-process and per profile, so off
- * the main thread; empty unless Cascade is the default home app, the only one Android lets read them.
+ * the main thread; empty unless Cascade is the default home app, the only one Android lets read them. A profile that
+ * is paused or still locked has none to give (asking throws), and the others' still come back.
  */
 fun loadSearchShortcuts(context: Context, apps: List<AppEntry>): List<FoundShortcut> = runCatching {
     val launcherApps = context.getSystemService(LauncherApps::class.java)
+    val userManager = context.getSystemService(UserManager::class.java)
     if (!launcherApps.hasShortcutHostPermission()) return emptyList()
     val byPackage = apps.groupBy { it.packageName to it.user }
     val query = LauncherApps.ShortcutQuery()
         .setQueryFlags(LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST)
-    launcherApps.profiles.flatMap { user ->
-        launcherApps.getShortcuts(query, user).orEmpty().mapNotNull { info ->
+    launcherApps.profiles.filter { userManager.isUserUnlocked(it) }.flatMap { user ->
+        val shortcuts = runCatching { launcherApps.getShortcuts(query, user) }.getOrNull()
+        shortcuts.orEmpty().mapNotNull { info ->
             if (!info.isEnabled) return@mapNotNull null
             val owners = byPackage[info.`package` to user] ?: return@mapNotNull null
             val app = owners.firstOrNull { it.component == info.activity } ?: owners.first()

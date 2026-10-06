@@ -53,6 +53,9 @@ class LauncherStyle(val darkText: Boolean, val accent: Color) {
     val small = TextStyle(color = content.copy(alpha = 0.8f), fontSize = 14.sp, shadow = shadow)
     val section = TextStyle(color = accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, shadow = shadow)
     val letter = TextStyle(color = content, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, shadow = shadow)
+    val clockBold = TextStyle(color = content, fontSize = 80.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-2).sp, shadow = shadow)
+    val clockStacked = TextStyle(color = content, fontSize = 96.sp, lineHeight = 88.sp, fontWeight = FontWeight.Light, letterSpacing = (-2).sp, shadow = shadow)
+    val chip = TextStyle(color = content, fontSize = 13.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum")
     val mediaTitle = TextStyle(color = content, fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium, shadow = shadow)
     val mediaTime = small.copy(fontFeatureSettings = "tnum")
 }

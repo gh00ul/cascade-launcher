@@ -25,6 +25,17 @@ data class AppNotification(
     val showBadge: Boolean = true,
 )
 
+/** An ongoing notification showing a running clock: a timer, a stopwatch, a call, a recording. */
+data class LiveTimer(
+    val key: String,
+    val packageName: String,
+    val title: String,
+    /** Wall-clock time the chronometer counts from (or down to, for [countDown]). */
+    val base: Long,
+    val countDown: Boolean,
+    val contentIntent: PendingIntent?,
+)
+
 /** Active notifications grouped by app (see [com.gh00ul.cascade.data.AppEntry.notificationKey]), newest first. */
 object NotificationStore {
     private val _byApp = MutableStateFlow<Map<String, List<AppNotification>>>(emptyMap())
@@ -33,20 +44,32 @@ object NotificationStore {
     /** sbn.key to (app key, notification). Main thread only, like [NotificationListener]'s callbacks. */
     private val entries = LinkedHashMap<String, Pair<String, AppNotification>>()
 
+    private val _timers = MutableStateFlow<List<LiveTimer>>(emptyList())
+    /** Running timers, stopwatches and calls, for the clock header. */
+    val timers: StateFlow<List<LiveTimer>> = _timers.asStateFlow()
+    private val timerEntries = LinkedHashMap<String, LiveTimer>()
+
     /** The full list, read once per connection; after that each callback applies its own change. */
     internal fun reset(active: Array<StatusBarNotification>?, ranking: RankingMap?, ownPackage: String) {
         entries.clear()
-        for (sbn in active.orEmpty()) put(sbn, ownPackage)
+        timerEntries.clear()
+        for (sbn in active.orEmpty()) {
+            put(sbn, ownPackage)
+            putTimer(sbn, ownPackage)
+        }
         emit(ranking)
+        emitTimers()
     }
 
     internal fun posted(sbn: StatusBarNotification, ranking: RankingMap?, ownPackage: String) {
         // Ongoing updates that were never listed (navigation, downloads) change nothing.
         if (put(sbn, ownPackage)) emit(ranking)
+        if (putTimer(sbn, ownPackage)) emitTimers()
     }
 
     internal fun removed(sbnKey: String, ranking: RankingMap?) {
         if (entries.remove(sbnKey) != null) emit(ranking)
+        if (timerEntries.remove(sbnKey) != null) emitTimers()
     }
 
     internal fun ranked(ranking: RankingMap?) = emit(ranking)
@@ -54,6 +77,19 @@ object NotificationStore {
     internal fun clear() {
         entries.clear()
         _byApp.value = emptyMap()
+        timerEntries.clear()
+        _timers.value = emptyList()
+    }
+
+    /** Returns whether the timer list changed. */
+    private fun putTimer(sbn: StatusBarNotification, ownPackage: String): Boolean {
+        val timer = if (sbn.packageName == ownPackage) null else sbn.toLiveTimer()
+        if (timer == null) return timerEntries.remove(sbn.key) != null
+        return timerEntries.put(sbn.key, timer) != timer
+    }
+
+    private fun emitTimers() {
+        _timers.value = timerEntries.values.toList()
     }
 
     /** Returns whether the list may have changed. */
@@ -111,5 +147,20 @@ private fun StatusBarNotification.toAppNotification(): AppNotification? {
         contentIntent = n.contentIntent,
         autoCancel = n.flags and Notification.FLAG_AUTO_CANCEL != 0,
         clearable = isClearable,
+    )
+}
+
+private fun StatusBarNotification.toLiveTimer(): LiveTimer? {
+    val n = notification
+    val extras = n.extras
+    if (!extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER) || n.`when` <= 0) return null
+    if (extras.containsKey(Notification.EXTRA_MEDIA_SESSION)) return null
+    return LiveTimer(
+        key = key,
+        packageName = packageName,
+        title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty(),
+        base = n.`when`,
+        countDown = extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN),
+        contentIntent = n.contentIntent,
     )
 }

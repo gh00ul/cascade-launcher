@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.data.IconImage
@@ -85,6 +86,7 @@ fun AppRow(
     showIcon: Boolean,
     showPreview: Boolean,
     large: Boolean,
+    iconSize: Dp,
     onClick: (Rect?) -> Unit,
     onLongClick: () -> Unit,
     onNotificationClick: (AppNotification) -> Unit,
@@ -99,7 +101,6 @@ fun AppRow(
     val showDot = notifications.any { it.showBadge }
     val canExpand = hasNotifications && onToggleExpand != null
     val showExpanded = expanded && hasNotifications
-    val iconSize = if (large) 40.dp else 34.dp
 
     Column(modifier.fillMaxWidth()) {
         Row(

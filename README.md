@@ -36,10 +36,21 @@ and Android won't update an app across a key change.
   - Swipe down on the home page to open the notification shade (or search; you can change this in settings).
   - Press Home to jump back to the top.
   - Long-press empty space for wallpaper and settings.
-- **Clock.** Tap the time to open your alarms, or tap the date to open your calendar. The next alarm is
-  shown underneath.
+- **Clock.** Pick Classic, Bold or Stacked. Tap the time to open your alarms, or tap the date to open your
+  calendar. Chips under the date show what's next:
+  - running timers, stopwatches and calls, ticking live (from apps that use Android's standard notification
+    chronometer)
+  - the next alarm, with a countdown when it's less than a day away
+  - the next calendar event (optional; asks for calendar access)
+  - charging progress with "full in…", or a warning when the battery is low
+- **Icon size.** Small, Medium, Large or XL for the home screen and the A–Z list. The music player row
+  scales with them.
 - **Monochrome icons.** Uses Android 13+ themed icons where apps provide them. Other icons turn grayscale.
   You can also turn icons off for a text-only list.
+- **Self-update.** When home opens (at most every 6 hours), Cascade checks GitHub Releases. If there's a newer
+  version, an update card offers it. Cascade downloads the APK, makes sure it's Cascade signed with the same
+  key, and hands it to Android's installer. Android restarts the home screen on the new version. You can
+  also check from *Settings → About*, or turn automatic checks off.
 - **Material You.** Accent colors come from your wallpaper on Android 12+.
 - **Work profile.** Work apps appear with the work badge.
 
@@ -101,8 +112,11 @@ Keep a backup of the key. If it's lost, existing installs can't be updated.
 | `EXPAND_STATUS_BAR` | Lets swipe-down open the notification shade. |
 | `REQUEST_DELETE_PACKAGES` | Powers "Uninstall" in the app menu. |
 | `SET_ALARM` | Lets a tap on the clock open the alarm list; clock apps require it. Cascade never sets alarms. |
+| `READ_CALENDAR` (optional) | Shows the next event under the clock. Only requested when you turn that on. |
+| `INTERNET` | Only for self-update: asking GitHub for the latest release and downloading its APK. |
+| `REQUEST_INSTALL_PACKAGES`, `UPDATE_PACKAGES_WITHOUT_USER_ACTION` | Installing those updates; the second lets Android skip the confirmation once Cascade installed itself. |
 
-There is no internet permission, so Cascade can't send anything anywhere.
+The only network traffic is the update check and download, both with GitHub. Nothing else leaves the device.
 
 On Android 13+, if you install the APK from a browser or file manager (not `adb` or an app store), Android
 may block notification access as a "restricted setting". To allow it, go to *App info → ⋮ → Allow
@@ -114,10 +128,11 @@ restricted settings*, then grant access.
 app/src/main/java/com/gh00ul/cascade/
   data/            app list + icons (AppRepository), settings (Prefs), search
   notifications/   NotificationListenerService, the notification store, and media sessions (NowPlaying)
-  ui/home/         home screen, alphabet wave, app rows, music card, search overlay, long-press sheets
+  ui/home/         home screen, clock header, alphabet wave, app rows, music player, search, sheets, update card
   ui/theme/        colors, text styles, and the wallpaper brightness check
   settings/        settings screens
-  util/            launching apps, shortcuts, system intents
+  update/          self-update from GitHub Releases (Updater, install result receiver)
+  util/            launching apps, shortcuts, system intents, calendar
 ```
 
 ## Ideas for next steps
@@ -125,7 +140,6 @@ app/src/main/java/com/gh00ul/cascade/
 - Widgets on the home page
 - Icon pack support
 - Double-tap to lock (needs an accessibility service)
-- In-app updates from GitHub Releases
 - Translations (strings are inline English for now)
 
 ## License

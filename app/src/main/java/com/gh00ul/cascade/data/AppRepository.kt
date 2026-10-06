@@ -151,6 +151,10 @@ class AppRepository(
         scope.launch {
             prefs.settings.map { it.showIcons && it.monochromeIcons }.distinctUntilChanged().drop(1).collect { refresh(clearIcons = true) }
         }
+        // Icons are rendered at the home size; loadIcons re-renders any cached icon whose width no longer matches.
+        scope.launch {
+            prefs.settings.map { it.iconSize }.distinctUntilChanged().drop(1).collect { refresh() }
+        }
         refresh()
     }
 
@@ -337,7 +341,8 @@ class AppRepository(
     private suspend fun loadIcons(list: List<InstalledApp>, gen: Int) {
         val favorites = prefs.settings.value.favorites.toSet()
         val monochrome = prefs.settings.value.let { it.showIcons && it.monochromeIcons }
-        val size = (ICON_DP * context.resources.displayMetrics.density).roundToInt()
+        // At least 48dp: the long-press sheet and the player draw icons that big whatever the list size.
+        val size = (maxOf(prefs.settings.value.iconSize.homeDp, 48) * context.resources.displayMetrics.density).roundToInt()
         var sincePublish = 0
         // Favorites first so the home screen fills in before the long list does.
         for (app in list.sortedBy { it.key !in favorites }) {
@@ -374,8 +379,4 @@ class AppRepository(
         val plain = BitmapDrawable(context.resources, mono.bitmap.asAndroidBitmap())
         IconImage(pm.getUserBadgedIcon(plain, app.info.user).renderTo(size).asImageBitmap(), isGlyph = false)
     }.getOrNull()
-
-    private companion object {
-        const val ICON_DP = 48
-    }
 }

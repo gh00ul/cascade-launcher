@@ -13,6 +13,16 @@ enum class SwipeDownAction { NOTIFICATIONS, SEARCH }
 /** Text over the wallpaper: follow the wallpaper's brightness, or force white / dark. */
 enum class TextColor { AUTO, LIGHT, DARK }
 
+/** Icon sizes in dp for the home screen favorites and the A–Z list. */
+enum class IconSize(val homeDp: Int, val listDp: Int) {
+    SMALL(32, 28),
+    MEDIUM(40, 34),
+    LARGE(48, 40),
+    XL(56, 46),
+}
+
+enum class ClockStyle { CLASSIC, BOLD, STACKED }
+
 data class LauncherSettings(
     /** App keys in the order they appear on the home screen. */
     val favorites: List<String> = emptyList(),
@@ -23,6 +33,14 @@ data class LauncherSettings(
     val showNotificationPreviews: Boolean = true,
     val showMediaControls: Boolean = true,
     val textColor: TextColor = TextColor.AUTO,
+    val iconSize: IconSize = IconSize.MEDIUM,
+    val clockStyle: ClockStyle = ClockStyle.CLASSIC,
+    /** Next calendar event under the clock; needs READ_CALENDAR. */
+    val showCalendar: Boolean = false,
+    /** Charging progress and low battery under the clock. */
+    val showBattery: Boolean = true,
+    /** Look for a newer GitHub release when home opens (at most every 6 hours). */
+    val autoUpdateCheck: Boolean = true,
     val swipeDownAction: SwipeDownAction = SwipeDownAction.NOTIFICATIONS,
     val favoritesSeeded: Boolean = false,
     val notificationPromptDismissed: Boolean = false,
@@ -58,6 +76,11 @@ class Prefs(context: Context) {
         showNotificationPreviews = sp.getBoolean(PREVIEWS, true),
         showMediaControls = sp.getBoolean(MEDIA, true),
         textColor = sp.getString(TEXT_COLOR, null)?.let { name -> TextColor.entries.firstOrNull { it.name == name } } ?: TextColor.AUTO,
+        iconSize = sp.getString(ICON_SIZE, null)?.let { name -> IconSize.entries.firstOrNull { it.name == name } } ?: IconSize.MEDIUM,
+        clockStyle = sp.getString(CLOCK_STYLE, null)?.let { name -> ClockStyle.entries.firstOrNull { it.name == name } } ?: ClockStyle.CLASSIC,
+        showCalendar = sp.getBoolean(SHOW_CALENDAR, false),
+        showBattery = sp.getBoolean(SHOW_BATTERY, true),
+        autoUpdateCheck = sp.getBoolean(AUTO_UPDATE, true),
         swipeDownAction = sp.getString(SWIPE_DOWN, null)
             ?.let { name -> SwipeDownAction.entries.firstOrNull { it.name == name } }
             ?: SwipeDownAction.NOTIFICATIONS,
@@ -75,6 +98,11 @@ class Prefs(context: Context) {
             .putBoolean(PREVIEWS, s.showNotificationPreviews)
             .putBoolean(MEDIA, s.showMediaControls)
             .putString(TEXT_COLOR, s.textColor.name)
+            .putString(ICON_SIZE, s.iconSize.name)
+            .putString(CLOCK_STYLE, s.clockStyle.name)
+            .putBoolean(SHOW_CALENDAR, s.showCalendar)
+            .putBoolean(SHOW_BATTERY, s.showBattery)
+            .putBoolean(AUTO_UPDATE, s.autoUpdateCheck)
             .putString(SWIPE_DOWN, s.swipeDownAction.name)
             .putBoolean(SEEDED, s.favoritesSeeded)
             .putBoolean(NOTIFICATION_PROMPT, s.notificationPromptDismissed)
@@ -90,6 +118,11 @@ class Prefs(context: Context) {
         const val PREVIEWS = "notification_previews"
         const val MEDIA = "media_controls"
         const val TEXT_COLOR = "text_color"
+        const val ICON_SIZE = "icon_size"
+        const val CLOCK_STYLE = "clock_style"
+        const val SHOW_CALENDAR = "show_calendar"
+        const val SHOW_BATTERY = "show_battery"
+        const val AUTO_UPDATE = "auto_update_check"
         const val SWIPE_DOWN = "swipe_down"
         const val SEEDED = "favorites_seeded"
         const val NOTIFICATION_PROMPT = "notification_prompt_dismissed"

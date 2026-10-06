@@ -1,5 +1,12 @@
 package com.gh00ul.cascade.settings
 
+import com.gh00ul.cascade.update.Updater
+import androidx.core.app.ActivityCompat
+import android.app.Activity
+import com.gh00ul.cascade.util.hasCalendarAccess
+import com.gh00ul.cascade.data.IconSize
+import com.gh00ul.cascade.data.ClockStyle
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -166,6 +173,18 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty()
     }
+    val update by Updater.state.collectAsStateWithLifecycle()
+    var calendarAllowed by remember { mutableStateOf(hasCalendarAccess(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { calendarAllowed = hasCalendarAccess(context) }
+    // After "Don't allow" twice, Android stops asking and the request fails at once; send the user to App info then.
+    var calendarBlocked by remember { mutableStateOf(false) }
+    val calendarRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        calendarAllowed = granted
+        val activity = context as? Activity
+        calendarBlocked = !granted && activity != null &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.READ_CALENDAR)
+        prefs.update { it.copy(showCalendar = granted) }
+    }
 
     LazyColumn(contentPadding = padding) {
         item { Header("Setup") }
@@ -207,6 +226,39 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
             }
         }
 
+        item { Header("Clock") }
+        item {
+            ChoiceRow(
+                title = "Clock style",
+                options = listOf("Classic", "Bold", "Stacked"),
+                selected = settings.clockStyle.ordinal,
+            ) { i -> prefs.update { it.copy(clockStyle = ClockStyle.entries[i]) } }
+        }
+        item {
+            SwitchRow(
+                "Next calendar event",
+                when {
+                    calendarBlocked -> "Calendar access is blocked. Tap to allow it in App info"
+                    settings.showCalendar && !calendarAllowed -> "Calendar access is off; allow it in App info"
+                    else -> "Show what's coming up under the clock"
+                },
+                settings.showCalendar && calendarAllowed,
+            ) { on ->
+                if (on && !hasCalendarAccess(context) && calendarBlocked) {
+                    LauncherActions.openOwnAppInfo(context)
+                } else if (on && !hasCalendarAccess(context)) {
+                    calendarRequest.launch(Manifest.permission.READ_CALENDAR)
+                } else {
+                    prefs.update { it.copy(showCalendar = on) }
+                }
+            }
+        }
+        item {
+            SwitchRow("Charging and low battery", "Time to full while charging, and a warning when low", settings.showBattery) { on ->
+                prefs.update { it.copy(showBattery = on) }
+            }
+        }
+
         item { Header("Appearance") }
         item {
             ChoiceRow(
@@ -218,6 +270,15 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
         }
         item {
             SwitchRow("App icons", null, settings.showIcons) { on -> prefs.update { it.copy(showIcons = on) } }
+        }
+        item {
+            ChoiceRow(
+                title = "Icon size",
+                summary = if (settings.showIcons) null else "Turn on app icons to use this",
+                options = listOf("Small", "Medium", "Large", "XL"),
+                selected = settings.iconSize.ordinal,
+                enabled = settings.showIcons,
+            ) { i -> prefs.update { it.copy(iconSize = IconSize.entries[i]) } }
         }
         item {
             SwitchRow(
@@ -244,7 +305,32 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, app
         }
 
         item { Header("About") }
-        item { SettingRow("Cascade $version", "Free and open source under the MIT License") }
+        item {
+            val release = Updater.current()
+            SettingRow(
+                title = "Cascade $version",
+                summary = when (val u = update) {
+                    Updater.State.Idle -> "Tap to check for updates"
+                    Updater.State.Checking -> "Checking for updates…"
+                    is Updater.State.UpToDate -> "Up to date. Tap to check again"
+                    is Updater.State.Available -> "Version ${u.release.versionName} is available. Tap to update"
+                    is Updater.State.Downloading -> "Downloading ${u.release.versionName}…" + (u.percent?.let { " $it%" } ?: "")
+                    is Updater.State.Installing -> "Installing ${u.release.versionName}…"
+                    is Updater.State.Failed -> u.message
+                },
+                onClick = {
+                    val u = update
+                    if (release != null && (u is Updater.State.Available || u is Updater.State.Failed)) Updater.install(context, release)
+                    else if (u !is Updater.State.Downloading && u !is Updater.State.Installing) Updater.check(context, force = true)
+                },
+            )
+        }
+        item {
+            SwitchRow("Check for updates automatically", "Looks for a newer release on GitHub when home opens", settings.autoUpdateCheck) { on ->
+                prefs.update { it.copy(autoUpdateCheck = on) }
+            }
+        }
+        item { SettingRow("Free and open source", "MIT License · github.com/gh00ul/cascade-launcher") }
     }
 }
 
@@ -431,8 +517,16 @@ private fun SwitchRow(title: String, summary: String?, checked: Boolean, enabled
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChoiceRow(title: String, options: List<String>, selected: Int, summary: String? = null, onSelect: (Int) -> Unit) {
+private fun ChoiceRow(
+    title: String,
+    options: List<String>,
+    selected: Int,
+    summary: String? = null,
+    enabled: Boolean = true,
+    onSelect: (Int) -> Unit,
+) {
     ListItem(
+        modifier = Modifier.alpha(if (enabled) 1f else 0.4f),
         headlineContent = { Text(title) },
         supportingContent = {
             Column {
@@ -442,6 +536,7 @@ private fun ChoiceRow(title: String, options: List<String>, selected: Int, summa
                         SegmentedButton(
                             selected = i == selected,
                             onClick = { onSelect(i) },
+                            enabled = enabled,
                             shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
                         ) { Text(label, maxLines = 1) }
                     }

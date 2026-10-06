@@ -111,6 +111,7 @@ fun HomePage(
             icon = app?.let { icons[it.key] },
             notifications = notificationsForApp,
             showArt = settings.showIcons,
+            iconSize = settings.iconSize.homeDp.dp,
             // Settings disables Monochrome while icons are hidden, so it mustn't grey the player then either.
             monochrome = settings.showIcons && settings.monochromeIcons,
             resting = mediaResting,
@@ -132,7 +133,7 @@ fun HomePage(
             .pointerInput(Unit) { detectTapGestures(onLongPress = { longPress() }) }
             .padding(start = 20.dp, end = 44.dp, top = 28.dp, bottom = bottomInset + 28.dp),
     ) {
-        Clock(Modifier.padding(horizontal = 8.dp))
+        ClockHeader(settings, Modifier.padding(horizontal = 8.dp))
         Spacer(Modifier.height(20.dp))
         onboarding()
         Spacer(Modifier.weight(1f))
@@ -211,6 +212,7 @@ fun HomePage(
                             showIcon = settings.showIcons,
                             showPreview = settings.showNotificationPreviews,
                             large = true,
+                            iconSize = settings.iconSize.homeDp.dp,
                             onClick = { onLaunch(app, it) },
                             onLongClick = { onAppLongPress(app) },
                             onNotificationClick = { onOpenNotification(app, it) },
@@ -220,71 +222,6 @@ fun HomePage(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun Clock(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    DisposableEffect(context) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, intent: Intent) {
-                now = System.currentTimeMillis()
-            }
-        }
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_TIME_TICK)
-            addAction(Intent.ACTION_TIME_CHANGED)
-            addAction(Intent.ACTION_TIMEZONE_CHANGED)
-            addAction(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED)
-        }
-        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        onDispose { context.unregisterReceiver(receiver) }
-    }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { now = System.currentTimeMillis() }
-
-    val locale = LocalConfiguration.current.locales[0]
-    val is24h = DateFormat.is24HourFormat(context)
-    val time = SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale).format(Date(now))
-    val date = SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd"), locale).format(Date(now))
-    val alarm = remember(now) { context.getSystemService(AlarmManager::class.java).nextAlarmClock?.triggerTime }
-    val style = LocalLauncherStyle.current
-
-    Column(modifier) {
-        Text(
-            time,
-            style = style.clock,
-            modifier = Modifier.clickable(
-                interactionSource = null, indication = null,
-                onClickLabel = "Open alarms", role = Role.Button,
-            ) { LauncherActions.openAlarms(context) },
-        )
-        Text(
-            date,
-            style = style.date,
-            modifier = Modifier.clickable(
-                interactionSource = null, indication = null,
-                onClickLabel = "Open calendar", role = Role.Button,
-            ) { LauncherActions.openCalendar(context) },
-        )
-        if (alarm != null) {
-            val pattern = DateFormat.getBestDateTimePattern(locale, if (is24h) "EEEHmm" else "EEEhmma")
-            Text(
-                "Alarm  ${SimpleDateFormat(pattern, locale).format(Date(alarm))}",
-                style = style.small,
-                modifier = Modifier
-                    .padding(top = 4.dp)
-                    .clickable(
-                        interactionSource = null, indication = null,
-                        onClickLabel = "Open alarms", role = Role.Button,
-                    ) {
-                        // That exact alarm when the clock app offers it, else the alarm list.
-                        val shown = context.getSystemService(AlarmManager::class.java).nextAlarmClock?.showIntent?.sendFromLauncher(context)
-                        if (shown != true) LauncherActions.openAlarms(context)
-                    },
-            )
         }
     }
 }

@@ -55,6 +55,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gh00ul.cascade.data.IconImage
@@ -69,6 +70,7 @@ fun SearchOverlay(
     apps: List<AppEntry>,
     icons: Map<String, IconImage>,
     showIcons: Boolean,
+    iconSize: Dp,
     onLaunch: (AppEntry, Rect?) -> Unit,
     onLongPress: (AppEntry) -> Unit,
     onDismiss: () -> Unit,
@@ -172,6 +174,7 @@ fun SearchOverlay(
                         showIcon = showIcons,
                         showPreview = false,
                         large = false,
+                        iconSize = iconSize,
                         onClick = { onLaunch(app, it) },
                         onLongClick = { onLongPress(app) },
                         onNotificationClick = {},
@@ -186,7 +189,7 @@ fun SearchOverlay(
                                 .padding(horizontal = 8.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(iconSize), contentAlignment = Alignment.Center) {
                                 Icon(Icons.Filled.Search, contentDescription = null, tint = style.content.copy(alpha = 0.7f))
                             }
                             Spacer(Modifier.width(16.dp))

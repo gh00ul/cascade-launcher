@@ -1,0 +1,336 @@
+package com.gh00ul.cascade.ui.home
+
+import android.app.AlarmManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
+import android.os.Build
+import android.text.format.DateFormat
+import android.text.format.DateUtils
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import com.gh00ul.cascade.data.ClockStyle
+import com.gh00ul.cascade.data.LauncherSettings
+import com.gh00ul.cascade.notifications.LiveTimer
+import com.gh00ul.cascade.notifications.NotificationStore
+import com.gh00ul.cascade.ui.common.ExtraIcons
+import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import com.gh00ul.cascade.util.CalendarEvent
+import com.gh00ul.cascade.util.LauncherActions
+import com.gh00ul.cascade.util.nextCalendarEvent
+import com.gh00ul.cascade.util.sendFromLauncher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.abs
+
+/**
+ * Time, date, and a row of chips for what's next: the alarm, running timers/stopwatches/calls (ticking live),
+ * the next calendar event and charging progress. Tap the time for alarms and the date for the calendar.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) {
+                now = System.currentTimeMillis()
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIME_TICK)
+            addAction(Intent.ACTION_TIME_CHANGED)
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            addAction(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED)
+        }
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { now = System.currentTimeMillis() }
+
+    val style = LocalLauncherStyle.current
+    val locale = LocalConfiguration.current.locales[0]
+    val is24h = DateFormat.is24HourFormat(context)
+    val date = SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd"), locale).format(Date(now))
+    val alarm = remember(now) { context.getSystemService(AlarmManager::class.java).nextAlarmClock }
+    val timers by NotificationStore.timers.collectAsStateWithLifecycle()
+    val event = rememberNextEvent(settings.showCalendar, now)
+    val battery = rememberBattery(settings.showBattery)
+    val openAlarms = Modifier.clickable(interactionSource = null, indication = null, onClickLabel = "Open alarms", role = Role.Button) {
+        LauncherActions.openAlarms(context)
+    }
+
+    Column(modifier) {
+        val time = SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale).format(Date(now))
+        when (settings.clockStyle) {
+            ClockStyle.CLASSIC -> Text(time, style = style.clock, modifier = openAlarms)
+            ClockStyle.BOLD -> Text(time, style = style.clockBold, modifier = openAlarms)
+            ClockStyle.STACKED -> Column(openAlarms.clearAndSetSemantics { contentDescription = time }) {
+                Text(SimpleDateFormat(if (is24h) "HH" else "hh", locale).format(Date(now)), style = style.clockStacked)
+                Text(SimpleDateFormat("mm", locale).format(Date(now)), style = style.clockStacked)
+            }
+        }
+        Text(
+            date,
+            style = style.date,
+            modifier = Modifier
+                .padding(top = if (settings.clockStyle == ClockStyle.STACKED) 6.dp else 0.dp)
+                .clickable(interactionSource = null, indication = null, onClickLabel = "Open calendar", role = Role.Button) {
+                    LauncherActions.openCalendar(context)
+                },
+        )
+
+        val showBatteryChip = battery != null && (battery.charging || battery.level <= LOW_BATTERY)
+        if (alarm != null || timers.isNotEmpty() || event != null || showBatteryChip) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 12.dp),
+            ) {
+                if (timers.isNotEmpty()) TimerChips(timers)
+                event?.let { e ->
+                    val (title, whenText, spokenWhen) = eventText(e, now, is24h, locale)
+                    InfoChip(ExtraIcons.Event, title, "Next event: $title, $spokenWhen", "Open event", trailing = whenText) {
+                        LauncherActions.openCalendarEvent(context, e.id, e.begin, e.end)
+                    }
+                }
+                if (alarm != null) {
+                    val (text, spoken) = alarmText(alarm.triggerTime, now, is24h, locale)
+                    InfoChip(ExtraIcons.Alarm, text, "Alarm $spoken", "Open alarms") {
+                        // That exact alarm when the clock app offers it, else the alarm list.
+                        if (alarm.showIntent?.sendFromLauncher(context) != true) LauncherActions.openAlarms(context)
+                    }
+                }
+                if (showBatteryChip && battery != null) {
+                    val (text, spoken) = batteryText(battery)
+                    InfoChip(if (battery.charging) ExtraIcons.Bolt else ExtraIcons.BatteryAlert, text, spoken, null, accent = !battery.charging) {}
+                }
+            }
+        }
+    }
+}
+
+private const val LOW_BATTERY = 15
+
+/**
+ * A pill with an icon and a label. [text] is ellipsized when space runs out; [trailing] (a time) never is.
+ * TalkBack reads [description] instead of the raw text.
+ */
+@Composable
+private fun InfoChip(
+    icon: ImageVector,
+    text: String,
+    description: String,
+    clickLabel: String?,
+    trailing: String? = null,
+    accent: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val style = LocalLauncherStyle.current
+    Row(
+        Modifier
+            .clip(CircleShape)
+            .background(style.scrim.copy(alpha = 0.30f))
+            .then(if (clickLabel != null) Modifier.clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onClick) else Modifier)
+            .semantics { contentDescription = description }
+            .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = if (accent) style.accent else style.content, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text,
+            style = style.chip,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false).clearAndSetSemantics {},
+        )
+        if (trailing != null) {
+            Text("  ·  $trailing", style = style.chip, maxLines = 1, modifier = Modifier.clearAndSetSemantics {})
+        }
+    }
+}
+
+/** Running clocks from notifications, ticking every second while home is visible. */
+@Composable
+private fun TimerChips(timers: List<LiveTimer>) {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val now by produceState(System.currentTimeMillis(), lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                value = System.currentTimeMillis()
+                delay(1_000 - value % 1_000)
+            }
+        }
+    }
+    for (timer in timers) {
+        val seconds = (if (timer.countDown) timer.base - now else now - timer.base).coerceAtLeast(0) / 1_000
+        val time = DateUtils.formatElapsedTime(seconds)
+        val label = timer.title.takeIf { it.isNotEmpty() && it.length <= 18 }
+        val kind = if (timer.countDown) "remaining" else "elapsed"
+        InfoChip(
+            ExtraIcons.Timer,
+            text = label ?: time,
+            description = listOfNotNull(label, "${spokenDuration(seconds * 1_000)} $kind").joinToString(", "),
+            clickLabel = "Open",
+            trailing = if (label != null) time else null,
+        ) { timer.contentIntent?.sendFromLauncher(context) }
+    }
+}
+
+/**
+ * The next calendar event, re-read every five minutes and on each return home, and only while home is visible:
+ * the query crosses processes, so it never runs in the background.
+ */
+@Composable
+private fun rememberNextEvent(enabled: Boolean, now: Long): CalendarEvent? {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val visible by lifecycle.currentStateFlow.collectAsStateWithLifecycle()
+    val event by produceState<CalendarEvent?>(null, enabled, now / 300_000, visible.isAtLeast(Lifecycle.State.RESUMED)) {
+        if (!enabled) {
+            value = null
+            return@produceState
+        }
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@produceState
+        value = withContext(Dispatchers.IO) { nextCalendarEvent(context, System.currentTimeMillis()) }
+    }
+    // Drop an event that ended since the last query.
+    return event?.takeIf { it.allDay || it.end > now }
+}
+
+private class Battery(val level: Int, val charging: Boolean, val fullInMs: Long)
+
+/** Battery level and charging state from the sticky ACTION_BATTERY_CHANGED broadcast, or null when [enabled] is off. */
+@Composable
+private fun rememberBattery(enabled: Boolean): Battery? {
+    val context = LocalContext.current
+    var battery by remember { mutableStateOf<Battery?>(null) }
+    DisposableEffect(context, enabled) {
+        if (!enabled) {
+            battery = null
+            return@DisposableEffect onDispose {}
+        }
+        val manager = context.getSystemService(BatteryManager::class.java)
+        fun read(intent: Intent?) {
+            if (intent == null) return
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+            if (level < 0) return
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            // The status can still say FULL or CHARGING for a moment after unplugging; require power too.
+            val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+            val charging = plugged && (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
+            val fullIn = if (charging && Build.VERSION.SDK_INT >= 28) runCatching { manager.computeChargeTimeRemaining() }.getOrDefault(-1L) else -1L
+            battery = Battery(level * 100 / scale, charging, fullIn)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) = read(intent)
+        }
+        // Sticky: registering returns the current state right away.
+        read(ContextCompat.registerReceiver(context, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED))
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    return battery
+}
+
+/** Chip text and what TalkBack says. */
+private fun batteryText(b: Battery): Pair<String, String> = when {
+    b.charging && b.level >= 100 -> "Charged" to "Battery charged"
+    b.charging && b.fullInMs > 0 -> "${b.level}%  ·  full in ${duration(b.fullInMs)}" to
+        "Charging, ${b.level} percent, full in ${spokenDuration(b.fullInMs)}"
+    b.charging -> "${b.level}%  ·  charging" to "Charging, ${b.level} percent"
+    else -> "${b.level}% battery" to "Battery low, ${b.level} percent"
+}
+
+private fun clockPattern(locale: Locale, is24h: Boolean, withDay: Boolean) =
+    DateFormat.getBestDateTimePattern(locale, (if (withDay) "EEE" else "") + if (is24h) "Hmm" else "hmma")
+
+/** Chip text and what TalkBack says. */
+private fun alarmText(trigger: Long, now: Long, is24h: Boolean, locale: Locale): Pair<String, String> {
+    val left = trigger - now
+    return if (left in 0 until 24 * 60 * 60_000L) {
+        val time = SimpleDateFormat(clockPattern(locale, is24h, withDay = false), locale).format(Date(trigger))
+        "$time  ·  in ${duration(left)}" to "$time, in ${spokenDuration(left)}"
+    } else {
+        val time = SimpleDateFormat(clockPattern(locale, is24h, withDay = true), locale).format(Date(trigger))
+        time to time
+    }
+}
+
+/** Title, the when-part (never truncated), and the when-part as spoken. */
+private fun eventText(e: CalendarEvent, now: Long, is24h: Boolean, locale: Locale): Triple<String, String, String> {
+    if (e.allDay) return Triple(e.title, "today", "today")
+    fun at(time: Long) = SimpleDateFormat(clockPattern(locale, is24h, withDay = !DateUtils.isToday(time)), locale).format(Date(time))
+    return when {
+        e.begin <= now -> Triple(e.title, "until ${at(e.end)}", "until ${at(e.end)}")
+        e.begin - now < 60 * 60_000L -> Triple(e.title, "in ${duration(e.begin - now)}", "in ${spokenDuration(e.begin - now)}")
+        else -> Triple(e.title, at(e.begin), at(e.begin))
+    }
+}
+
+/** "25 min", "3h 10m". Rounds up so a countdown never shows "0 min" while time remains. */
+private fun duration(ms: Long): String {
+    val minutes = (abs(ms) + 59_999) / 60_000
+    return if (minutes < 60) "$minutes min" else "${minutes / 60}h ${minutes % 60}m"
+}
+
+/** "3 hours 10 minutes", "45 seconds": the same amount as TalkBack should say it. */
+private fun spokenDuration(ms: Long): String {
+    val total = abs(ms) / 1_000
+    val hours = total / 3_600
+    val minutes = total % 3_600 / 60
+    val seconds = total % 60
+    fun unit(n: Long, name: String) = "$n $name" + if (n == 1L) "" else "s"
+    return buildList {
+        if (hours > 0) add(unit(hours, "hour"))
+        if (minutes > 0) add(unit(minutes, "minute"))
+        if (hours == 0L && minutes == 0L) add(unit(seconds, "second"))
+    }.joinToString(" ")
+}

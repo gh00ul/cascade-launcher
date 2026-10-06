@@ -89,6 +89,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -172,6 +173,8 @@ fun MediaRow(
     icon: IconImage?,
     notifications: List<AppNotification>,
     showArt: Boolean,
+    /** Icon size of the favorites around it; art, text and controls line up with their columns. */
+    iconSize: Dp,
     monochrome: Boolean,
     resting: Boolean,
     expanded: Boolean,
@@ -278,7 +281,7 @@ fun MediaRow(
                     .then(
                         if (restFraction != null) {
                             Modifier.drawBehind {
-                                val start = (if (showArt) 64.dp else 8.dp).toPx()
+                                val start = (if (showArt) iconSize + 24.dp else 8.dp).toPx()
                                 val end = size.width - 4.dp.toPx()
                                 val y = size.height - 3.dp.toPx()
                                 val stroke = 2.dp.toPx()
@@ -289,12 +292,12 @@ fun MediaRow(
                             }
                         } else Modifier,
                     )
-                    .heightIn(min = 64.dp)
+                    .heightIn(min = maxOf(64.dp, iconSize + 24.dp))
                     .padding(start = if (showArt) 4.dp else 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (showArt) {
-                    MediaArt(state.art, icon, showDot, monochrome)
+                    MediaArt(state.art, icon, showDot, monochrome, iconSize + 8.dp)
                     Spacer(Modifier.width(12.dp))
                 }
                 TrackText(state, appLabel, scrubMs, skipDir, rtl, Modifier.weight(1f))
@@ -318,7 +321,7 @@ fun MediaRow(
                     Modifier
                         .fillMaxWidth()
                         .height(48.dp)
-                        .padding(start = if (showArt) 52.dp else 0.dp, end = 4.dp),
+                        .padding(start = if (showArt) iconSize + 12.dp else 0.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     val skips = state.canSkipPrevious || state.canSkipNext
@@ -349,7 +352,7 @@ fun MediaRow(
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut(),
         ) {
-            ExpandedNotifications(notifications, startPadding = if (showArt) 64.dp else 8.dp, onOpen = onNotificationClick)
+            ExpandedNotifications(notifications, startPadding = if (showArt) iconSize + 24.dp else 8.dp, onOpen = onNotificationClick)
         }
     }
 }
@@ -396,7 +399,7 @@ private fun TrackText(state: NowPlayingState, appLabel: String?, scrubMs: Long?,
 }
 
 @Composable
-private fun MediaArt(art: ImageBitmap?, icon: IconImage?, showDot: Boolean, monochrome: Boolean) {
+private fun MediaArt(art: ImageBitmap?, icon: IconImage?, showDot: Boolean, monochrome: Boolean, size: Dp) {
     val style = LocalLauncherStyle.current
     Box {
         Crossfade(art, animationSpec = tween(300), label = "art") { bitmap ->
@@ -406,11 +409,11 @@ private fun MediaArt(art: ImageBitmap?, icon: IconImage?, showDot: Boolean, mono
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     colorFilter = if (monochrome) ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }) else null,
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)),
+                    modifier = Modifier.size(size).clip(RoundedCornerShape(size / 4)),
                 )
-                icon != null -> AppIcon(icon, 48.dp)
+                icon != null -> AppIcon(icon, size)
                 else -> Box(
-                    Modifier.size(48.dp).background(style.content.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
+                    Modifier.size(size).background(style.content.copy(alpha = 0.12f), RoundedCornerShape(size / 4)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(ExtraIcons.MusicNote, contentDescription = null, tint = style.content, modifier = Modifier.size(24.dp))

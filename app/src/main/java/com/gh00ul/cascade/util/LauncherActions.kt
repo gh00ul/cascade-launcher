@@ -8,6 +8,7 @@ import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
+import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
@@ -17,6 +18,7 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.provider.AlarmClock
+import android.provider.CalendarContract
 import android.provider.Settings
 import android.view.View
 import android.widget.Toast
@@ -112,6 +114,18 @@ object LauncherActions {
         if (!start(context, Intent(Intent.ACTION_VIEW, now))) {
             start(context, Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR))
         }
+    }
+
+    /** Opens one event in the calendar app, falling back to the calendar at that time. */
+    fun openCalendarEvent(context: Context, eventId: Long, begin: Long, end: Long) {
+        val event = Intent(Intent.ACTION_VIEW, ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId))
+            .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+            .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+        if (!start(context, event)) openCalendar(context)
+    }
+
+    fun openOwnAppInfo(context: Context) {
+        start(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
     }
 
     fun openWallpaperPicker(context: Context) {

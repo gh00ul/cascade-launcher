@@ -1,5 +1,6 @@
 package com.gh00ul.cascade.ui.home
 
+import com.gh00ul.cascade.update.Updater
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -179,9 +180,18 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         isDefault = LauncherActions.isDefaultLauncher(context)
         hasNotificationAccess = LauncherActions.hasNotificationAccess(context)
         NowPlaying.refresh()
+        if (launcher.prefs.settings.value.autoUpdateCheck) Updater.check(context)
         val live = NowPlaying.state.value
         mediaResting = live?.isPaused == true
         restPending = live == null
+    }
+    val update by Updater.state.collectAsStateWithLifecycle()
+    val dismissedUpdate by remember { Updater.dismissed(context) }.collectAsStateWithLifecycle()
+    val showUpdate = when (val u = update) {
+        is Updater.State.Available -> u.release.tag != dismissedUpdate
+        is Updater.State.Downloading, is Updater.State.Installing -> true
+        is Updater.State.Failed -> u.release != null && u.release.tag != dismissedUpdate
+        else -> false
     }
     val roleRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         isDefault = LauncherActions.isDefaultLauncher(context)
@@ -309,6 +319,11 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onHideMedia = NowPlaying::hide,
                         onboarding = {
                             when {
+                                showUpdate -> UpdateCard(
+                                    state = update,
+                                    onUpdate = { Updater.install(context, it) },
+                                    onDismiss = { Updater.dismiss(context, it) },
+                                )
                                 !isDefault && !defaultPromptHidden -> OnboardingCard(
                                     title = "Make Cascade your home screen",
                                     body = "Set it as your default home app so the Home button brings you here.",
@@ -340,6 +355,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                             showIcon = settings.showIcons,
                             showPreview = false,
                             large = false,
+                            iconSize = settings.iconSize.listDp.dp,
                             onClick = { launch(row.app, it) },
                             onLongClick = { sheetApp = row.app },
                             onNotificationClick = { openNotification(row.app, it) },
@@ -377,6 +393,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     apps = apps,
                     icons = icons,
                     showIcons = settings.showIcons,
+                    iconSize = settings.iconSize.listDp.dp,
                     onLaunch = { app, bounds ->
                         launch(app, bounds)
                         searchOpen = false

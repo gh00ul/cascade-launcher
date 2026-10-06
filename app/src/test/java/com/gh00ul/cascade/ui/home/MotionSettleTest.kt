@@ -164,6 +164,22 @@ class MotionSettleTest {
         assertSettles()
     }
 
+    /** The home menu pops open from a long press and closes with Back, and nothing keeps animating after either. */
+    @Test fun homeMenuOpeningAndClosingSettles() {
+        show()
+        assertSettles()
+        // The clock is driven by hand here, so the finger is held down past the long press while it runs. On this
+        // small screen the favorites fill the middle: the empty space is beside the clock.
+        compose.onRoot().performTouchInput { down(Offset(width * 0.8f, height * 0.08f)) }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.onRoot().performTouchInput { up() }
+        assertSettles()
+        compose.onNodeWithText("Wallpaper").assertExists()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        assertSettles()
+        compose.onNodeWithText("Wallpaper").assertDoesNotExist()
+    }
+
     @Test fun alphabetDragSettles() {
         show()
         assertSettles()

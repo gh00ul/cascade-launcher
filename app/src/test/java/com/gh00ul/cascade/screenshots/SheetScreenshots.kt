@@ -13,13 +13,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import com.gh00ul.cascade.settings.PageColor
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeNotifications
 import com.gh00ul.cascade.data.HomeFolder
 import com.gh00ul.cascade.ui.home.AppActionsContent
 import com.gh00ul.cascade.ui.home.FolderActionsContent
 import com.gh00ul.cascade.ui.home.FolderChoice
-import com.gh00ul.cascade.ui.home.HomeMenuContent
 import com.gh00ul.cascade.util.AppShortcut
 import org.junit.Test
 import org.robolectric.RuntimeEnvironment
@@ -63,9 +63,6 @@ class SheetScreenshots : ScreenshotTest() {
         }
     }
 
-    @Test fun homeMenu() = snap("Sheet_HomeMenu", Frame.Component, variants = dark, wallpaper = false) {
-        Sheet { HomeMenuContent(onWallpaper = {}, onEditFavorites = {}, onSettings = {}) }
-    }
 
     /** Long-press on Calendar, in the Work folder: it can leave it, or move to another folder (open here). */
     @Test fun appActionsInFolder() {
@@ -118,7 +115,8 @@ private fun Sheet(content: @Composable () -> Unit) {
     Surface(
         Modifier.fillMaxWidth().padding(top = 12.dp),
         shape = BottomSheetDefaults.ExpandedShape,
-        color = BottomSheetDefaults.ContainerColor,
+        // The page color the sheets sit on, as AppActionsSheet and FolderActionsSheet pass it.
+        color = PageColor,
     ) {
         Column(Modifier.fillMaxWidth()) {
             BottomSheetDefaults.DragHandle(Modifier.align(Alignment.CenterHorizontally))

@@ -5,6 +5,8 @@ import android.os.BatteryManager
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performTouchInput
 import com.gh00ul.cascade.data.ClockStyle
@@ -163,6 +165,14 @@ class HomeScreenshots : ScreenshotTest() {
         } finally {
             NotificationStore.clear()
         }
+    }
+
+    /** A long press on empty space between the clock and the favorites: the home menu pops from the finger. */
+    @Test fun homeMenu() = snap(
+        "Home_Menu",
+        afterContent = { onRoot().performTouchInput { longClick(Offset(width * 0.55f, height * 0.4f)) } },
+    ) {
+        HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp())
     }
 
     @Test fun notificationsExpanded() = snap("Home_NotificationsExpanded") {

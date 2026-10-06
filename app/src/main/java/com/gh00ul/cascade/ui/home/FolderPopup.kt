@@ -69,11 +69,11 @@ import kotlin.math.roundToInt
 internal class OpenFolder(val id: String, val anchor: Rect?)
 
 /** The pop-up shares the player's and the home cards' corners. */
-private val PopupShape = RoundedCornerShape(20.dp)
+internal val PopupShape = RoundedCornerShape(20.dp)
 /** Narrow enough to read as a pop-up beside the list, on a phone and on a tablet alike. */
 private val PopupMaxWidth = 320.dp
 /** Kept this far from the screen's edges, inside the system bars. */
-private val PopupMargin = 12.dp
+internal val PopupMargin = 12.dp
 /** Between the card and the row it grows from. */
 private val PopupGap = 4.dp
 /** Inside the card, before the rows' own 8dp, so the icons sit 16dp in. */
@@ -85,7 +85,7 @@ private const val PopBackShrink = 0.08f
 /** How much the home screen dims behind the card. */
 private const val DimAlpha = 0.45f
 /** The card: the overlay's tint lifted a step toward the text color, opaque, so the rows behind never show through. */
-private const val CardLift = 0.09f
+internal const val CardLift = 0.09f
 
 /** The card grows in like an arrival and leaves quickly, as the layers it sits on do. */
 private val PopIn: FiniteAnimationSpec<Float> = tween(Motion.ENTER, easing = Motion.Decelerate)
@@ -118,13 +118,33 @@ internal fun FolderPopup(
     onDismiss: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    val style = LocalLauncherStyle.current
     // The last folder shown, so the card still has something to draw while it closes.
     val shown = remember { Latest<Pair<HomeFolder, Rect?>>() }.also { if (folder != null) it.value = folder to anchor }
-    AnimatedVisibility(visible = folder != null, enter = Motion.LayerIn, exit = Motion.LayerOut) {
-        val (current, from) = shown.value ?: return@AnimatedVisibility
+    PopupLayer(visible = folder != null, title = { shown.value?.first?.label.orEmpty() }, onDismiss = onDismiss) { scale ->
+        val (current, from) = shown.value ?: return@PopupLayer
+        AnchoredCard(
+            anchor = from,
+            // The folder icon's middle: the row's 8dp padding, then half the icon.
+            originX = 8.dp + homeIconSize / 2,
+            scale = scale,
+            modifier = Modifier.fillMaxSize().padding(contentPadding),
+        ) {
+            FolderCard(current, icons, notifications, showIcons, iconSize, onLaunch, onAppLongPress, onOptions)
+        }
+    }
+}
+
+/**
+ * What every pop-up over home shares: a dim that closes it when tapped, a pane for TalkBack named [title], Back (on
+ * Android 13+ a predictive back gesture shrinks the card first), and the card popping in and out. Shows while
+ * [visible]. [content] lays the card out and draws it at the scale it's given, read only in the card's layer.
+ */
+@Composable
+internal fun PopupLayer(visible: Boolean, title: () -> String, onDismiss: () -> Unit, content: @Composable (scale: () -> Float) -> Unit) {
+    val style = LocalLauncherStyle.current
+    AnimatedVisibility(visible = visible, enter = Motion.LayerIn, exit = Motion.LayerOut) {
         val open = transition.targetState == EnterExitState.Visible
-        val pop = transition.animateFloat(transitionSpec = { if (targetState == EnterExitState.Visible) PopIn else PopOut }, label = "folderPop") {
+        val pop = transition.animateFloat(transitionSpec = { if (targetState == EnterExitState.Visible) PopIn else PopOut }, label = "pop") {
             if (it == EnterExitState.Visible) 1f else 0f
         }
         // 0 at rest; follows a predictive back gesture. Read only in the card's layer.
@@ -154,18 +174,10 @@ internal fun FolderPopup(
                 .fillMaxSize()
                 .drawBehind { drawRect(dim, alpha = DimAlpha) }
                 // A pane for TalkBack; it also keeps the home screen underneath out of reach.
-                .semantics { paneTitle = current.label }
+                .semantics { paneTitle = title() }
                 .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         ) {
-            AnchoredCard(
-                anchor = from,
-                // The folder icon's middle: the row's 8dp padding, then half the icon.
-                originX = 8.dp + homeIconSize / 2,
-                scale = { (PopStartScale + (1f - PopStartScale) * pop.value) * (1f - PopBackShrink * back.value) },
-                modifier = Modifier.fillMaxSize().padding(contentPadding),
-            ) {
-                FolderCard(current, icons, notifications, showIcons, iconSize, onLaunch, onAppLongPress, onOptions)
-            }
+            content { (PopStartScale + (1f - PopStartScale) * pop.value) * (1f - PopBackShrink * back.value) }
         }
     }
 }

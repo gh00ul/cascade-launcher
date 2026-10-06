@@ -375,7 +375,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     val listAlpha = searchTransition.animateHomeAlpha()
     var sheetApp by remember { mutableStateOf<AppEntry?>(null) }
     var renameApp by remember { mutableStateOf<AppEntry?>(null) }
-    var homeMenuOpen by remember { mutableStateOf(false) }
+    // The home menu, open at the long-press point (root coordinates).
+    var homeMenuAt by remember { mutableStateOf<Offset?>(null) }
     var widgetSheetOpen by remember { mutableStateOf(false) }
     // Folders: the one popped open (and where from), the one whose options show, the one being renamed, and the app a
     // new folder is being named for.
@@ -497,10 +498,12 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // The open folder as it is now: it follows renames and app changes, and closes if the folder empties or goes.
     val shownFolder = openFolder?.let { open -> favorites.firstOrNull { it.key == folderKey(open.id) } as? HomeFolder }
     LaunchedEffect(shownFolder == null) { if (shownFolder == null) openFolder = null }
-    // Leaving home closes the folder, without its exit: on return, home is as it was left, minus the pop-up.
+    // Leaving home closes the folder and the home menu, without their exits: on return, home is as it was left, minus
+    // the pop-ups.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
-        if (openFolder != null) {
+        if (openFolder != null || homeMenuAt != null) {
             openFolder = null
+            homeMenuAt = null
             folderPopupGeneration++
         }
     }
@@ -542,7 +545,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             searchOpen = false
             sheetApp = null
             renameApp = null
-            homeMenuOpen = false
+            homeMenuAt = null
             widgetSheetOpen = false
             expandedKey = null
             openFolder = null
@@ -556,7 +559,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // Back closes an open row and goes to the top. With nothing to do it falls through to MainActivity's own callback,
     // which keeps it on the home screen: before Android 12 the default finishes the home activity.
     ListBackHandler(
-        enabled = { !searchOpen && openFolder == null && (expandedKey != null || !atTop) },
+        enabled = { !searchOpen && openFolder == null && homeMenuAt == null && (expandedKey != null || !atTop) },
         scale = backScale,
         onBack = {
             expandedKey = null
@@ -624,7 +627,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     // Hidden from TalkBack while search covers it.
                     .then(if (searchOpen) Modifier.clearAndSetSemantics {} else Modifier)
                     // And while a folder is open over it.
-                    .then(if (openFolder != null) Modifier.clearAndSetSemantics {} else Modifier)
+                    .then(if (openFolder != null || homeMenuAt != null) Modifier.clearAndSetSemantics {} else Modifier)
                     .nestedScroll(pullDown)
                     // Fade rows out as they slide under the status bar. Hidden under search, whose scrim is see-through.
                     // Settling in after a return, it grows from a little smaller and fainter around the favorites; a
@@ -665,7 +668,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onLaunch = launch,
                         onAppLongPress = showSheet,
                         onOpenNotification = openNotification,
-                        onEmptyLongPress = { homeMenuOpen = true },
+                        onEmptyLongPress = { homeMenuAt = it },
                         onOpenFolder = { folder, bounds -> openFolder = OpenFolder(folder.id, bounds) },
                         onFolderLongPress = { folderSheet = it.id },
                         onReorderFavorites = { order -> launcher.prefs.update { it.reorderFavorites(order) } },
@@ -835,6 +838,27 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     onDismiss = { openFolder = null },
                     contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
                 )
+                HomeMenuPopup(
+                    at = homeMenuAt,
+                    onWallpaper = {
+                        homeMenuAt = null
+                        LauncherActions.openWallpaperPicker(context)
+                    },
+                    onWidgets = {
+                        homeMenuAt = null
+                        widgetSheetOpen = true
+                    },
+                    onFavorites = {
+                        homeMenuAt = null
+                        SettingsActivity.open(context, SettingsScreen.FAVORITES)
+                    },
+                    onSettings = {
+                        homeMenuAt = null
+                        SettingsActivity.open(context)
+                    },
+                    onDismiss = { homeMenuAt = null },
+                    contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
+                )
             }
 
             searchTransition.AnimatedVisibility(visible = { open -> open }, enter = Motion.LayerIn, exit = Motion.LayerOut) {
@@ -881,7 +905,6 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         )
     }
     renameApp?.let { app -> RenameDialog(app) { renameApp = null } }
-    if (homeMenuOpen) HomeMenuSheet(onDismiss = { homeMenuOpen = false }, onWidgets = { widgetSheetOpen = true })
     if (widgetSheetOpen) WidgetStackSheet(settings, onDismiss = { widgetSheetOpen = false })
     folderSheet?.let { id ->
         val folder = favorites.firstOrNull { it.key == folderKey(id) } as? HomeFolder

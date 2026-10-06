@@ -59,8 +59,10 @@ and Android won't update an app across a key change.
   Tap it to pick up where you left off; long-press for "Not now" until the next time headphones connect.
 - **Dark text on light wallpapers.** Text, icons and the status bar switch to dark automatically when your
   wallpaper is light. You can also force white or dark text in settings.
-- **Long-press menu.** Shows the app's notifications and shortcuts, plus actions to favorite, rename, hide
-  from the list, open app info, or uninstall.
+- **Long-press menu.** The app's icon and name, round buttons for what you reach for most (favorite, rename, app
+  info, uninstall), then its notifications, shortcuts and the rest (folders, hide) in cards, like Settings.
+- **Home menu.** Long-press empty space and a small card pops up at your finger with Wallpaper, Widgets,
+  Favorites and Settings.
 - **Search.** Matches app names by prefix, word start, initials ("gm" finds Google Maps), or fuzzy match.
   Enter opens the top result; when no app matches, it searches the web. Hidden apps still show up in search.
   In settings you can turn web search off, leave hidden apps out, or have an app open by itself once it's the
@@ -71,7 +73,7 @@ and Android won't update an app across a key change.
     default). Swipe down can open an app too. Locking uses an accessibility service you turn on once; it reads
     nothing on screen.
   - Press Home to jump back to the top.
-  - Long-press empty space for wallpaper and settings.
+  - Long-press empty space for the home menu: wallpaper, widgets, favorites and settings.
 - **Clock.** Pick Classic, Bold or Stacked, and 12- or 24-hour time (or follow the phone). Tap the time to open
   your alarms, or tap the date to open your calendar. Weather can sit beside the date (from Open-Meteo, for a
   place you pick; tap it for the forecast). Chips under the date show what's next, each one optional:

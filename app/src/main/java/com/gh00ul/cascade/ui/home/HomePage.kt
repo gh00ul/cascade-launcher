@@ -53,8 +53,12 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -101,7 +105,8 @@ fun HomePage(
     onLaunch: (AppEntry, Rect?) -> Unit,
     onAppLongPress: (AppEntry) -> Unit,
     onOpenNotification: (AppEntry, AppNotification) -> Unit,
-    onEmptyLongPress: () -> Unit,
+    /** A long press on empty space, where the finger is in root coordinates: the home menu pops from there. */
+    onEmptyLongPress: (Offset) -> Unit,
     onEmptyDoubleTap: () -> Unit,
     expandedKey: String?,
     onToggleExpand: (String) -> Unit,
@@ -126,6 +131,9 @@ fun HomePage(
 ) {
     val style = LocalLauncherStyle.current
     val longPress by rememberUpdatedState(onEmptyLongPress)
+    // Read through a state: the gesture below outlives recompositions, and Settings can turn vibration off meanwhile.
+    val haptics by rememberUpdatedState(LocalHapticFeedback.current)
+    val place = remember { CoordinatesHolder() }
     val doubleTap by rememberUpdatedState(onEmptyDoubleTap)
     // Keyed on this, so the gesture restarts as the setting changes; with no double-tap action, none is watched for.
     val doubleTapOn = settings.doubleTapAction != DoubleTapAction.NOTHING
@@ -159,8 +167,15 @@ fun HomePage(
         Modifier
             .fillMaxWidth()
             .heightIn(min = minHeight)
+            .onPlaced { place.coordinates = it }
             .pointerInput(doubleTapOn) {
-                detectTapGestures(onDoubleTap = { _: Offset -> doubleTap() }.takeIf { doubleTapOn }, onLongPress = { longPress() })
+                detectTapGestures(
+                    onDoubleTap = { _: Offset -> doubleTap() }.takeIf { doubleTapOn },
+                    onLongPress = { at ->
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        longPress(place.coordinates?.takeIf { it.isAttached }?.localToRoot(at) ?: at)
+                    },
+                )
             }
             .padding(start = 20.dp, end = 44.dp, top = 36.dp, bottom = bottomInset + 28.dp),
     ) {
@@ -292,6 +307,11 @@ fun HomePage(
             }
         }
     }
+}
+
+/** Where home is laid out, kept for turning a long press's point into root coordinates; not state, nothing redraws. */
+private class CoordinatesHolder {
+    var coordinates: LayoutCoordinates? = null
 }
 
 /** Cards on the home page share the player's corners. */

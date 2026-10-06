@@ -4,32 +4,37 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -52,6 +57,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -60,15 +66,20 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.HomeFolder
+import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.data.addToFolder
 import com.gh00ul.cascade.data.dissolveFolder
@@ -78,6 +89,10 @@ import com.gh00ul.cascade.data.removeFromFolder
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
+import com.gh00ul.cascade.settings.GroupShape
+import com.gh00ul.cascade.settings.GroupTitle
+import com.gh00ul.cascade.settings.PageColor
+import com.gh00ul.cascade.settings.RowColor
 import com.gh00ul.cascade.settings.SettingsActivity
 import com.gh00ul.cascade.settings.SettingsScreen
 import com.gh00ul.cascade.ui.common.AppIcon
@@ -134,7 +149,7 @@ fun AppActionsSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = PageColor) {
         AppActionsContent(
             app = app,
             icon = icon,
@@ -164,8 +179,8 @@ fun AppActionsSheet(
 
 /**
  * What [AppActionsSheet] shows, with its [shortcuts] already loaded and every action passed in, so it can be drawn
- * without the sheet or the app. All content starts on the sheet's 24dp edge, and shortcut icons and action glyphs
- * share one 28dp leading column, so their labels line up.
+ * without the sheet or the app: the app's icon and name, the actions people reach for most as round buttons, then its
+ * notifications, shortcuts and everything else in cards on the sheet's page, as Settings lays out its rows.
  *
  * An app in a folder ([folderName]) can leave it or move to another; any other app can go into one. The other
  * [folders] open under that action, with "New folder" last; with none yet, the action goes straight to [onNewFolder].
@@ -197,134 +212,97 @@ internal fun AppActionsContent(
     onRemoveFromFolder: () -> Unit = {},
     foldersOpen: Boolean = false,
 ) {
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
-        Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AppIcon(icon, 44.dp)
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text(app.label, style = MaterialTheme.typography.titleLarge)
-                Text(
-                    app.packageName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
+        SheetHeader(icon = { AppIcon(icon, HeaderIconSize) }, title = app.label, subtitle = app.packageName)
+        QuickActions {
+            // An app is a favorite of its own or in a folder, never both: in one, the first button takes it out.
+            if (folderName != null) {
+                QuickAction(FolderGlyphs.FolderMinus, "Take out", "Remove from $folderName", onRemoveFromFolder)
+            } else {
+                QuickAction(
+                    if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                    "Favorite",
+                    if (isFavorite) "Remove from favorites" else "Add to favorites",
+                    onToggleFavorite,
+                    selected = isFavorite,
+                )
+            }
+            QuickAction(Icons.Outlined.Edit, "Rename", onClick = onRename)
+            QuickAction(Icons.Outlined.Info, "App info", onClick = onAppInfo)
+            if (canUninstall) {
+                QuickAction(Icons.Outlined.Delete, "Uninstall", onClick = onUninstall)
+            } else {
+                QuickAction(
+                    if (isHidden) ExtraIcons.Visibility else ExtraIcons.VisibilityOff,
+                    if (isHidden) "Show" else "Hide",
+                    if (isHidden) "Show in app list" else "Hide from app list",
+                    onToggleHidden,
                 )
             }
         }
 
         if (notifications.isNotEmpty()) {
-            SheetLabel("Notifications")
-            for (n in notifications.take(5)) {
-                SheetRow(
-                    onClick = { onOpenNotification(n) },
-                    headline = { Text(n.title.ifEmpty { app.label }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supporting = if (n.text.isNotEmpty()) {
-                        { Text(n.text, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                    } else null,
-                )
-            }
-            if (notifications.any { it.clearable }) {
-                // TextButton pads its text 12dp more, which puts it on the 24dp edge too.
-                TextButton(onClick = onClearNotifications, modifier = Modifier.padding(start = 12.dp)) { Text("Clear notifications") }
+            SheetSection("Notifications", action = if (notifications.any { it.clearable }) "Clear all" to onClearNotifications else null) {
+                for (n in notifications.take(5)) {
+                    SheetRow(
+                        onClick = { onOpenNotification(n) },
+                        headline = { Text(n.title.ifEmpty { app.label }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supporting = if (n.text.isNotEmpty()) {
+                            { Text(n.text, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        } else null,
+                    )
+                }
             }
         }
 
         // Shortcuts load after the sheet opens, so they grow it instead of jumping in. The last list stays for the exit.
         val lastShortcuts = remember { Latest<List<AppShortcut>>() }.also { if (shortcuts.isNotEmpty()) it.value = shortcuts }
         AnimatedVisibility(shortcuts.isNotEmpty(), enter = Motion.ExpandDown, exit = Motion.CollapseUp) {
-            Column {
-                SheetLabel("Shortcuts")
+            SheetSection("Shortcuts") {
                 for (shortcut in lastShortcuts.value.orEmpty()) {
                     SheetRow(
                         onClick = { onShortcut(shortcut) },
-                        headline = { Text(shortcut.label) },
+                        headline = { Text(shortcut.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         leading = { AppIcon(shortcut.icon, 28.dp) },
                     )
                 }
             }
         }
 
-        if (showHidePlayer) {
-            SheetAction(Icons.Outlined.Close, "Hide player", onHidePlayer)
-        }
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        // An app is a favorite of its own or in a folder, never both: in one, it can only leave it or move on.
         var pickFolder by rememberSaveable { mutableStateOf(foldersOpen) }
-        if (folderName != null) {
-            SheetAction(FolderGlyphs.FolderMinus, "Remove from $folderName", onRemoveFromFolder)
-        } else {
+        SheetSection(if (notifications.isEmpty() && shortcuts.isEmpty()) null else "More") {
             SheetAction(
-                if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
-                if (isFavorite) "Remove from favorites" else "Add to favorites",
-                onToggleFavorite,
+                if (folderName != null) FolderGlyphs.MoveToFolder else FolderGlyphs.NewFolder,
+                if (folderName != null) "Move to another folder" else "Add to folder",
+                onClick = { if (folders.isEmpty()) onNewFolder() else pickFolder = !pickFolder },
             )
-        }
-        SheetAction(
-            if (folderName != null) FolderGlyphs.MoveToFolder else FolderGlyphs.NewFolder,
-            if (folderName != null) "Move to another folder" else "Add to folder",
-            onClick = { if (folders.isEmpty()) onNewFolder() else pickFolder = !pickFolder },
-        )
-        AnimatedVisibility(pickFolder && folders.isNotEmpty(), enter = Motion.ExpandDown, exit = Motion.CollapseUp) {
-            // One step in from the actions, so they read as that action's choices.
-            Column(Modifier.padding(start = 16.dp)) {
-                for (folder in folders) {
+            AnimatedVisibility(pickFolder && folders.isNotEmpty(), enter = Motion.ExpandDown, exit = Motion.CollapseUp) {
+                // One step in from the actions, so they read as that action's choices.
+                Column(Modifier.padding(start = 16.dp)) {
+                    for (folder in folders) {
+                        SheetRow(
+                            onClick = { onAddToFolder(folder.id) },
+                            headline = { Text(folder.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leading = { FolderIcon(folder.icons, 28.dp, MaterialTheme.colorScheme.surfaceContainerHighest) },
+                        )
+                    }
                     SheetRow(
-                        onClick = { onAddToFolder(folder.id) },
-                        headline = { Text(folder.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leading = { FolderIcon(folder.icons, 28.dp, MaterialTheme.colorScheme.surfaceContainerHighest) },
+                        onClick = onNewFolder,
+                        headline = { Text("New folder") },
+                        leading = { Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(24.dp)) },
                     )
                 }
-                SheetRow(
-                    onClick = onNewFolder,
-                    headline = { Text("New folder") },
-                    leading = { Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(24.dp)) },
+            }
+            // With Uninstall among the buttons, hiding comes here.
+            if (canUninstall) {
+                SheetAction(
+                    if (isHidden) ExtraIcons.Visibility else ExtraIcons.VisibilityOff,
+                    if (isHidden) "Show in app list" else "Hide from app list",
+                    onToggleHidden,
                 )
             }
+            if (showHidePlayer) SheetAction(Icons.Outlined.Close, "Hide player", onHidePlayer)
         }
-        SheetAction(Icons.Outlined.Edit, "Rename", onRename)
-        SheetAction(
-            if (isHidden) ExtraIcons.Visibility else ExtraIcons.VisibilityOff,
-            if (isHidden) "Show in app list" else "Hide from app list",
-            onToggleHidden,
-        )
-        SheetAction(Icons.Outlined.Info, "App info", onAppInfo)
-        if (canUninstall) {
-            SheetAction(Icons.Outlined.Delete, "Uninstall", onUninstall)
-        }
-    }
-}
-
-/** Long-press on empty home screen space. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun HomeMenuSheet(onDismiss: () -> Unit, onWidgets: () -> Unit = {}) {
-    val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
-    fun closeThen(action: () -> Unit) {
-        scope.launch { sheetState.hide() }.invokeOnCompletion {
-            onDismiss()
-            action()
-        }
-    }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        HomeMenuContent(
-            onWallpaper = { closeThen { LauncherActions.openWallpaperPicker(context) } },
-            onWidgets = { closeThen(onWidgets) },
-            onEditFavorites = { closeThen { SettingsActivity.open(context, SettingsScreen.FAVORITES) } },
-            onSettings = { closeThen { SettingsActivity.open(context) } },
-        )
-    }
-}
-
-/** What [HomeMenuSheet] shows, without the sheet. */
-@Composable
-internal fun HomeMenuContent(onWallpaper: () -> Unit, onEditFavorites: () -> Unit, onSettings: () -> Unit, onWidgets: () -> Unit = {}) {
-    Column(Modifier.padding(bottom = 12.dp)) {
-        SheetAction(ExtraIcons.Wallpaper, "Wallpaper", onWallpaper)
-        // The way to a first widget: an empty stack takes no space on home, so there's nothing to long-press yet.
-        SheetAction(ExtraIcons.Widgets, "Widgets", onWidgets)
-        SheetAction(Icons.Outlined.FavoriteBorder, "Edit favorites", onEditFavorites)
-        SheetAction(Icons.Outlined.Settings, "Launcher settings", onSettings)
     }
 }
 
@@ -379,7 +357,7 @@ fun FolderActionsSheet(folder: HomeFolder, icons: State<Map<String, IconImage>>,
             action()
         }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = PageColor) {
         FolderActionsContent(
             folder = folder,
             icons = remember(folder.apps, icons.value) { folder.apps.take(4).map { icons.value[it.key] } },
@@ -390,38 +368,20 @@ fun FolderActionsSheet(folder: HomeFolder, icons: State<Map<String, IconImage>>,
     }
 }
 
-/** What [FolderActionsSheet] shows, without the sheet: the folder's icon, name and apps, then its actions. */
+/** What [FolderActionsSheet] shows, without the sheet: the folder's icon, name and apps, then its actions as buttons. */
 @Composable
 internal fun FolderActionsContent(folder: HomeFolder, icons: List<IconImage?>, onRename: () -> Unit, onEditApps: () -> Unit, onRemove: () -> Unit) {
-    Column(Modifier.padding(bottom = 12.dp)) {
-        Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            FolderIcon(icons, 44.dp, MaterialTheme.colorScheme.surfaceContainerHighest)
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text(folder.label, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    folder.apps.joinToString(", ") { it.label },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+    Column(Modifier.padding(bottom = 16.dp)) {
+        SheetHeader(
+            icon = { FolderIcon(icons, HeaderIconSize, MaterialTheme.colorScheme.surfaceContainerHighest) },
+            title = folder.label,
+            subtitle = folder.apps.joinToString(", ") { it.label },
+        )
+        QuickActions {
+            QuickAction(Icons.Outlined.Edit, "Rename", onClick = onRename)
+            QuickAction(Icons.AutoMirrored.Outlined.List, "Edit apps", "Edit apps: add, remove or reorder what's in it", onEditApps)
+            QuickAction(FolderGlyphs.FolderMinus, "Remove", "Remove folder: its apps go back to your favorites", onRemove)
         }
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        SheetAction(Icons.Outlined.Edit, "Rename", onRename)
-        SheetRow(
-            onClick = onEditApps,
-            headline = { Text("Edit apps") },
-            supporting = { Text("Add, remove or reorder what's in it") },
-            leading = { Icon(Icons.AutoMirrored.Outlined.List, contentDescription = null, modifier = Modifier.size(24.dp)) },
-        )
-        SheetRow(
-            onClick = onRemove,
-            headline = { Text("Remove folder") },
-            supporting = { Text("Its apps go back to your favorites") },
-            leading = { Icon(FolderGlyphs.FolderMinus, contentDescription = null, modifier = Modifier.size(24.dp)) },
-        )
     }
 }
 
@@ -486,14 +446,94 @@ internal object FolderGlyphs {
         .build()
 }
 
+/** The app's or folder's icon at the head of its sheet. */
+private val HeaderIconSize = 52.dp
+
+/** The sheet's head: [icon], [title] large, and [subtitle] (the package, or a folder's apps) under it. */
 @Composable
-private fun SheetLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp),
-    )
+private fun SheetHeader(icon: @Composable () -> Unit, title: String, subtitle: String) {
+    Row(Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        icon()
+        Spacer(Modifier.width(16.dp))
+        Column {
+            Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** A row of [QuickAction]s sharing the sheet's width equally. */
+@Composable
+private fun QuickActions(content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), content = content)
+}
+
+/**
+ * A round button with its [label] under it, for an action people reach for often. [selected] (a favorite) fills the
+ * disc with the accent. TalkBack reads [description], which can say more than the label has room for.
+ */
+@Composable
+private fun RowScope.QuickAction(
+    icon: ImageVector,
+    label: String,
+    description: String = label,
+    onClick: () -> Unit,
+    selected: Boolean = false,
+) {
+    val colors = MaterialTheme.colorScheme
+    val press = rememberPressIndication()
+    Column(
+        Modifier
+            .weight(1f)
+            .clip(QuickShape)
+            .clickable(interactionSource = null, indication = press ?: LocalIndication.current, role = Role.Button, onClick = onClick)
+            .pressScale(press)
+            .clearAndSetSemantics {
+                contentDescription = description
+                role = Role.Button
+                if (selected) stateDescription = "On"
+            }
+            .padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.size(52.dp).background(if (selected) colors.primaryContainer else RowColor, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = if (selected) colors.onPrimaryContainer else colors.onSurface, modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private val QuickShape = RoundedCornerShape(20.dp)
+
+/**
+ * A titled card of rows on the sheet's page, like a Settings group: [title] above (none for a card that needs no
+ * name), with [action] (a label and what it does, like "Clear all") at its end, and the rows on one rounded card.
+ */
+@Composable
+private fun SheetSection(title: String?, action: Pair<String, () -> Unit>? = null, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        if (title != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GroupTitle(title, Modifier.weight(1f))
+                if (action != null) {
+                    TextButton(onClick = action.second, modifier = Modifier.padding(top = 14.dp)) { Text(action.first) }
+                }
+            }
+        } else {
+            Spacer(Modifier.height(16.dp))
+        }
+        Column(Modifier.fillMaxWidth().clip(GroupShape).background(RowColor), content = content)
+    }
 }
 
 @Composable
@@ -505,10 +545,7 @@ private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
     )
 }
 
-/**
- * A row of a sheet. ListItem insets its content 16dp; 8dp more puts it on the 24dp edge of the header and labels,
- * while the ripple still spans the full width. [leading] is centered in a 28dp column.
- */
+/** A row on a sheet's card: ListItem's own 16dp inset from the card's edge, and [leading] centered in a 28dp column. */
 @Composable
 private fun SheetRow(
     onClick: () -> Unit,
@@ -523,6 +560,6 @@ private fun SheetRow(
             { Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { leading() } }
         } else null,
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 8.dp),
+        modifier = Modifier.clickable(onClick = onClick),
     )
 }

@@ -52,6 +52,7 @@ import com.gh00ul.cascade.notifications.NowPlayingState
 import com.gh00ul.cascade.ui.home.AllAppsHeader
 import com.gh00ul.cascade.ui.home.AlphabetWave
 import com.gh00ul.cascade.ui.home.FolderPopup
+import com.gh00ul.cascade.ui.home.HomeMenuPopup
 import com.gh00ul.cascade.ui.home.HomePage
 import com.gh00ul.cascade.ui.home.HomeStripAlpha
 import com.gh00ul.cascade.ui.home.ListAppRow
@@ -228,6 +229,7 @@ internal fun HomeScreen(
     val listAlpha = searchTransition.animateHomeAlpha()
     val homeRows = items ?: remember(favorites) { favorites.map(::HomeApp) }
     var openFolder by remember { mutableStateOf<OpenFolder?>(null) }
+    var menuAt by remember { mutableStateOf<Offset?>(null) }
     val shownFolder = openFolder?.let { open -> homeRows.firstOrNull { it.key == folderKey(open.id) } as? HomeFolder }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -262,7 +264,7 @@ internal fun HomeScreen(
                     onLaunch = { app, _ -> onLaunch(app) },
                     onAppLongPress = onAppLongPress,
                     onOpenNotification = { _, _ -> },
-                    onEmptyLongPress = {},
+                    onEmptyLongPress = { menuAt = it },
                     onEmptyDoubleTap = {},
                     expandedKey = expandedKey,
                     onToggleExpand = {},
@@ -332,6 +334,8 @@ internal fun HomeScreen(
             onOptions = {},
             onDismiss = { openFolder = null },
         )
+
+        HomeMenuPopup(at = menuAt, onWallpaper = {}, onWidgets = {}, onFavorites = {}, onSettings = {}, onDismiss = { menuAt = null })
 
         searchTransition.AnimatedVisibility(visible = { open -> open }, enter = Motion.LayerIn, exit = Motion.LayerOut) {
             SearchOverlay(

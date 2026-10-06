@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Favorite
@@ -71,6 +72,7 @@ fun AppActionsSheet(
     onOpenNotification: (AppNotification) -> Unit,
     onRename: () -> Unit,
     onDismiss: () -> Unit,
+    onHidePlayer: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val prefs = context.launcher.prefs
@@ -135,6 +137,9 @@ fun AppActionsSheet(
                 }
             }
 
+            if (onHidePlayer != null) {
+                SheetAction(Icons.Outlined.Close, "Hide player") { closeThen(onHidePlayer) }
+            }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SheetAction(
                 if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,

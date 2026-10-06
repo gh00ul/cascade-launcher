@@ -47,6 +47,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +63,7 @@ import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private class BoundsHolder {
@@ -89,53 +93,37 @@ fun AppRow(
     val style = LocalLauncherStyle.current
     val bounds = remember { BoundsHolder() }
     val haptics = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
     val hasNotifications = notifications.isNotEmpty()
     val canExpand = hasNotifications && onToggleExpand != null
     val showExpanded = expanded && hasNotifications
-    val toggle by rememberUpdatedState(onToggleExpand)
     val iconSize = if (large) 40.dp else 34.dp
-
-    val dragX = remember { Animatable(0f) }
-    val threshold = with(LocalDensity.current) { 64.dp.toPx() }
 
     Column(modifier.fillMaxWidth()) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .pointerInput(canExpand) {
-                    var crossed = false
-                    detectHorizontalDragGestures(
-                        onDragStart = { crossed = false },
-                        onDragEnd = {
-                            if (crossed) toggle?.invoke()
-                            scope.launch { dragX.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow)) }
-                        },
-                        onDragCancel = { scope.launch { dragX.animateTo(0f) } },
-                        onHorizontalDrag = { change, amount ->
-                            change.consume()
-                            // Rubber-band: rows without notifications barely move.
-                            val resistance = if (canExpand) 0.6f else 0.15f
-                            val next = (dragX.value + amount * resistance).coerceIn(0f, threshold * 1.5f)
-                            scope.launch { dragX.snapTo(next) }
-                            val nowCrossed = canExpand && next >= threshold
-                            if (nowCrossed != crossed) {
-                                crossed = nowCrossed
-                                if (crossed) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
-                        },
-                    )
-                }
-                .offset { IntOffset(dragX.value.roundToInt(), 0) }
+                .rowSwipe(onSwipeRight = onToggleExpand.takeIf { canExpand })
                 .onGloballyPositioned { bounds.rect = it.boundsInWindow() }
                 .clip(RoundedCornerShape(16.dp))
                 .combinedClickable(
+                    // The long-press haptic is fired by hand below; the default would fire it twice.
+                    hapticFeedbackEnabled = false,
                     onClick = { onClick(bounds.rect) },
                     onLongClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onLongClick()
                     },
                 )
+                .semantics {
+                    if (canExpand) {
+                        customActions = listOf(
+                            CustomAccessibilityAction(if (showExpanded) "Hide notifications" else "Show notifications") {
+                                onToggleExpand?.invoke()
+                                true
+                            },
+                        )
+                    }
+                }
                 .padding(horizontal = 8.dp, vertical = if (large) 10.dp else 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -209,7 +197,7 @@ private fun NotificationPreview(notification: AppNotification, more: Int, onClic
 
 /** Every notification of one app; tap to open, swipe sideways to dismiss. */
 @Composable
-private fun ExpandedNotifications(notifications: List<AppNotification>, startPadding: androidx.compose.ui.unit.Dp, onOpen: (AppNotification) -> Unit) {
+internal fun ExpandedNotifications(notifications: List<AppNotification>, startPadding: androidx.compose.ui.unit.Dp, onOpen: (AppNotification) -> Unit) {
     val style = LocalLauncherStyle.current
     Column(Modifier.fillMaxWidth().padding(start = startPadding, end = 8.dp, bottom = 6.dp)) {
         for (n in notifications.take(8)) {
@@ -269,4 +257,44 @@ private fun NotificationItem(notification: AppNotification, onOpen: (AppNotifica
             }
         }
     }
+}
+
+/**
+ * Horizontal swipe shared by app rows and the music player row: the row follows the finger (heavily damped when
+ * the direction has no action), ticks when it crosses the threshold, and runs the action on release.
+ */
+@Composable
+internal fun Modifier.rowSwipe(onSwipeRight: (() -> Unit)?, onSwipeLeft: (() -> Unit)? = null): Modifier {
+    val dragX = remember { Animatable(0f) }
+    val threshold = with(LocalDensity.current) { 64.dp.toPx() }
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val right by rememberUpdatedState(onSwipeRight)
+    val left by rememberUpdatedState(onSwipeLeft)
+    val hasRight = onSwipeRight != null
+    val hasLeft = onSwipeLeft != null
+    return pointerInput(hasRight, hasLeft) {
+        var crossed = false
+        detectHorizontalDragGestures(
+            onDragStart = { crossed = false },
+            onDragEnd = {
+                if (crossed) (if (dragX.value > 0f) right else left)?.invoke()
+                scope.launch { dragX.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow)) }
+            },
+            onDragCancel = { scope.launch { dragX.animateTo(0f) } },
+            onHorizontalDrag = { change, amount ->
+                change.consume()
+                val active = if (dragX.value + amount > 0f) hasRight else hasLeft
+                // Rows without a left action keep the old right-only behaviour.
+                val min = if (hasLeft) -threshold * 1.5f else 0f
+                val next = (dragX.value + amount * if (active) 0.6f else 0.15f).coerceIn(min, threshold * 1.5f)
+                scope.launch { dragX.snapTo(next) }
+                val now = active && abs(next) >= threshold
+                if (now != crossed) {
+                    crossed = now
+                    if (now) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
+            },
+        )
+    }.offset { IntOffset(dragX.value.roundToInt(), 0) }
 }

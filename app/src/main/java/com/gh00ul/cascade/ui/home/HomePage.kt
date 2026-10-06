@@ -1,5 +1,18 @@
 package com.gh00ul.cascade.ui.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.key
+import com.gh00ul.cascade.notifications.NowPlayingState
 import android.app.AlarmManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -73,11 +86,36 @@ fun HomePage(
     onEmptyLongPress: () -> Unit,
     expandedKey: String?,
     onToggleExpand: (String) -> Unit,
-    nowPlaying: @Composable () -> Unit,
+    media: NowPlayingState?,
+    mediaApp: AppEntry?,
+    mediaResting: Boolean,
+    onOpenMedia: () -> Unit,
+    onHideMedia: () -> Unit,
     onboarding: @Composable () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
     val longPress by rememberUpdatedState(onEmptyLongPress)
+
+    @Composable
+    fun Player(state: NowPlayingState, app: AppEntry?, expandKey: String) {
+        val notificationsForApp = app?.let { notifications[it.notificationKey] }.orEmpty()
+        MediaRow(
+            state = state,
+            appLabel = app?.label,
+            icon = app?.let { icons[it.key] },
+            notifications = notificationsForApp,
+            showArt = settings.showIcons,
+            monochrome = settings.monochromeIcons,
+            resting = mediaResting,
+            expanded = expandedKey == expandKey,
+            onOpen = onOpenMedia,
+            onLongClick = app?.let { { onAppLongPress(it) } },
+            onToggleExpand = { onToggleExpand(expandKey) },
+            onNotificationClick = { n -> app?.let { onOpenNotification(it, n) } },
+            onHide = onHideMedia,
+        )
+    }
+
     Column(
         Modifier
             .fillMaxWidth()
@@ -90,7 +128,29 @@ fun HomePage(
         onboarding()
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.height(32.dp))
-        nowPlaying()
+
+        // The playing app's favorite row becomes the player; if it isn't a favorite, a temporary row sits on top.
+        val hostKey = media?.let { m -> favorites.firstOrNull { it.packageName == m.packageName && !it.isWork }?.key }
+        val floating = media?.takeIf { hostKey == null }
+        val lastFloating = remember { Latest<NowPlayingState>() }.also { if (floating != null) it.value = floating }
+        AnimatedVisibility(
+            visible = floating != null,
+            enter = expandVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Bottom) +
+                fadeIn(tween(220, 90)),
+            exit = shrinkVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), shrinkTowards = Alignment.Bottom) +
+                fadeOut(tween(90)),
+        ) {
+            val shown = lastFloating.value ?: return@AnimatedVisibility
+            AnimatedContent(
+                targetState = shown,
+                transitionSpec = { (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using SizeTransform(clip = true) },
+                label = "floatingPlayer",
+                contentKey = { it.sessionId },
+            ) { state ->
+                Player(state, mediaApp?.takeIf { it.packageName == state.packageName }, "media")
+            }
+        }
+
         if (favorites.isEmpty()) {
             Text(
                 "Long-press any app to add it here.\nScroll down, or slide along the letters on the right, to see all apps.",
@@ -99,19 +159,36 @@ fun HomePage(
             )
         }
         for (app in favorites) {
-            AppRow(
-                app = app,
-                icon = icons[app.key],
-                notifications = notifications[app.notificationKey].orEmpty(),
-                showIcon = settings.showIcons,
-                showPreview = settings.showNotificationPreviews,
-                large = true,
-                onClick = { onLaunch(app, it) },
-                onLongClick = { onAppLongPress(app) },
-                onNotificationClick = { onOpenNotification(app, it) },
-                expanded = expandedKey == "fav:${app.key}",
-                onToggleExpand = { onToggleExpand("fav:${app.key}") },
-            )
+            key(app.key) {
+                AnimatedContent(
+                    targetState = media?.takeIf { app.key == hostKey },
+                    transitionSpec = {
+                        (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using
+                            SizeTransform(clip = true) { _, _ -> spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow) }
+                    },
+                    label = "favorite",
+                    // Morph only when the player appears or leaves, never on every playback update.
+                    contentKey = { it != null },
+                ) { hosted ->
+                    if (hosted != null) {
+                        Player(hosted, app, "fav:${app.key}")
+                    } else {
+                        AppRow(
+                            app = app,
+                            icon = icons[app.key],
+                            notifications = notifications[app.notificationKey].orEmpty(),
+                            showIcon = settings.showIcons,
+                            showPreview = settings.showNotificationPreviews,
+                            large = true,
+                            onClick = { onLaunch(app, it) },
+                            onLongClick = { onAppLongPress(app) },
+                            onNotificationClick = { onOpenNotification(app, it) },
+                            expanded = expandedKey == "fav:${app.key}",
+                            onToggleExpand = { onToggleExpand("fav:${app.key}") },
+                        )
+                    }
+                }
+            }
         }
     }
 }

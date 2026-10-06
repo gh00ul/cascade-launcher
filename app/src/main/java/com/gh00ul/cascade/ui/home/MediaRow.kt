@@ -1,0 +1,586 @@
+package com.gh00ul.cascade.ui.home
+
+import android.os.SystemClock
+import android.text.format.DateUtils
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.graphics.ColorUtils
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import com.gh00ul.cascade.data.IconImage
+import com.gh00ul.cascade.notifications.AppNotification
+import com.gh00ul.cascade.notifications.NowPlayingState
+import com.gh00ul.cascade.ui.common.AppIcon
+import com.gh00ul.cascade.ui.common.ExtraIcons
+import com.gh00ul.cascade.ui.theme.LauncherStyle
+import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import kotlinx.coroutines.delay
+import kotlin.math.abs
+import kotlin.math.min
+
+/** Colours for the player, derived from the album art and guaranteed readable in both text modes. */
+@Immutable
+internal class MediaColors(
+    val washStart: Color,
+    val washEnd: Color,
+    val button: Color,
+    val onButton: Color,
+    val line: Color,
+    val track: Color,
+)
+
+internal fun mediaColors(seed: Int?, style: LauncherStyle, monochrome: Boolean): MediaColors {
+    val dark = style.darkText
+    val track = style.content.copy(alpha = if (dark) 0.20f else 0.24f)
+    val neutral = MediaColors(
+        washStart = style.scrim.copy(alpha = if (dark) 0.34f else 0.22f),
+        washEnd = style.scrim.copy(alpha = if (dark) 0.14f else 0.10f),
+        button = style.content,
+        onButton = style.scrim,
+        line = style.content,
+        track = track,
+    )
+    if (seed == null || monochrome) return neutral
+    val hct = FloatArray(3).also { ColorUtils.colorToM3HCT(seed, it) }
+    if (hct[1] < 12f) return neutral
+    fun tone(chroma: Float, tone: Float) = Color(ColorUtils.M3HCTToColor(hct[0], chroma, tone))
+    val accentChroma = hct[1].coerceIn(32f, 48f)
+    // HCT tone distance guarantees contrast: 82 vs 12 is about 10:1, 32 vs 98 about 8:1.
+    return if (dark) {
+        MediaColors(
+            washStart = tone(min(hct[1], 28f), 92f).copy(alpha = 0.60f),
+            washEnd = Color.White.copy(alpha = 0.20f),
+            button = tone(accentChroma, 32f),
+            onButton = tone(min(hct[1], 8f), 98f),
+            line = tone(accentChroma, 32f),
+            track = track,
+        )
+    } else {
+        MediaColors(
+            washStart = tone(min(hct[1], 36f), 22f).copy(alpha = 0.45f),
+            washEnd = Color.Black.copy(alpha = 0.16f),
+            button = tone(accentChroma, 82f),
+            onButton = tone(min(hct[1], 16f), 12f),
+            line = tone(accentChroma, 82f),
+            track = track,
+        )
+    }
+}
+
+/** Holds the last non-null value so an exit animation still has something to draw. */
+internal class Latest<T>(var value: T? = null)
+
+/**
+ * The music app's row turned into a player: art, title and artist, play/pause, then previous / seek bar / next.
+ * Swipe right for notifications (like every row), swipe left for the next track. When [resting], only the first
+ * tier shows, with a static line marking where playback stopped.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun MediaRow(
+    state: NowPlayingState,
+    appLabel: String?,
+    icon: IconImage?,
+    notifications: List<AppNotification>,
+    showArt: Boolean,
+    monochrome: Boolean,
+    resting: Boolean,
+    expanded: Boolean,
+    onOpen: () -> Unit,
+    onLongClick: (() -> Unit)?,
+    onToggleExpand: () -> Unit,
+    onNotificationClick: (AppNotification) -> Unit,
+    onHide: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val style = LocalLauncherStyle.current
+    val haptics = LocalHapticFeedback.current
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val target = remember(state.artSeed, style, monochrome) { mediaColors(state.artSeed, style, monochrome) }
+    val washStart by animateColorAsState(target.washStart, tween(600), label = "washStart")
+    val washEnd by animateColorAsState(target.washEnd, tween(600), label = "washEnd")
+    val button by animateColorAsState(target.button, tween(600), label = "button")
+    val onButton by animateColorAsState(target.onButton, tween(600), label = "onButton")
+    val line by animateColorAsState(target.line, tween(600), label = "line")
+    val washAlpha by animateFloatAsState(if (state.isPaused) 0.6f else 1f, tween(400), label = "washAlpha")
+
+    var skipDir by remember { mutableIntStateOf(0) }
+    LaunchedEffect(skipDir) {
+        if (skipDir != 0) {
+            delay(3_000)
+            skipDir = 0
+        }
+    }
+    var scrubMs by remember { mutableStateOf<Long?>(null) }
+    val next: () -> Unit = {
+        skipDir = 1
+        haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+        state.next()
+    }
+    val previous: () -> Unit = {
+        skipDir = -1
+        haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+        state.previous()
+    }
+    val toggle: () -> Unit = {
+        haptics.performHapticFeedback(if (state.isPaused) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
+        state.playPause()
+    }
+    val hasNotifications = notifications.isNotEmpty()
+    val tier2 = !resting && (state.hasDuration || state.isLive || state.canSkipPrevious || state.canSkipNext)
+    val restFraction = if (resting && state.hasDuration) {
+        (state.positionAt(SystemClock.elapsedRealtime()).toFloat() / state.durationMs).coerceIn(0f, 1f)
+    } else null
+
+    Column(modifier.fillMaxWidth()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .drawBehind {
+                    val brush = Brush.horizontalGradient(
+                        listOf(washStart, washEnd),
+                        startX = if (rtl) size.width else 0f,
+                        endX = if (rtl) 0f else size.width,
+                    )
+                    drawRoundRect(brush, cornerRadius = CornerRadius(20.dp.toPx()), alpha = washAlpha)
+                },
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .rowSwipe(onSwipeRight = onToggleExpand.takeIf { hasNotifications }, onSwipeLeft = next.takeIf { state.canSkipNext })
+                    .clip(if (tier2) RoundedCornerShape(20.dp, 20.dp, 8.dp, 8.dp) else RoundedCornerShape(20.dp))
+                    .combinedClickable(
+                        onClickLabel = "Open player",
+                        onLongClickLabel = if (onLongClick != null) "App options" else null,
+                        hapticFeedbackEnabled = false,
+                        onLongClick = onLongClick?.let { longClick ->
+                            {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                longClick()
+                            }
+                        },
+                        onClick = onOpen,
+                    )
+                    .semantics {
+                        contentDescription = listOfNotNull(state.title, state.subtitle.ifEmpty { null }, appLabel).joinToString(", ")
+                        stateDescription = when {
+                            state.isBuffering -> "Loading"
+                            state.isPlaying -> "Playing"
+                            else -> "Paused"
+                        }
+                        customActions = buildList {
+                            if (state.canPlayPause) add(CustomAccessibilityAction(if (state.isPaused) "Play" else "Pause") { toggle(); true })
+                            if (state.canSkipNext) add(CustomAccessibilityAction("Next track") { next(); true })
+                            if (state.canSkipPrevious) add(CustomAccessibilityAction("Previous track") { previous(); true })
+                            if (hasNotifications) {
+                                add(CustomAccessibilityAction(if (expanded) "Hide notifications" else "Show notifications") { onToggleExpand(); true })
+                            }
+                            if (state.isPaused) add(CustomAccessibilityAction("Hide player") { onHide(); true })
+                        }
+                    }
+                    .then(
+                        if (restFraction != null) {
+                            Modifier.drawBehind {
+                                val start = (if (showArt) 64.dp else 8.dp).toPx()
+                                val end = size.width - 4.dp.toPx()
+                                val y = size.height - 3.dp.toPx()
+                                val stroke = 2.dp.toPx()
+                                val stop = start + (end - start) * restFraction
+                                fun x(v: Float) = if (rtl) size.width - v else v
+                                drawLine(target.track, Offset(x(start), y), Offset(x(end), y), stroke, StrokeCap.Round)
+                                drawLine(line, Offset(x(start), y), Offset(x(stop), y), stroke, StrokeCap.Round)
+                            }
+                        } else Modifier,
+                    )
+                    .heightIn(min = 64.dp)
+                    .padding(start = if (showArt) 4.dp else 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (showArt) {
+                    MediaArt(state.art, icon, hasNotifications, monochrome)
+                    Spacer(Modifier.width(12.dp))
+                }
+                TrackText(state, appLabel, scrubMs, skipDir, rtl, Modifier.weight(1f))
+                if (state.canPlayPause) {
+                    Spacer(Modifier.width(8.dp))
+                    PlayPauseButton(state, button, onButton, toggle)
+                }
+            }
+            AnimatedVisibility(
+                visible = tier2,
+                enter = expandVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Top) +
+                    fadeIn(tween(180, 60)),
+                exit = shrinkVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), shrinkTowards = Alignment.Top) +
+                    fadeOut(tween(90)),
+            ) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(start = if (showArt) 52.dp else 0.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val skips = state.canSkipPrevious || state.canSkipNext
+                    if (skips) {
+                        IconButton(onClick = previous, enabled = state.canSkipPrevious) {
+                            Icon(ExtraIcons.SkipPrevious, contentDescription = "Previous track")
+                        }
+                    } else {
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        when {
+                            state.canSeek -> SeekBar(state, line, target.track) { scrubMs = it }
+                            state.hasDuration -> ProgressLine(state, line, target.track)
+                            state.isLive -> LiveLabel(line)
+                        }
+                    }
+                    if (skips) {
+                        IconButton(onClick = next, enabled = state.canSkipNext) {
+                            Icon(ExtraIcons.SkipNext, contentDescription = "Next track")
+                        }
+                    }
+                }
+            }
+        }
+        AnimatedVisibility(
+            visible = expanded && hasNotifications,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            ExpandedNotifications(notifications, startPadding = if (showArt) 64.dp else 8.dp, onOpen = onNotificationClick)
+        }
+    }
+}
+
+private data class TrackLabel(val key: String, val title: String, val subtitle: String)
+
+@Composable
+private fun TrackText(state: NowPlayingState, appLabel: String?, scrubMs: Long?, skipDir: Int, rtl: Boolean, modifier: Modifier) {
+    val style = LocalLauncherStyle.current
+    val label = TrackLabel(state.trackKey, state.title, state.subtitle.ifEmpty { appLabel.orEmpty() })
+    AnimatedContent(
+        targetState = label,
+        modifier = modifier.clearAndSetSemantics {},
+        transitionSpec = {
+            val dir = if (rtl) -skipDir else skipDir
+            if (dir == 0) {
+                fadeIn(tween(220, 60)) togetherWith fadeOut(tween(120))
+            } else {
+                (slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { dir * it / 6 } + fadeIn(tween(220, 60))) togetherWith
+                    (slideOutHorizontally(tween(200, easing = FastOutLinearInEasing)) { -dir * it / 6 } + fadeOut(tween(120)))
+            }
+        },
+        contentAlignment = Alignment.CenterStart,
+        label = "track",
+        contentKey = { it.key },
+    ) { current ->
+        Column {
+            Text(current.title, style = style.mediaTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Crossfade(scrubMs, animationSpec = tween(120), label = "subtitle") { scrub ->
+                if (scrub != null) {
+                    Text("${formatTime(scrub)} / ${formatTime(state.durationMs)}", style = style.mediaTime, maxLines = 1)
+                } else if (current.subtitle.isNotEmpty()) {
+                    Text(current.subtitle, style = style.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MediaArt(art: ImageBitmap?, icon: IconImage?, hasNotifications: Boolean, monochrome: Boolean) {
+    val style = LocalLauncherStyle.current
+    Box {
+        Crossfade(art, animationSpec = tween(300), label = "art") { bitmap ->
+            when {
+                bitmap != null -> Image(
+                    bitmap,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    colorFilter = if (monochrome) ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }) else null,
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)),
+                )
+                icon != null -> AppIcon(icon, 48.dp)
+                else -> Box(
+                    Modifier.size(48.dp).background(style.content.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(ExtraIcons.MusicNote, contentDescription = null, tint = style.content, modifier = Modifier.size(24.dp))
+                }
+            }
+        }
+        if (art != null && icon != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 4.dp, y = 4.dp)
+                    .size(20.dp)
+                    .background(style.scrim.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { AppIcon(icon, 17.dp) }
+        }
+        if (hasNotifications) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 3.dp, y = (-3).dp)
+                    .size(11.dp)
+                    .border(1.5.dp, style.scrim.copy(alpha = 0.35f), CircleShape)
+                    .background(style.accent, CircleShape),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayPauseButton(state: NowPlayingState, container: Color, content: Color, onToggle: () -> Unit) {
+    var ring by remember { mutableStateOf(false) }
+    LaunchedEffect(state.isBuffering) {
+        ring = state.isBuffering
+        if (ring) {
+            delay(10_000) // never spin forever on a stuck session
+            ring = false
+        }
+    }
+    // Flip the glyph right away; fall back to the session's real state if it never confirms.
+    var optimistic by remember(state.status) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(optimistic) {
+        if (optimistic != null) {
+            delay(1_500)
+            optimistic = null
+        }
+    }
+    val paused = optimistic ?: state.isPaused
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(container)
+            .clickable(role = Role.Button) {
+                optimistic = !paused
+                onToggle()
+            }
+            .semantics { contentDescription = if (paused) "Play" else "Pause" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Crossfade(paused, animationSpec = tween(150), label = "playPause") { isPaused ->
+            Icon(if (isPaused) ExtraIcons.Play else ExtraIcons.Pause, contentDescription = null, tint = content, modifier = Modifier.size(24.dp))
+        }
+        if (ring) {
+            CircularProgressIndicator(Modifier.size(40.dp), color = content.copy(alpha = 0.7f), strokeWidth = 2.dp, trackColor = Color.Transparent)
+        }
+    }
+}
+
+/** Playback position, ticking only while the launcher is visible and music is playing. */
+@Composable
+private fun rememberPlaybackPosition(state: NowPlayingState, tickMs: Long): State<Long> {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    return produceState(state.positionAt(SystemClock.elapsedRealtime()), state, tickMs, lifecycle) {
+        value = state.positionAt(SystemClock.elapsedRealtime())
+        if (!state.isPlaying) return@produceState
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                value = state.positionAt(SystemClock.elapsedRealtime())
+                delay(tickMs)
+            }
+        }
+    }
+}
+
+/** One update per pixel the bar moves, between 4 and 0.5 times a second. */
+private fun tickFor(durationMs: Long, widthPx: Int) = if (widthPx > 0) (durationMs / widthPx).coerceIn(250L, 2_000L) else 1_000L
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SeekBar(state: NowPlayingState, line: Color, track: Color, onScrub: (Long?) -> Unit) {
+    var widthPx by remember { mutableIntStateOf(0) }
+    val position by rememberPlaybackPosition(state, tickFor(state.durationMs, widthPx))
+    var scrub by remember { mutableStateOf<Float?>(null) }
+    // Hold the target until the app confirms the seek, so the thumb doesn't snap back.
+    var pending by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(pending) {
+        if (pending != null) {
+            delay(2_000)
+            pending = null
+        }
+    }
+    LaunchedEffect(state) {
+        pending?.let { if (abs(state.positionAt(SystemClock.elapsedRealtime()) - it) < 1_500) pending = null }
+    }
+    val duration = state.durationMs.toFloat()
+    val shown = (scrub ?: pending?.toFloat() ?: position.toFloat()).coerceIn(0f, duration)
+    val thumbRadius by animateDpAsState(if (scrub != null) 8.dp else 4.dp, tween(120), label = "thumb")
+    Slider(
+        value = shown,
+        onValueChange = {
+            scrub = it
+            onScrub(it.toLong())
+        },
+        onValueChangeFinished = {
+            scrub?.let {
+                pending = it.toLong()
+                state.seekTo(it.toLong())
+            }
+            scrub = null
+            onScrub(null)
+        },
+        valueRange = 0f..duration,
+        // A fixed 16dp box keeps the track geometry stable while the dot grows.
+        thumb = { Canvas(Modifier.size(16.dp)) { drawCircle(line, radius = thumbRadius.toPx()) } },
+        track = { sliderState ->
+            Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+                val y = size.height / 2
+                val fraction = sliderState.coercedValueAsFraction
+                val (from, to) = if (layoutDirection == LayoutDirection.Rtl) size.width to size.width * (1 - fraction) else 0f to size.width * fraction
+                drawLine(track, Offset(0f, y), Offset(size.width, y), size.height, StrokeCap.Round)
+                drawLine(line, Offset(from, y), Offset(to, y), size.height, StrokeCap.Round)
+            }
+        },
+        // Outermost semantics win, replacing the Slider's raw "71000.0" readout.
+        modifier = Modifier
+            .fillMaxWidth()
+            .onSizeChanged { widthPx = it.width }
+            .semantics {
+                contentDescription = "Playback position"
+                stateDescription = "${spokenTime(shown.toLong())} of ${spokenTime(state.durationMs)}"
+            },
+    )
+}
+
+@Composable
+private fun ProgressLine(state: NowPlayingState, line: Color, track: Color) {
+    var widthPx by remember { mutableIntStateOf(0) }
+    val position = rememberPlaybackPosition(state, tickFor(state.durationMs, widthPx))
+    LinearProgressIndicator(
+        progress = { (position.value.toFloat() / state.durationMs).coerceIn(0f, 1f) },
+        color = line,
+        trackColor = track,
+        strokeCap = StrokeCap.Round,
+        gapSize = 0.dp,
+        drawStopIndicator = {},
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .height(4.dp)
+            .onSizeChanged { widthPx = it.width },
+    )
+}
+
+@Composable
+private fun LiveLabel(line: Color) {
+    val style = LocalLauncherStyle.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.clearAndSetSemantics { contentDescription = "Live broadcast" },
+    ) {
+        Box(Modifier.size(6.dp).background(line, CircleShape))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            "LIVE",
+            style = TextStyle(color = style.content.copy(alpha = 0.8f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp),
+        )
+    }
+}
+
+private fun formatTime(ms: Long): String = DateUtils.formatElapsedTime(ms / 1_000)
+
+private fun spokenTime(ms: Long): String {
+    val total = ms / 1_000
+    val hours = total / 3_600
+    val minutes = total % 3_600 / 60
+    val seconds = total % 60
+    fun unit(n: Long, name: String) = "$n $name" + if (n == 1L) "" else "s"
+    return buildList {
+        if (hours > 0) add(unit(hours, "hour"))
+        if (minutes > 0) add(unit(minutes, "minute"))
+        if (seconds > 0 || (hours == 0L && minutes == 0L)) add(unit(seconds, "second"))
+    }.joinToString(" ")
+}

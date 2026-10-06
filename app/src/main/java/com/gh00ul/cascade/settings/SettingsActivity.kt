@@ -172,7 +172,7 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, onN
         item {
             SettingRow(
                 title = "Notification access",
-                summary = if (hasAccess) "Notification dots and previews are on" else "Needed for notification dots and previews",
+                summary = if (hasAccess) "Notification dots and previews are on" else "Needed for notification dots, previews and music controls",
                 onClick = { LauncherActions.openNotificationAccess(context) },
                 trailing = { StatusIcon(hasAccess) },
             )
@@ -194,7 +194,7 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, onN
             ) { i -> prefs.update { it.copy(swipeDownAction = SwipeDownAction.entries[i]) } }
         }
         item {
-            SwitchRow("Music controls", "Show what's playing above your favorites", settings.showMediaControls) { on ->
+            SwitchRow("Music controls", "Turn the playing app's row into a player", settings.showMediaControls) { on ->
                 prefs.update { it.copy(showMediaControls = on) }
             }
         }

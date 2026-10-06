@@ -21,8 +21,11 @@ and Android won't update an app across a key change.
   underneath; tap it to open that notification.
 - **Swipe an app to see its notifications.** Swipe a row to the right to expand all of that app's
   notifications in place. Tap one to open it, swipe it sideways to dismiss it, or clear them all.
-- **Music controls.** While something plays, a card above your favorites shows the album art, title and
-  artist, with previous, play/pause and next buttons and a progress bar. Tap the card to open the player.
+- **Music in the row.** The playing app's favorite row turns into the player, with album art, title,
+  play/pause, previous/next and a seek bar you can drag. Its colors come from the album art and stay readable
+  in both text modes. Swipe the row left to skip to the next track. If the app isn't a favorite, a temporary
+  player row appears above your favorites. A player that's paused when you come home folds down to one line,
+  and it steps aside after 30 minutes paused, or when you choose "Hide player" from the long-press menu.
 - **Dark text on light wallpapers.** Text, icons and the status bar switch to dark automatically when your
   wallpaper is light. You can also force white or dark text in settings.
 - **Long-press menu.** Shows the app's notifications and shortcuts, plus actions to favorite, rename, hide

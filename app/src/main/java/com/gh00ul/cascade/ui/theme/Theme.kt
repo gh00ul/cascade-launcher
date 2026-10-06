@@ -53,6 +53,8 @@ class LauncherStyle(val darkText: Boolean, val accent: Color) {
     val small = TextStyle(color = content.copy(alpha = 0.8f), fontSize = 14.sp, shadow = shadow)
     val section = TextStyle(color = accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, shadow = shadow)
     val letter = TextStyle(color = content, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, shadow = shadow)
+    val mediaTitle = TextStyle(color = content, fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium, shadow = shadow)
+    val mediaTime = small.copy(fontFeatureSettings = "tnum")
 }
 
 val LocalLauncherStyle = staticCompositionLocalOf { LauncherStyle(darkText = false, accent = Color.White) }

@@ -145,9 +145,19 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     var isDefault by remember { mutableStateOf(LauncherActions.isDefaultLauncher(context)) }
     var hasNotificationAccess by remember { mutableStateOf(LauncherActions.hasNotificationAccess(context)) }
     var defaultPromptHidden by rememberSaveable { mutableStateOf(false) }
+    // Music player: the playing app's favorite row turns into it. A player that is paused when you come home rests.
+    val media = nowPlaying?.takeIf { settings.showMediaControls }
+    val mediaApp = remember(apps, media?.packageName) {
+        media?.let { m -> apps.firstOrNull { it.packageName == m.packageName && !it.isWork } }
+    }
+    var mediaResting by remember { mutableStateOf(false) }
+    LaunchedEffect(media?.isPaused) { if (media?.isPaused == false) mediaResting = false }
+
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         isDefault = LauncherActions.isDefaultLauncher(context)
         hasNotificationAccess = LauncherActions.hasNotificationAccess(context)
+        NowPlaying.refresh()
+        mediaResting = NowPlaying.state.value?.isPaused == true
     }
     val roleRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         isDefault = LauncherActions.isDefaultLauncher(context)
@@ -247,22 +257,14 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onEmptyLongPress = { homeMenuOpen = true },
                         expandedKey = expandedKey,
                         onToggleExpand = toggleExpand,
-                        nowPlaying = {
-                            val media = nowPlaying
-                            if (media != null && settings.showMediaControls) {
-                                val mediaApp = apps.firstOrNull { it.packageName == media.packageName && !it.isWork }
-                                NowPlayingCard(
-                                    state = media,
-                                    appIcon = mediaApp?.let { icons[it.key] },
-                                    appLabel = mediaApp?.label,
-                                    onOpen = {
-                                        val opened = media.sessionActivity?.sendFromLauncher(context) ?: false
-                                        if (!opened && mediaApp != null) launch(mediaApp, null)
-                                    },
-                                )
-                                Spacer(Modifier.height(12.dp))
-                            }
+                        media = media,
+                        mediaApp = mediaApp,
+                        mediaResting = mediaResting,
+                        onOpenMedia = {
+                            val opened = media?.sessionActivity?.sendFromLauncher(context) ?: false
+                            if (!opened) mediaApp?.let { launch(it, null) }
                         },
+                        onHideMedia = NowPlaying::hide,
                         onboarding = {
                             when {
                                 !isDefault && !defaultPromptHidden -> OnboardingCard(
@@ -354,6 +356,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             onOpenNotification = { openNotification(app, it) },
             onRename = { renameApp = app },
             onDismiss = { sheetApp = null },
+            onHidePlayer = if (media?.isPaused == true && app.packageName == media.packageName) NowPlaying::hide else null,
         )
     }
     renameApp?.let { app -> RenameDialog(app) { renameApp = null } }

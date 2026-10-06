@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.LocalContentColor
@@ -58,6 +59,8 @@ import com.gh00ul.cascade.ui.home.SearchOverlay
 import com.gh00ul.cascade.ui.home.SectionHeader
 import com.gh00ul.cascade.ui.home.animateHomeAlpha
 import com.gh00ul.cascade.ui.home.homeScrim
+import com.gh00ul.cascade.ui.home.listCover
+import com.gh00ul.cascade.ui.home.rememberHomeSnapFling
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
@@ -198,10 +201,11 @@ internal fun HomeScreen(
     searchOpen: Boolean = false,
     onSearchDismiss: () -> Unit = {},
     items: List<HomeItem>? = null,
+    /** For tests that scroll it, or read where it came to rest. */
+    listState: LazyListState = rememberLazyListState(initialFirstVisibleItemIndex = firstItem),
 ) {
     val style = LocalLauncherStyle.current
     val density = LocalDensity.current
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = firstItem)
     // LauncherScreen hands these on as the states it collects; rows and favorites read their own entries.
     val iconsState = rememberUpdatedState(icons)
     val notificationsState = rememberUpdatedState(notifications)
@@ -223,10 +227,7 @@ internal fun HomeScreen(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val homeHeight = maxHeight
         val homeHeightPx = with(density) { homeHeight.toPx() }.coerceAtLeast(1f)
-        val progress = {
-            if (listState.firstVisibleItemIndex > 0) 1f
-            else (listState.firstVisibleItemScrollOffset / homeHeightPx).coerceIn(0f, 1f)
-        }
+        val progress = { listState.listCover(homeHeightPx) }
 
         Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress))
 
@@ -240,6 +241,7 @@ internal fun HomeScreen(
                     alpha = listAlpha.value
                 },
             contentPadding = PaddingValues(bottom = 16.dp),
+            flingBehavior = rememberHomeSnapFling(listState, homeHeightPx),
         ) {
             item(key = "home", contentType = "home") {
                 HomePage(

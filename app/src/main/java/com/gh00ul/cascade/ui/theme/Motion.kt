@@ -92,4 +92,9 @@ object Motion {
     val WaveFall: AnimationSpec<Float> = spring(1f, Spring.StiffnessMediumLow)
     /** Home settling in on a return, and a back gesture easing out once it commits. */
     val Settle: AnimationSpec<Float> = tween(SCREEN, easing = Decelerate)
+    /**
+     * The list coming to rest on home or on the A–Z list's top after a fling: critically damped, like [Size]. It
+     * starts at the fling's speed and stiffens for a fast one, so its spring is made per fling (see HomeSnap.kt).
+     */
+    const val SNAP_STIFFNESS = Spring.StiffnessMediumLow
 }

@@ -13,7 +13,7 @@ From Git Bash in the repo root:
 - **Only some shots:** add `-PcascadeScreenshotFilter=Home,Media_Live`. Each comma-separated part is a case-insensitive regex matched against shot names, and a shot matching any part is rendered. Use commas rather than `|`, which `gradlew.bat` reads as a pipe. A run narrowed with `-PcascadeScreenshotFilter` or Gradle's `--tests` leaves the other PNGs in place; a full run clears the folder first.
 - **Output:** `app/build/screenshots/<Area>_<Thing>_<variant>.png` (gitignored). The run ends by printing the folder and the PNG count, and each test logs `Screenshot written: <path>`.
 - **Speed:** about 20 s once the build is warm.
-- **Plain runs:** `./gradlew.bat testDebugUnitTest` skips the screenshot classes and runs only the unit tests (search, prefs, notification store, player state, A–Z sections, updater, clock text, clock lifecycle, calendar choice, row recomposition, motion settling, settings backup, folders, widget stack, forecast parsing, calendar agenda).
+- **Plain runs:** `./gradlew.bat testDebugUnitTest` skips the screenshot classes and runs only the unit tests (search, prefs, notification store, player state, A–Z sections, updater, clock text, clock lifecycle, calendar choice, row recomposition, motion settling, home and list snapping, settings backup, folders, widget stack, forecast parsing, calendar agenda).
 - **Use `testDebugUnitTest`, not `test`:** `test` also runs the release unit tests, which would render everything twice.
 
 ## Variants and canvas

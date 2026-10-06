@@ -33,7 +33,9 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -149,6 +151,16 @@ class MotionSettleTest {
         show()
         assertSettles()
         compose.onAllNodesWithText(FakeApps.messages.label).onFirst().performTouchInput { swipeRight() }
+        assertSettles()
+    }
+
+    /** A flick up from home settles on the A–Z list's top, and one back down settles on home. */
+    @Test fun flickBetweenHomeAndTheListSettles() {
+        show()
+        assertSettles()
+        compose.onRoot().performTouchInput { swipe(Offset(width * 0.3f, height * 0.7f), Offset(width * 0.3f, height * 0.6f), 60) }
+        assertSettles()
+        compose.onRoot().performTouchInput { swipe(Offset(width * 0.3f, height * 0.3f), Offset(width * 0.3f, height * 0.4f), 60) }
         assertSettles()
     }
 

@@ -14,7 +14,9 @@ and Android won't update an app across a key change.
 ## Features
 
 - **One continuous list.** The home page shows a clock and your favorite apps near the bottom of the screen.
-  Scroll down and the full A–Z app list continues below.
+  Scroll down and the full A–Z app list continues below. A flick up from home lands on the top of the list,
+  search pill first, and a flick down from there takes you home; let go halfway and it settles on whichever is
+  nearer, so home is never left half covered. Inside the list, scrolling is free as usual.
 - **Alphabet wave.** Slide your thumb along the letters on the right edge. The letters near your finger
   swell and bulge out, and the list jumps to that letter. You get a haptic tick on each letter.
 - **Notifications in the list.** Apps with notifications get a dot. Favorites also show the latest message

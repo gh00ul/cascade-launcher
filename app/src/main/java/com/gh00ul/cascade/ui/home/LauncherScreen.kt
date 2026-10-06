@@ -573,10 +573,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             val homeHeight = maxHeight - statusTop
             val homeHeightPx = with(density) { homeHeight.toPx() }.coerceAtLeast(1f)
             // 0 on the home page, 1 once the app list covers the screen. Read only while drawing.
-            val progress = {
-                if (listState.firstVisibleItemIndex > 0) 1f
-                else (listState.firstVisibleItemScrollOffset / homeHeightPx).coerceIn(0f, 1f)
-            }
+            val progress = { listState.listCover(homeHeightPx) }
 
             Box(Modifier.fillMaxSize().homeScrim(style.scrim, settings.wallpaperDim.alpha, progress))
 
@@ -613,6 +610,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         }
                     },
                 contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom + 16.dp),
+                // Comes to rest on home or on the A–Z list's top, never half over home.
+                flingBehavior = rememberHomeSnapFling(listState, homeHeightPx),
             ) {
                 item(key = "home", contentType = "home") {
                     HomePage(

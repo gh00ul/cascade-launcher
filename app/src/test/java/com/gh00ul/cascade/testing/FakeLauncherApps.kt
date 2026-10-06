@@ -21,14 +21,14 @@ object FakeLauncherApps {
 
     /**
      * Lists apps with these [labels], each with a plain colour icon so it renders in either Robolectric graphics mode,
-     * and returns them in the same order.
+     * and returns them in the same order. [system] marks them as part of the system image, which can't be uninstalled.
      */
-    fun install(context: Context, vararg labels: String): List<LauncherActivityInfo> {
+    fun install(context: Context, vararg labels: String, system: Boolean = false): List<LauncherActivityInfo> {
         val launcherApps = Shadow.extract<ShadowLauncherApps>(context.getSystemService(LauncherApps::class.java))
         val user = Process.myUserHandle()
         return labels.map { label ->
             shadowOf(context.packageManager).setUnbadgedApplicationIcon(pkg(label), ColorDrawable(0xFF3F51B5.toInt()))
-            activity(context, label, user).also { launcherApps.addActivity(user, it) }
+            activity(context, label, user, system = system).also { launcherApps.addActivity(user, it) }
         }
     }
 
@@ -47,7 +47,7 @@ object FakeLauncherApps {
     fun uninstallAll() = ShadowLauncherApps.reset()
 
     /** Built the way LauncherApps builds them, through the hidden constructors. */
-    private fun activity(context: Context, label: String, user: UserHandle, className: String = "${pkg(label)}.Main"): LauncherActivityInfo {
+    private fun activity(context: Context, label: String, user: UserHandle, className: String = "${pkg(label)}.Main", system: Boolean = false): LauncherActivityInfo {
         val info = ActivityInfo().apply {
             packageName = pkg(label)
             name = className
@@ -55,6 +55,7 @@ object FakeLauncherApps {
             applicationInfo = ApplicationInfo().apply {
                 packageName = pkg(label)
                 nonLocalizedLabel = label
+                if (system) flags = flags or ApplicationInfo.FLAG_SYSTEM
             }
         }
         val statesClass = Class.forName("android.content.pm.IncrementalStatesInfo")

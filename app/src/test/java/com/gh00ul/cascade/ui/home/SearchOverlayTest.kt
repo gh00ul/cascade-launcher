@@ -91,7 +91,7 @@ class SearchOverlayTest {
                             searchWeb = searchWeb,
                             autoLaunchSingleMatch = autoLaunch,
                             onLaunch = { app, _ -> launched += app.label },
-                            onLongPress = {},
+                            onLongPress = { _, _ -> },
                             onDismiss = { dismissed++ },
                             searchCalculator = calculator,
                             searchContacts = contacts,

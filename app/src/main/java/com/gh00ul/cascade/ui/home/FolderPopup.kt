@@ -5,6 +5,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.fadeIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animateFloat
@@ -92,6 +94,12 @@ private val PopIn: FiniteAnimationSpec<Float> = tween(Motion.ENTER, easing = Mot
 private val PopOut: FiniteAnimationSpec<Float> = tween(Motion.QUICK, easing = Motion.Accelerate)
 
 /**
+ * The layer fades in as screen layers do, but from partway: its first frame is the answer to the long press (or tap),
+ * and a fade from nothing would spend that frame, and on a slow first frame the next one too, drawing nothing.
+ */
+private val PopupFadeIn: EnterTransition = fadeIn(Motion.LayerFadeIn, initialAlpha = 0.4f)
+
+/**
  * A folder's apps in a card over the home screen, popping from the folder's row: a list like the A–Z one (icon, name,
  * notification dot), titled with the folder's name, on a dim that closes it when tapped. It sits beside the row
  * ([anchor], root coordinates), above it when there's room since favorites sit low, kept inside [contentPadding] (the
@@ -113,7 +121,7 @@ internal fun FolderPopup(
     /** The rows' icon size, the A–Z list's. */
     iconSize: Dp,
     onLaunch: (AppEntry, Rect?) -> Unit,
-    onAppLongPress: (AppEntry) -> Unit,
+    onAppLongPress: (AppEntry, Rect?) -> Unit,
     onOptions: () -> Unit,
     onDismiss: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
@@ -142,7 +150,7 @@ internal fun FolderPopup(
 @Composable
 internal fun PopupLayer(visible: Boolean, title: () -> String, onDismiss: () -> Unit, content: @Composable (scale: () -> Float) -> Unit) {
     val style = LocalLauncherStyle.current
-    AnimatedVisibility(visible = visible, enter = Motion.LayerIn, exit = Motion.LayerOut) {
+    AnimatedVisibility(visible = visible, enter = PopupFadeIn, exit = Motion.LayerOut) {
         val open = transition.targetState == EnterExitState.Visible
         val pop = transition.animateFloat(transitionSpec = { if (targetState == EnterExitState.Visible) PopIn else PopOut }, label = "pop") {
             if (it == EnterExitState.Visible) 1f else 0f
@@ -188,13 +196,15 @@ internal fun PopupLayer(visible: Boolean, title: () -> String, onDismiss: () -> 
  * point it grows from: [originX] into the row, on the card's edge nearest the row.
  */
 @Composable
-private fun AnchoredCard(anchor: Rect?, originX: Dp, scale: () -> Float, modifier: Modifier, content: @Composable () -> Unit) {
+internal fun AnchoredCard(anchor: Rect?, originX: Dp, scale: () -> Float, modifier: Modifier, content: @Composable () -> Unit) {
     Layout(content = content, modifier = modifier) { measurables, constraints ->
         val margin = PopupMargin.roundToPx()
         val width = constraints.maxWidth
         val height = constraints.maxHeight
+        // No card (what it was for is gone, and it closes): an empty layer for the rest of its exit.
+        val measurable = measurables.firstOrNull() ?: return@Layout layout(width, height) {}
         val cardWidth = minOf(PopupMaxWidth.roundToPx(), width - 2 * margin).coerceAtLeast(0)
-        val card = measurables.first().measure(Constraints.fixedWidth(cardWidth).copy(maxHeight = (height - 2 * margin).coerceAtLeast(0)))
+        val card = measurable.measure(Constraints.fixedWidth(cardWidth).copy(maxHeight = (height - 2 * margin).coerceAtLeast(0)))
         layout(width, height) {
             // The anchor came from the root's coordinates; this layout may sit below the status bar.
             val here = coordinates
@@ -251,7 +261,7 @@ private fun FolderCard(
     showIcons: Boolean,
     iconSize: Dp,
     onLaunch: (AppEntry, Rect?) -> Unit,
-    onAppLongPress: (AppEntry) -> Unit,
+    onAppLongPress: (AppEntry, Rect?) -> Unit,
     onOptions: () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -288,7 +298,7 @@ private fun FolderCard(
                             large = false,
                             iconSize = iconSize,
                             onClick = { onLaunch(app, it) },
-                            onLongClick = { onAppLongPress(app) },
+                            onLongClick = { onAppLongPress(app, it) },
                             onNotificationClick = {},
                             modifier = Modifier.padding(horizontal = PopupInset),
                         )

@@ -16,6 +16,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -23,9 +24,12 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
@@ -37,10 +41,16 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /*
- * Moving favorites right on the home screen: hold one until it lifts, then drag it up or down; the others slide out of
- * its way, and letting go drops it into its new place and saves the order. Let go without dragging and its menu opens,
- * as a long press always did. Rows are laid out by [ReorderableColumn], so while one moves nothing but placement runs.
+ * Moving favorites right on the home screen: hold one until it lifts, and its menu opens at once, as a long press
+ * always did; drag it up or down instead and the menu closes, the others slide out of its way, and letting go drops it
+ * into its new place and saves the order. Rows are laid out by [ReorderableColumn], so while one moves nothing but
+ * placement runs.
  */
+
+/** Where a favorite's row is laid out, for the bounds its menu pops from. */
+private class RowPlace {
+    var coordinates: LayoutCoordinates? = null
+}
 
 /** How much a lifted favorite grows, and how strong the pill behind it gets. */
 private const val LiftScale = 0.03f
@@ -249,17 +259,27 @@ internal fun ReorderableColumn(
 }
 
 /**
- * A favorite that lifts on a long press and moves with the finger. Let go without dragging and [onMenu] opens its
- * menu instead. Off ([enabled] false), the row keeps its own long press. The row itself must leave the long press to
- * this, or both would fire.
+ * A favorite that lifts on a long press and moves with the finger. [onMenu] opens its menu as it lifts, with the row's
+ * bounds in root coordinates; should the finger then drag, [onMenuClose] closes it again and the row moves. Off
+ * ([enabled] false), the row keeps its own long press. The row itself must leave the long press to this, or both would
+ * fire.
  *
  * It watches the gesture before the row does (the initial pass), so the row's tap still works, a scroll or swipe that
  * starts before the long press is the list's or the row's, and once it lifts, everything after is this gesture's alone.
  */
 @Composable
-internal fun Modifier.liftToReorder(state: FavoriteReorder, key: String, enabled: Boolean, onMenu: () -> Unit): Modifier {
+internal fun Modifier.liftToReorder(
+    state: FavoriteReorder,
+    key: String,
+    enabled: Boolean,
+    onMenuClose: () -> Unit = {},
+    onMenu: (Rect?) -> Unit,
+): Modifier {
     val style = LocalLauncherStyle.current
     val menu by rememberUpdatedState(onMenu)
+    val menuClose by rememberUpdatedState(onMenuClose)
+    // Where the row is, read only when it lifts: not state, so moving it redraws nothing.
+    val place = remember { RowPlace() }
     val gesture = if (!enabled || !state.enabled) Modifier else Modifier.pointerInput(state, key) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -272,9 +292,9 @@ internal fun Modifier.liftToReorder(state: FavoriteReorder, key: String, enabled
                 }
             } == null
             if (!held || !state.pick(key)) return@awaitEachGesture
+            menu(place.coordinates?.takeIf { it.isAttached }?.boundsInRoot())
             var travel = 0f
             var dragging = false
-            var released = false
             try {
                 while (true) {
                     val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
@@ -282,26 +302,22 @@ internal fun Modifier.liftToReorder(state: FavoriteReorder, key: String, enabled
                     val dy = change.positionChange().y
                     // Everything from here is the move's: the row's tap and the list's scroll see it taken.
                     change.consume()
-                    if (!change.pressed) {
-                        released = true
-                        break
-                    }
+                    if (!change.pressed) break
                     travel += dy
-                    if (!dragging && abs(travel) > viewConfiguration.touchSlop) dragging = true
+                    if (!dragging && abs(travel) > viewConfiguration.touchSlop) {
+                        dragging = true
+                        menuClose()
+                    }
                     if (dragging) state.drag(dy)
                 }
             } finally {
-                when {
-                    dragging -> state.drop()
-                    else -> {
-                        state.putDown()
-                        if (released) menu()
-                    }
-                }
+                // Let go without dragging: the menu stays open, and the row sinks back under it.
+                if (dragging) state.drop() else state.putDown()
             }
         }
     }
     return this
+        .onPlaced { place.coordinates = it }
         .then(gesture)
         // Lifted: a little larger, on a pill of the scrim so it reads as picked up over whatever is behind it.
         .graphicsLayer {

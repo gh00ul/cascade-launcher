@@ -175,6 +175,15 @@ class HomeScreenshots : ScreenshotTest() {
         HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp())
     }
 
+    /** A long press on the Messages favorite: its menu pops from the row, above it since favorites sit low. */
+    @Test fun appMenu() = snap(
+        "Home_AppMenu",
+        // On the name: the row's middle is its notification preview, a tap target of its own.
+        afterContent = { onAllNodesWithText(FakeApps.messages.label).onFirst().performTouchInput { longClick(Offset(width * 0.3f, height * 0.25f)) } },
+    ) {
+        HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp())
+    }
+
     @Test fun notificationsExpanded() = snap("Home_NotificationsExpanded") {
         HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp(), expandedKey = "fav:${FakeApps.messages.key}")
     }

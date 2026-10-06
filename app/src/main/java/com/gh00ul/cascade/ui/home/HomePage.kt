@@ -103,7 +103,8 @@ fun HomePage(
     notifications: State<Map<String, List<AppNotification>>>,
     settings: LauncherSettings,
     onLaunch: (AppEntry, Rect?) -> Unit,
-    onAppLongPress: (AppEntry) -> Unit,
+    /** A long press on a favorite, with its row's bounds in root coordinates: its menu pops from there. */
+    onAppLongPress: (AppEntry, Rect?) -> Unit,
     onOpenNotification: (AppEntry, AppNotification) -> Unit,
     /** A long press on empty space, where the finger is in root coordinates: the home menu pops from there. */
     onEmptyLongPress: (Offset) -> Unit,
@@ -120,7 +121,9 @@ fun HomePage(
     /** Under the clock and any card: the widget stack, when it has widgets. */
     widgets: @Composable () -> Unit = {},
     onOpenFolder: (HomeFolder, Rect?) -> Unit = { _, _ -> },
-    onFolderLongPress: (HomeFolder) -> Unit = {},
+    onFolderLongPress: (HomeFolder, Rect?) -> Unit = { _, _ -> },
+    /** A favorite held for its menu started to move instead: the menu closes. */
+    onMenuClose: () -> Unit = {},
     /** Saves the favorites in a new order (their keys), after one is dragged on home; null and they stay put. */
     onReorderFavorites: ((List<String>) -> Unit)? = null,
     /** Home settling in, 0 to 1, read while placing: the favorites rise into place one after another. */
@@ -155,7 +158,7 @@ fun HomePage(
             expanded = expanded,
             onOpen = onOpenMedia,
             // Sessions without a launchable app have no options sheet; long-press hides them instead.
-            onLongClick = app?.let { { onAppLongPress(it) } } ?: onHideMedia.takeIf { !state.isPlaying },
+            onLongClick = app?.let { { onAppLongPress(it, null) } } ?: onHideMedia.takeIf { !state.isPlaying },
             onLongClickLabel = if (app != null) "App options" else "Hide player",
             onToggleExpand = { onToggleExpand(expandKey) },
             onNotificationClick = { n -> app?.let { onOpenNotification(it, n) } },
@@ -253,6 +256,9 @@ fun HomePage(
         ReorderableColumn(reorder, entrance = entrance) {
             for (item in favorites) {
                 key(item.key) {
+                    // The row's press, ended as it lifts and its menu opens: the finger is still down, and the row
+                    // can't tell, since the lift (not the row) watched for the long press.
+                    val press = rememberPressIndication()
                     when (item) {
                         is HomeFolder -> FolderRow(
                             folder = item,
@@ -262,10 +268,14 @@ fun HomePage(
                             showPreview = settings.showNotificationPreviews,
                             iconSize = settings.iconSize.homeDp.dp,
                             onClick = { onOpenFolder(item, it) },
-                            onLongClick = { onFolderLongPress(item) },
+                            onLongClick = { onFolderLongPress(item, it) },
                             onNotificationClick = onOpenNotification,
-                            modifier = Modifier.layoutId(item.key).liftToReorder(reorder, item.key, enabled = true) { onFolderLongPress(item) },
+                            modifier = Modifier.layoutId(item.key).liftToReorder(reorder, item.key, enabled = true, onMenuClose) {
+                                press?.cancel()
+                                onFolderLongPress(item, it)
+                            },
                             longPressInParent = reorder.enabled,
+                            press = press,
                         )
                         is HomeApp -> {
                             val app = item.app
@@ -276,7 +286,10 @@ fun HomePage(
                                 targetState = hosting,
                                 transitionSpec = { Motion.swap() },
                                 label = "favorite",
-                                modifier = Modifier.layoutId(item.key).liftToReorder(reorder, item.key, enabled = !hosting) { onAppLongPress(app) },
+                                modifier = Modifier.layoutId(item.key).liftToReorder(reorder, item.key, enabled = !hosting, onMenuClose) {
+                                    press?.cancel()
+                                    onAppLongPress(app, it)
+                                },
                             ) { hosted ->
                                 val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null
                                 if (hostedState != null) {
@@ -293,11 +306,12 @@ fun HomePage(
                                         large = true,
                                         iconSize = settings.iconSize.homeDp.dp,
                                         onClick = { onLaunch(app, it) },
-                                        onLongClick = { onAppLongPress(app) },
+                                        onLongClick = { onAppLongPress(app, it) },
                                         onNotificationClick = { onOpenNotification(app, it) },
                                         expanded = expandedKey == "fav:${app.key}",
                                         onToggleExpand = { onToggleExpand("fav:${app.key}") },
                                         longPressInParent = reorder.enabled,
+                                        press = press,
                                     )
                                 }
                             }

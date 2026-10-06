@@ -2,6 +2,8 @@ package com.gh00ul.cascade.ui.home
 
 import android.app.Application
 import android.content.ComponentName
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +17,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -27,6 +30,7 @@ import com.gh00ul.cascade.testing.FIXED_NOW
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.ui.theme.LauncherTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -37,6 +41,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * The home menu: a long press on empty space pops it from the finger; a tile does its job and closes it, as do a tap
@@ -109,6 +114,40 @@ class HomeMenuTest {
             assertEquals(name, ran.last())
             compose.onNodeWithText(label).assertDoesNotExist()
         }
+    }
+
+    /**
+     * The frame right after the long press already shows the pop-up (dim and card, partly faded in), rather than the
+     * layer starting from nothing. Shared by every pop-up over home: the folder, and the app and folder menus.
+     */
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun itShowsOnItsFirstFrame() {
+        showMenu()
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        val before = drawn()
+        compose.runOnUiThread { at = Offset(500f, 1200f) }
+        // Frame by frame until the one that first composes it.
+        var frames = 0
+        while (compose.onAllNodesWithText("Wallpaper").fetchSemanticsNodes().isEmpty()) {
+            check(frames++ < 10) { "The menu didn't open" }
+            compose.mainClock.advanceTimeByFrame()
+        }
+        val card = compose.onNodeWithText("Wallpaper").getBoundsInRoot()
+        val first = drawn()
+        val (x, y) = with(compose.density) { ((card.left + card.right) / 2).roundToPx() to ((card.top + card.bottom) / 2).roundToPx() }
+        assertNotEquals("Drawn on the first frame", before.getPixel(x, y), first.getPixel(x, y))
+    }
+
+    /** The window as it draws now, without waiting for another frame (captureToImage would wait for one). */
+    private fun drawn(): Bitmap {
+        lateinit var bitmap: Bitmap
+        compose.runOnUiThread {
+            val view = compose.activity.window.decorView
+            bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(Canvas(bitmap))
+        }
+        return bitmap
     }
 
     @Test fun aTapOutsideOrBackClosesIt() {

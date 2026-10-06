@@ -1,8 +1,5 @@
 package com.gh00ul.cascade.ui.home
 
-import com.gh00ul.cascade.ui.home.widgets.StackMaxWidth
-import androidx.compose.foundation.layout.widthIn
-import com.gh00ul.cascade.update.Updater
 import android.app.Activity
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -36,6 +33,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -81,22 +79,31 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.ObserverModifierNode
+import androidx.compose.ui.node.SemanticsModifierNode
+import androidx.compose.ui.node.invalidateSemantics
+import androidx.compose.ui.node.observeReads
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.DoubleTapAction
 import com.gh00ul.cascade.data.HomeFolder
 import com.gh00ul.cascade.data.IconImage
+import com.gh00ul.cascade.data.LauncherSettings
+import com.gh00ul.cascade.data.SwipeDownAction
+import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.data.defaultFolderName
 import com.gh00ul.cascade.data.folderKey
 import com.gh00ul.cascade.data.folderOf
@@ -105,35 +112,34 @@ import com.gh00ul.cascade.data.newFolder
 import com.gh00ul.cascade.data.nextFolderId
 import com.gh00ul.cascade.data.renameFolder
 import com.gh00ul.cascade.data.reorderFavorites
-import com.gh00ul.cascade.data.LauncherSettings
-import com.gh00ul.cascade.data.SwipeDownAction
-import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.notifications.AppNotification
-import com.gh00ul.cascade.notifications.NowPlayingState
+import com.gh00ul.cascade.notifications.LastPlayed
+import com.gh00ul.cascade.notifications.LastPlayer
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.notifications.NowPlaying
+import com.gh00ul.cascade.notifications.NowPlayingState
 import com.gh00ul.cascade.settings.SettingsActivity
 import com.gh00ul.cascade.settings.SettingsScreen
 import com.gh00ul.cascade.ui.common.rememberEntry
+import com.gh00ul.cascade.ui.common.rememberReplaySkip
+import com.gh00ul.cascade.ui.home.widgets.StackMaxWidth
 import com.gh00ul.cascade.ui.home.widgets.WidgetStack
 import com.gh00ul.cascade.ui.home.widgets.WidgetStackSheet
-import com.gh00ul.cascade.notifications.LastPlayed
-import com.gh00ul.cascade.notifications.LastPlayer
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
-import com.gh00ul.cascade.ui.common.rememberReplaySkip
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.ui.theme.colorScheme
 import com.gh00ul.cascade.ui.theme.rememberWallpaperSupportsDarkText
+import com.gh00ul.cascade.update.Updater
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.LockService
 import com.gh00ul.cascade.util.sendFromLauncher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Index of the first A–Z row: the home page and the all-apps header come before it. */
@@ -187,7 +193,7 @@ internal fun ListAppRow(
     iconSize: Dp,
     expanded: Boolean,
     onLaunch: (AppEntry, Rect?) -> Unit,
-    onLongPress: (AppEntry) -> Unit,
+    onLongPress: (AppEntry, Rect?) -> Unit,
     onOpenNotification: (AppEntry, AppNotification) -> Unit,
     onToggleExpand: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -203,7 +209,7 @@ internal fun ListAppRow(
         large = false,
         iconSize = iconSize,
         onClick = { onLaunch(app, it) },
-        onLongClick = { onLongPress(app) },
+        onLongClick = { onLongPress(app, it) },
         onNotificationClick = { onOpenNotification(app, it) },
         modifier = modifier.then(ListRowPadding),
         expanded = expanded,
@@ -373,15 +379,14 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // Drives search fading in over the home screen, and the list and alphabet strip getting out of its way.
     val searchTransition = updateTransition(searchOpen, label = "search")
     val listAlpha = searchTransition.animateHomeAlpha()
-    var sheetApp by remember { mutableStateOf<AppEntry?>(null) }
+    // An app's or a folder's long-press menu, popped from its row.
+    var menu by remember { mutableStateOf<MenuTarget?>(null) }
     var renameApp by remember { mutableStateOf<AppEntry?>(null) }
     // The home menu, open at the long-press point (root coordinates).
     var homeMenuAt by remember { mutableStateOf<Offset?>(null) }
     var widgetSheetOpen by remember { mutableStateOf(false) }
-    // Folders: the one popped open (and where from), the one whose options show, the one being renamed, and the app a
-    // new folder is being named for.
+    // Folders: the one popped open (and where from), the one being renamed, and the app a new folder is being named for.
     var openFolder by remember { mutableStateOf<OpenFolder?>(null) }
-    var folderSheet by remember { mutableStateOf<String?>(null) }
     var renameFolder by remember { mutableStateOf<String?>(null) }
     var newFolderFor by remember { mutableStateOf<AppEntry?>(null) }
     // Bumped to drop the pop-up without its exit, so coming back home never shows it fading away.
@@ -389,7 +394,10 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // Row whose notifications are swiped open; "fav:" and "all:" prefixes keep the two lists apart.
     var expandedKey by remember { mutableStateOf<String?>(null) }
     val toggleExpand: (String) -> Unit = { key -> expandedKey = if (expandedKey == key) null else key }
-    val showSheet: (AppEntry) -> Unit = { sheetApp = it }
+    val showMenu: (AppEntry, Rect?) -> Unit = { app, anchor -> menu = AppMenuTarget(app, anchor) }
+    // Whether a pop-up (the open folder, a menu) covers home. Read by the nodes that hide what's under it from TalkBack
+    // and by Back, never in a body, so one opening or closing recomposes nothing around it.
+    val popupOpen: () -> Boolean = remember { { openFolder != null || homeMenuAt != null || menu != null } }
 
     val wallpaperDarkText = rememberWallpaperSupportsDarkText()
     val darkText = when (settings.textColor) {
@@ -496,14 +504,20 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // The first-run hint follows the visible rows, but until the list first loads it trusts the stored keys so it doesn't flash.
     val showFavoritesHint = favorites.isEmpty() && (settings.favorites.isEmpty() || apps.isNotEmpty())
     // The open folder as it is now: it follows renames and app changes, and closes if the folder empties or goes.
-    val shownFolder = openFolder?.let { open -> favorites.firstOrNull { it.key == folderKey(open.id) } as? HomeFolder }
-    LaunchedEffect(shownFolder == null) { if (shownFolder == null) openFolder = null }
-    // Leaving home closes the folder and the home menu, without their exits: on return, home is as it was left, minus
-    // the pop-ups.
+    // Looked up where it's read (the pop-up, the effect below), never in this body: opening or closing a folder
+    // would otherwise recompose the whole screen.
+    val currentFavorites by rememberUpdatedState(favorites)
+    fun liveFolder(open: OpenFolder?): HomeFolder? = open?.let { o -> currentFavorites.firstOrNull { it.key == folderKey(o.id) } as? HomeFolder }
+    LaunchedEffect(Unit) {
+        snapshotFlow { openFolder != null && liveFolder(openFolder) == null }.collect { gone -> if (gone) openFolder = null }
+    }
+    // Leaving home closes the folder and the menus, without their exits: on return, home is as it was left, minus the
+    // pop-ups.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
-        if (openFolder != null || homeMenuAt != null) {
+        if (popupOpen()) {
             openFolder = null
             homeMenuAt = null
+            menu = null
             folderPopupGeneration++
         }
     }
@@ -543,13 +557,12 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     LaunchedEffect(homePresses) {
         homePresses.collect {
             searchOpen = false
-            sheetApp = null
+            menu = null
             renameApp = null
             homeMenuAt = null
             widgetSheetOpen = false
             expandedKey = null
             openFolder = null
-            folderSheet = null
             renameFolder = null
             newFolderFor = null
             // Its own coroutine: a touch that interrupts the scroll would otherwise end this collector for good.
@@ -559,7 +572,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // Back closes an open row and goes to the top. With nothing to do it falls through to MainActivity's own callback,
     // which keeps it on the home screen: before Android 12 the default finishes the home activity.
     ListBackHandler(
-        enabled = { !searchOpen && openFolder == null && homeMenuAt == null && (expandedKey != null || !atTop) },
+        enabled = { !searchOpen && !popupOpen() && (expandedKey != null || !atTop) },
         scale = backScale,
         onBack = {
             expandedKey = null
@@ -626,8 +639,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     .fillMaxSize()
                     // Hidden from TalkBack while search covers it.
                     .then(if (searchOpen) Modifier.clearAndSetSemantics {} else Modifier)
-                    // And while a folder is open over it.
-                    .then(if (openFolder != null || homeMenuAt != null) Modifier.clearAndSetSemantics {} else Modifier)
+                    // And while a pop-up is open over it: read by the node, so opening one doesn't recompose this.
+                    .hiddenFromAccessibilityWhen(popupOpen)
                     .nestedScroll(pullDown)
                     // Fade rows out as they slide under the status bar. Hidden under search, whose scrim is see-through.
                     // Settling in after a return, it grows from a little smaller and fainter around the favorites; a
@@ -666,11 +679,12 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         notifications = notifications,
                         settings = settings,
                         onLaunch = launch,
-                        onAppLongPress = showSheet,
+                        onAppLongPress = showMenu,
                         onOpenNotification = openNotification,
                         onEmptyLongPress = { homeMenuAt = it },
                         onOpenFolder = { folder, bounds -> openFolder = OpenFolder(folder.id, bounds) },
-                        onFolderLongPress = { folderSheet = it.id },
+                        onFolderLongPress = { folder, anchor -> menu = FolderMenuTarget(folder.id, anchor) },
+                        onMenuClose = { menu = null },
                         onReorderFavorites = { order -> launcher.prefs.update { it.reorderFavorites(order) } },
                         entrance = { settle.value },
                         appIcon = { pkg -> keyByPackage[pkg]?.let { icons.value[it] } },
@@ -779,7 +793,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                             iconSize = settings.iconSize.listDp.dp,
                             expanded = expandedKey == row.expandKey,
                             onLaunch = launch,
-                            onLongPress = showSheet,
+                            onLongPress = showMenu,
                             onOpenNotification = openNotification,
                             onToggleExpand = toggleExpand,
                         )
@@ -812,56 +826,74 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     AlphabetWave(
                         letters = letters,
                         onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
-                        // Hidden from TalkBack under an open folder, like the list it scrolls.
-                        modifier = Modifier.fillMaxHeight().then(if (openFolder != null) Modifier.clearAndSetSemantics {} else Modifier),
+                        // Hidden from TalkBack under an open folder or menu, like the list it scrolls.
+                        modifier = Modifier.fillMaxHeight().hiddenFromAccessibilityWhen(popupOpen),
                         // Quiet on home, where the clock and favorites come first; as strong as ever over the list.
                         restAlpha = { HomeStripAlpha + (1f - HomeStripAlpha) * progress() },
                     )
                 }
             }
 
+            // Each pop-up reads its state in a scope of its own (Isolated), so one opening or closing runs only itself.
             key(folderPopupGeneration) {
-                FolderPopup(
-                    folder = shownFolder,
-                    anchor = openFolder?.anchor,
-                    icons = icons,
-                    notifications = notifications,
-                    showIcons = settings.showIcons,
-                    homeIconSize = settings.iconSize.homeDp.dp,
-                    iconSize = settings.iconSize.listDp.dp,
-                    onLaunch = { app, bounds ->
-                        launch(app, bounds)
-                        openFolder = null
-                    },
-                    onAppLongPress = showSheet,
-                    onOptions = { shownFolder?.let { folderSheet = it.id } },
-                    onDismiss = { openFolder = null },
-                    contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
-                )
-                HomeMenuPopup(
-                    at = homeMenuAt,
-                    onWallpaper = {
-                        homeMenuAt = null
-                        LauncherActions.openWallpaperPicker(context)
-                    },
-                    onWidgets = {
-                        homeMenuAt = null
-                        widgetSheetOpen = true
-                    },
-                    onFavorites = {
-                        homeMenuAt = null
-                        SettingsActivity.open(context, SettingsScreen.FAVORITES)
-                    },
-                    onSettings = {
-                        homeMenuAt = null
-                        SettingsActivity.open(context)
-                    },
-                    onDismiss = { homeMenuAt = null },
-                    contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
-                )
+                Isolated({ openFolder }) { open ->
+                    FolderPopup(
+                        folder = liveFolder(open),
+                        anchor = open?.anchor,
+                        icons = icons,
+                        notifications = notifications,
+                        showIcons = settings.showIcons,
+                        homeIconSize = settings.iconSize.homeDp.dp,
+                        iconSize = settings.iconSize.listDp.dp,
+                        onLaunch = { app, bounds ->
+                            launch(app, bounds)
+                            openFolder = null
+                        },
+                        // The folder makes way for the menu, which pops from the row inside it.
+                        onAppLongPress = { app, anchor ->
+                            openFolder = null
+                            showMenu(app, anchor)
+                        },
+                        onOptions = {
+                            liveFolder(openFolder)?.let { menu = FolderMenuTarget(it.id, openFolder?.anchor) }
+                            openFolder = null
+                        },
+                        onDismiss = { openFolder = null },
+                        contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
+                    )
+                }
+                Isolated({ homeMenuAt }) { at ->
+                    HomeMenuPopup(
+                        at = at,
+                        onWallpaper = {
+                            homeMenuAt = null
+                            LauncherActions.openWallpaperPicker(context)
+                        },
+                        onWidgets = {
+                            homeMenuAt = null
+                            widgetSheetOpen = true
+                        },
+                        onFavorites = {
+                            homeMenuAt = null
+                            SettingsActivity.open(context, SettingsScreen.FAVORITES)
+                        },
+                        onSettings = {
+                            homeMenuAt = null
+                            SettingsActivity.open(context)
+                        },
+                        onDismiss = { homeMenuAt = null },
+                        contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
+                    )
+                }
             }
 
-            searchTransition.AnimatedVisibility(visible = { open -> open }, enter = Motion.LayerIn, exit = Motion.LayerOut) {
+            searchTransition.AnimatedVisibility(
+                visible = { open -> open },
+                // Hidden from TalkBack under a menu opened from its results, as the list is under any pop-up.
+                modifier = Modifier.hiddenFromAccessibilityWhen { menu != null },
+                enter = Motion.LayerIn,
+                exit = Motion.LayerOut,
+            ) {
                 SearchOverlay(
                     apps = apps,
                     icons = icons.value,
@@ -874,7 +906,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         launch(app, bounds)
                         searchOpen = false
                     },
-                    onLongPress = showSheet,
+                    onLongPress = showMenu,
                     onDismiss = { searchOpen = false },
                     searchCalculator = settings.searchCalculator,
                     searchContacts = settings.searchContacts,
@@ -883,38 +915,62 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     player = lastPlayed?.packageName,
                 )
             }
+
+            // Over everything, search included: an app long-pressed in its results gets its menu there too.
+            key(folderPopupGeneration) {
+                Isolated({ menu }) { shownMenu ->
+                    ContextMenuPopup(
+                        target = shownMenu,
+                        iconOrigin = 8.dp + settings.iconSize.listDp.dp / 2,
+                        onDismiss = { menu = null },
+                        contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom),
+                    ) { target ->
+                        when (target) {
+                            is AppMenuTarget -> {
+                                val app = target.app
+                                val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
+                                val appNotifications by rememberEntry(notifications, app.notificationKey)
+                                AppMenu(
+                                    app = app,
+                                    icon = icon,
+                                    showIcon = settings.showIcons,
+                                    isFavorite = app.key in settings.favorites,
+                                    isHidden = app.key in settings.hidden,
+                                    notifications = appNotifications.orEmpty(),
+                                    folders = folderChoices(settings, icons.value),
+                                    folderId = settings.folderOf(app.key),
+                                    onOpenNotification = { openNotification(app, it) },
+                                    onRename = { renameApp = app },
+                                    onNewFolder = { newFolderFor = app },
+                                    onHidePlayer = if (media != null && !media.isPlaying && app.packageName == media.packageName) NowPlaying::hide else null,
+                                    onDismiss = { menu = null },
+                                )
+                            }
+                            is FolderMenuTarget -> {
+                                val found = favorites.firstOrNull { it.key == folderKey(target.folderId) } as? HomeFolder
+                                // The last one found, so the card still has something to draw while it closes: Remove
+                                // closes the menu and then dissolves the folder, which is gone before the exit ends.
+                                val folder = remember { Latest<HomeFolder>() }.also { if (found != null) it.value = found }.value
+                                // Gone while the menu is open (emptied, or removed elsewhere): nothing to show options for.
+                                if (found == null) LaunchedEffect(Unit) { if (menu === target) menu = null }
+                                if (folder != null) {
+                                    FolderMenu(
+                                        folder = folder,
+                                        icons = remember(folder.apps, icons.value) { folder.apps.take(4).map { icons.value[it.key] } },
+                                        onRename = { renameFolder = folder.id },
+                                        onDismiss = { menu = null },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    sheetApp?.let { app ->
-        val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
-        val appNotifications by rememberEntry(notifications, app.notificationKey)
-        AppActionsSheet(
-            app = app,
-            icon = icon,
-            isFavorite = app.key in settings.favorites,
-            isHidden = app.key in settings.hidden,
-            notifications = appNotifications.orEmpty(),
-            onOpenNotification = { openNotification(app, it) },
-            onRename = { renameApp = app },
-            onDismiss = { sheetApp = null },
-            onHidePlayer = if (media != null && !media.isPlaying && app.packageName == media.packageName) NowPlaying::hide else null,
-            folders = folderChoices(settings, icons.value),
-            folderId = settings.folderOf(app.key),
-            onNewFolder = { newFolderFor = app },
-        )
-    }
     renameApp?.let { app -> RenameDialog(app) { renameApp = null } }
     if (widgetSheetOpen) WidgetStackSheet(settings, onDismiss = { widgetSheetOpen = false })
-    folderSheet?.let { id ->
-        val folder = favorites.firstOrNull { it.key == folderKey(id) } as? HomeFolder
-        if (folder == null) {
-            // Gone meanwhile (emptied, or removed in Settings): nothing to show options for.
-            LaunchedEffect(Unit) { folderSheet = null }
-        } else {
-            FolderActionsSheet(folder, icons, onRename = { renameFolder = id }, onDismiss = { folderSheet = null })
-        }
-    }
     renameFolder?.let { id ->
         FolderNameDialog(
             title = "Rename folder",
@@ -959,5 +1015,40 @@ private class PullDownConnection(private val threshold: Float, private val onPul
         pulled = 0f
         fired = false
         return Velocity.Zero
+    }
+}
+
+/** Reads [value] in a scope of its own: when it changes, only [content] runs again, not the caller's whole body. */
+@Composable
+private fun <T> Isolated(value: () -> T, content: @Composable (T) -> Unit) = content(value())
+
+/**
+ * Hides what it modifies, and everything in it, from TalkBack while [hidden] is true (as clearAndSetSemantics {} does).
+ * [hidden] is read by the node, outside composition, so a pop-up opening over the list re-reads it here instead of
+ * recomposing the screen to swap modifiers.
+ */
+internal fun Modifier.hiddenFromAccessibilityWhen(hidden: () -> Boolean): Modifier = this then HiddenWhenElement(hidden)
+
+private class HiddenWhenElement(val hidden: () -> Boolean) : ModifierNodeElement<HiddenWhenNode>() {
+    override fun create() = HiddenWhenNode(hidden)
+    override fun update(node: HiddenWhenNode) {
+        node.hidden = hidden
+        if (node.isAttached) node.onObservedReadsChanged()
+    }
+    override fun equals(other: Any?) = other is HiddenWhenElement && other.hidden === hidden
+    override fun hashCode() = System.identityHashCode(hidden)
+}
+
+private class HiddenWhenNode(var hidden: () -> Boolean) : Modifier.Node(), SemanticsModifierNode, ObserverModifierNode {
+    private var cleared = false
+    override val shouldClearDescendantSemantics: Boolean get() = cleared
+    override fun SemanticsPropertyReceiver.applySemantics() {}
+    override fun onAttach() = onObservedReadsChanged()
+    override fun onObservedReadsChanged() = observeReads {
+        val now = hidden()
+        if (now != cleared) {
+            cleared = now
+            invalidateSemantics()
+        }
     }
 }

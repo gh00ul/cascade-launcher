@@ -198,7 +198,7 @@ fun AnimatedVisibilityScope.SearchOverlay(
     searchWeb: Boolean,
     autoLaunchSingleMatch: Boolean,
     onLaunch: (AppEntry, Rect?) -> Unit,
-    onLongPress: (AppEntry) -> Unit,
+    onLongPress: (AppEntry, Rect?) -> Unit,
     onDismiss: () -> Unit,
     searchCalculator: Boolean = true,
     searchContacts: Boolean = false,
@@ -412,7 +412,7 @@ fun AnimatedVisibilityScope.SearchOverlay(
                         large = false,
                         iconSize = iconSize,
                         onClick = { onLaunch(app, it) },
-                        onLongClick = { onLongPress(app) },
+                        onLongClick = { onLongPress(app, it) },
                         onNotificationClick = {},
                         // Go opens the top hit, unless there's an answer to copy or a timer to set; a blank query has no
                         // results, so this is only ever set with a query.

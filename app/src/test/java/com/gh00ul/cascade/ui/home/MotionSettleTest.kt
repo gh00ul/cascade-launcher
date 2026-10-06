@@ -510,7 +510,7 @@ class AnimationsOffTest {
                 iconSize = 40.dp,
                 expanded = false,
                 onLaunch = { _, _ -> },
-                onLongPress = {},
+                onLongPress = { _, _ -> },
                 onOpenNotification = { _, _ -> },
                 onToggleExpand = {},
             )

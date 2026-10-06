@@ -51,10 +51,16 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NowPlayingState
 import com.gh00ul.cascade.ui.home.AllAppsHeader
 import com.gh00ul.cascade.ui.home.AlphabetWave
+import com.gh00ul.cascade.ui.home.AppMenuCard
+import com.gh00ul.cascade.ui.home.AppMenuTarget
+import com.gh00ul.cascade.ui.home.ContextMenuPopup
+import com.gh00ul.cascade.ui.home.FolderMenuCard
+import com.gh00ul.cascade.ui.home.FolderMenuTarget
 import com.gh00ul.cascade.ui.home.FolderPopup
 import com.gh00ul.cascade.ui.home.HomeMenuPopup
 import com.gh00ul.cascade.ui.home.HomePage
 import com.gh00ul.cascade.ui.home.HomeStripAlpha
+import com.gh00ul.cascade.ui.home.MenuTarget
 import com.gh00ul.cascade.ui.home.ListAppRow
 import com.gh00ul.cascade.ui.home.OpenFolder
 import com.gh00ul.cascade.ui.home.SearchOverlay
@@ -209,6 +215,8 @@ internal fun HomeScreen(
     /** For tests that tap, long-press or move favorites; moving them is off unless [onReorderFavorites] is given. */
     onLaunch: (AppEntry) -> Unit = {},
     onAppLongPress: (AppEntry) -> Unit = {},
+    /** A favorite held for its menu started to move instead, and the menu closed. */
+    onAppMenuClose: () -> Unit = {},
     onReorderFavorites: ((List<String>) -> Unit)? = null,
 ) {
     val style = LocalLauncherStyle.current
@@ -230,6 +238,7 @@ internal fun HomeScreen(
     val homeRows = items ?: remember(favorites) { favorites.map(::HomeApp) }
     var openFolder by remember { mutableStateOf<OpenFolder?>(null) }
     var menuAt by remember { mutableStateOf<Offset?>(null) }
+    var menu by remember { mutableStateOf<MenuTarget?>(null) }
     val shownFolder = openFolder?.let { open -> homeRows.firstOrNull { it.key == folderKey(open.id) } as? HomeFolder }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -262,7 +271,15 @@ internal fun HomeScreen(
                     notifications = notificationsState,
                     settings = settings,
                     onLaunch = { app, _ -> onLaunch(app) },
-                    onAppLongPress = onAppLongPress,
+                    onAppLongPress = { app, anchor ->
+                        onAppLongPress(app)
+                        menu = AppMenuTarget(app, anchor)
+                    },
+                    onFolderLongPress = { folder, anchor -> menu = FolderMenuTarget(folder.id, anchor) },
+                    onMenuClose = {
+                        onAppMenuClose()
+                        menu = null
+                    },
                     onOpenNotification = { _, _ -> },
                     onEmptyLongPress = { menuAt = it },
                     onEmptyDoubleTap = {},
@@ -297,7 +314,7 @@ internal fun HomeScreen(
                         iconSize = settings.iconSize.listDp.dp,
                         expanded = expandedKey == row.expandKey,
                         onLaunch = { _, _ -> },
-                        onLongPress = {},
+                        onLongPress = { app, anchor -> menu = AppMenuTarget(app, anchor) },
                         onOpenNotification = { _, _ -> },
                         onToggleExpand = {},
                     )
@@ -330,12 +347,41 @@ internal fun HomeScreen(
             homeIconSize = settings.iconSize.homeDp.dp,
             iconSize = settings.iconSize.listDp.dp,
             onLaunch = { _, _ -> },
-            onAppLongPress = {},
+            onAppLongPress = { _, _ -> },
             onOptions = {},
             onDismiss = { openFolder = null },
         )
 
         HomeMenuPopup(at = menuAt, onWallpaper = {}, onWidgets = {}, onFavorites = {}, onSettings = {}, onDismiss = { menuAt = null })
+
+        // As LauncherScreen draws them, with the cards' actions doing nothing: the real ones need LauncherApplication.
+        ContextMenuPopup(target = menu, iconOrigin = 8.dp + settings.iconSize.listDp.dp / 2, onDismiss = { menu = null }) { target ->
+            when (target) {
+                is AppMenuTarget -> AppMenuCard(
+                    app = target.app,
+                    icon = icons[target.app.key],
+                    showIcon = settings.showIcons,
+                    isFavorite = target.app.key in settings.favorites,
+                    isHidden = target.app.key in settings.hidden,
+                    notifications = notifications[target.app.notificationKey].orEmpty(),
+                    shortcuts = emptyList(),
+                    canUninstall = true,
+                    showHidePlayer = false,
+                    onOpenNotification = {},
+                    onClearNotifications = {},
+                    onShortcut = {},
+                    onHidePlayer = {},
+                    onToggleFavorite = {},
+                    onRename = {},
+                    onToggleHidden = {},
+                    onAppInfo = {},
+                    onUninstall = {},
+                )
+                is FolderMenuTarget -> (homeRows.firstOrNull { it.key == folderKey(target.folderId) } as? HomeFolder)?.let { folder ->
+                    FolderMenuCard(folder, folder.apps.take(4).map { icons[it.key] }, onRename = {}, onEditApps = {}, onRemove = {})
+                }
+            }
+        }
 
         searchTransition.AnimatedVisibility(visible = { open -> open }, enter = Motion.LayerIn, exit = Motion.LayerOut) {
             SearchOverlay(
@@ -347,7 +393,7 @@ internal fun HomeScreen(
                 searchWeb = settings.searchWeb,
                 autoLaunchSingleMatch = settings.autoLaunchSingleMatch,
                 onLaunch = { _, _ -> },
-                onLongPress = {},
+                onLongPress = { app, anchor -> menu = AppMenuTarget(app, anchor) },
                 onDismiss = onSearchDismiss,
             )
         }

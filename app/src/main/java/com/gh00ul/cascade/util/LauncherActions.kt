@@ -10,7 +10,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ContentUris
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
@@ -55,11 +54,6 @@ object LauncherActions {
     fun uninstall(context: Context, app: AppEntry) {
         start(context, Intent(Intent.ACTION_DELETE, Uri.fromParts("package", app.packageName, null)))
     }
-
-    fun isSystemApp(context: Context, app: AppEntry): Boolean = runCatching {
-        val info = context.getSystemService(LauncherApps::class.java).getApplicationInfo(app.packageName, 0, app.user)
-        info.flags and ApplicationInfo.FLAG_SYSTEM != 0
-    }.getOrDefault(true)
 
     /** Static and dynamic shortcuts, like the ones Pixel Launcher shows on long-press. */
     fun loadShortcuts(context: Context, app: AppEntry): List<AppShortcut> = runCatching {

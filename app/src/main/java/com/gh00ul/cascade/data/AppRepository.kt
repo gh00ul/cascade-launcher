@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherActivityInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
@@ -64,6 +65,8 @@ data class AppEntry(
     val isManagedProfile: Boolean,
     /** Section this app is filed under in the A–Z list ("#" for digits, symbols and letters outside the index). */
     val section: String,
+    /** Part of the system image, so it can't be uninstalled: known when the list loads, so a menu needn't ask. */
+    val isSystem: Boolean = false,
 ) {
     val packageName: String get() = component.packageName
     /** Built once rather than on every read: rows look it up on each composition. Not part of equals or copy. */
@@ -351,7 +354,7 @@ class AppRepository(
         sortIntoSections(list, { renames[it.key] ?: it.label }).map { (app, section) ->
             AppEntry(
                 app.key, renames[app.key] ?: app.label, app.label, app.info.componentName, app.info.user, app.isWork,
-                app.isManagedProfile, section,
+                app.isManagedProfile, section, isSystem = app.info.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0,
             )
         }
 

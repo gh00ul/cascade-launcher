@@ -197,7 +197,7 @@ class RowRecompositionTest {
         iconSize = 40.dp,
         expanded = false,
         onLaunch = { launchedApp, _ -> launched += launchedApp.key },
-        onLongPress = {},
+        onLongPress = { _, _ -> },
         onOpenNotification = { _, _ -> },
         onToggleExpand = {},
         modifier = probes.getValue(app.key),

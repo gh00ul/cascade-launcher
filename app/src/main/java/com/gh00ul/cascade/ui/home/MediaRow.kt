@@ -292,6 +292,9 @@ fun MediaRow(
                         onLongClick = onLongClick?.let { longClick ->
                             {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                // Answered (the app's menu opens over the row, or the player hides): the press ends
+                                // now, as on an app row, not when the finger lifts.
+                                press?.cancel()
                                 longClick()
                             }
                         },

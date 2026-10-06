@@ -11,7 +11,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -111,7 +114,7 @@ private val RowShape = RoundedCornerShape(16.dp)
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun AppRow(
+internal fun AppRow(
     app: AppEntry,
     icon: IconImage?,
     notifications: List<AppNotification>,
@@ -120,13 +123,16 @@ fun AppRow(
     large: Boolean,
     iconSize: Dp,
     onClick: (Rect?) -> Unit,
-    onLongClick: () -> Unit,
+    /** With the row's bounds (window coordinates), which its menu pops from. */
+    onLongClick: (Rect?) -> Unit,
     onNotificationClick: (AppNotification) -> Unit,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
     onToggleExpand: (() -> Unit)? = null,
     /** A favorite on home, whose long press [liftToReorder] watches for: the row leaves it alone, but TalkBack keeps it. */
     longPressInParent: Boolean = false,
+    /** The row's press feedback. Passed in where something else opens its menu, to end the press as it opens. */
+    press: PressIndication? = rememberPressIndication(),
 ) {
     val style = LocalLauncherStyle.current
     val bounds = remember { BoundsHolder() }
@@ -135,7 +141,9 @@ fun AppRow(
     val showDot = notifications.any { it.showBadge }
     val canExpand = hasNotifications && onToggleExpand != null
     val showExpanded = expanded && hasNotifications
-    val press = rememberPressIndication()
+    // A press held past a tap often ends in a long press: the menu's shortcuts load meanwhile, so it opens with them.
+    val context = LocalContext.current
+    press?.onHeld = { prefetchMenuShortcuts(context, app) }
     // Favorite labels follow the icon size; Settings locks that size while icons are hidden.
     val labelStyle = when {
         !large -> style.app
@@ -164,7 +172,8 @@ fun AppRow(
                     onLongClick = if (longPressInParent) null else {
                         {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongClick()
+                            press?.cancel()
+                            onLongClick(bounds.rect)
                         }
                     },
                 )
@@ -174,7 +183,7 @@ fun AppRow(
                 .semantics {
                     if (longPressInParent) {
                         onLongClick("App options") {
-                            onLongClick()
+                            onLongClick(bounds.rect)
                             true
                         }
                     }
@@ -336,6 +345,14 @@ internal fun notificationCount(n: Int) = if (n == 1) "1 notification" else "$n n
 private val NotificationInset = 8.dp
 
 /**
+ * Takes each touch's down where nothing inside did, so the space around the notifications (the gutter under the
+ * row's icon, beside the buttons) is the row's, as the row itself is, never empty space behind it: a long press there
+ * lifts a favorite without also opening the home menu, and a double tap there isn't home's. Scrolling still works, as
+ * it does over any clickable row.
+ */
+private val RowSpace = Modifier.pointerInput(Unit) { awaitEachGesture { awaitFirstDown().consume() } }
+
+/**
  * Every notification of one app; tap to open, swipe sideways to dismiss. Their text and "Clear all" start at
  * [textStart], the x of the row's label.
  */
@@ -347,7 +364,12 @@ internal fun ExpandedNotifications(
     onHide: (() -> Unit)? = null,
 ) {
     val style = LocalLauncherStyle.current
-    Column(Modifier.fillMaxWidth().padding(start = (textStart - NotificationInset).coerceAtLeast(0.dp), end = 8.dp, bottom = 6.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .then(RowSpace)
+            .padding(start = (textStart - NotificationInset).coerceAtLeast(0.dp), end = 8.dp, bottom = 6.dp),
+    ) {
         for (n in notifications.take(8)) {
             key(n.key) { NotificationItem(n, onOpen) }
         }
@@ -488,6 +510,13 @@ internal fun rememberPressIndication(): PressIndication? {
 }
 
 /**
+ * How long a press lasts before [PressIndication.onHeld] runs. Clickable reports a press in a scrolling list 100 ms
+ * after the finger lands (a quick tap reports its press and release together, as it lifts), so this is past nearly
+ * every tap and still well before the long press.
+ */
+private const val HeldPressMillis = 100L
+
+/**
  * A row's indication: the theme [ripple], plus a listener that eases [pressed] for [pressScale] to draw. Clickable
  * builds the node, and the interaction source it listens to, on the row's first press and drops them when the row is
  * detached, so binding a row while scrolling builds neither.
@@ -500,6 +529,24 @@ internal class PressIndication(private val ripple: IndicationNodeFactory) : Indi
     var pressed by mutableFloatStateOf(0f)
         private set
 
+    /**
+     * Runs once a press has been held for [HeldPressMillis], on the row's own scope (cancelled if the row goes): a long
+     * press may be on its way, and this is the time to get ready for it. Not state; set it as the row composes.
+     */
+    var onHeld: (suspend () -> Unit)? = null
+
+    /** The node clickable built, while it's attached: the one holding the row's press. */
+    private var attached: PressNode? = null
+
+    /**
+     * Ends the row's press now, ripple and shrink, as if the finger had slid off, though it stays down: the row's menu
+     * has opened over it. A ripple held under the menu would redraw the window, menu and all, every frame until the
+     * finger lifted. Clickable still reports the release when it does, which then changes nothing.
+     */
+    fun cancel() {
+        attached?.cancel()
+    }
+
     override fun create(interactionSource: InteractionSource): DelegatableNode = PressNode(interactionSource, ripple.create(interactionSource))
 
     // By identity: each row has its own, holding that row's press.
@@ -507,27 +554,54 @@ internal class PressIndication(private val ripple: IndicationNodeFactory) : Indi
     override fun hashCode() = System.identityHashCode(this)
 
     private inner class PressNode(private val source: InteractionSource, ripple: DelegatableNode) : DelegatingNode() {
+        /** The press under way, from clickable's press until its release or cancel. */
+        private var current: PressInteraction.Press? = null
+
         init {
             delegate(ripple)
         }
 
         override fun onAttach() {
+            attached = this
             val animation = Animatable(0f)
             // Undispatched, so it listens before clickable sends the press that built it.
             coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                fun ended(press: PressInteraction.Press) {
+                    if (press === current) current = null
+                    launch { animation.animateTo(0f, Motion.PressOut) { pressed = value } }
+                }
                 source.interactions.collect { interaction ->
                     when (interaction) {
-                        is PressInteraction.Press -> launch { animation.animateTo(1f, Motion.PressIn) { pressed = value } }
-                        is PressInteraction.Release, is PressInteraction.Cancel ->
-                            launch { animation.animateTo(0f, Motion.PressOut) { pressed = value } }
+                        is PressInteraction.Press -> {
+                            current = interaction
+                            launch { animation.animateTo(1f, Motion.PressIn) { pressed = value } }
+                            onHeld?.let { held ->
+                                // Not motion, so a plain delay: it only tells a held press from a tap.
+                                launch {
+                                    delay(HeldPressMillis)
+                                    if (current === interaction) held()
+                                }
+                            }
+                        }
+                        is PressInteraction.Release -> ended(interaction.press)
+                        is PressInteraction.Cancel -> ended(interaction.press)
                     }
                 }
             }
         }
 
+        /** Sends the cancel through the row's own source, so the ripple ends with the shrink. */
+        fun cancel() {
+            val press = current ?: return
+            current = null
+            (source as? MutableInteractionSource)?.tryEmit(PressInteraction.Cancel(press))
+        }
+
         // A row left mid-press (scrolled away, reused) must never come back shrunk.
         override fun onDetach() {
             pressed = 0f
+            current = null
+            if (attached === this) attached = null
         }
     }
 }

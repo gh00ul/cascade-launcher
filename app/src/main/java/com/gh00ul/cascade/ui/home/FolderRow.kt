@@ -129,16 +129,18 @@ internal fun FolderRow(
     showPreview: Boolean,
     iconSize: Dp,
     onClick: (Rect?) -> Unit,
-    onLongClick: () -> Unit,
+    /** With the row's bounds in root coordinates, which its menu pops from. */
+    onLongClick: (Rect?) -> Unit,
     onNotificationClick: (AppEntry, AppNotification) -> Unit,
     modifier: Modifier = Modifier,
     /** On home, where [liftToReorder] watches for the long press: the row leaves it alone, but TalkBack keeps it. */
     longPressInParent: Boolean = false,
+    /** The row's press feedback. Passed in where something else opens its menu, to end the press as it opens. */
+    press: PressIndication? = rememberPressIndication(),
 ) {
     val style = LocalLauncherStyle.current
     val bounds = remember { RootBoundsHolder() }
     val haptics = LocalHapticFeedback.current
-    val press = rememberPressIndication()
     // Read entry by entry: an icon publish or a notification regroup recomposes this row only when what it shows changes.
     val shownKeys = remember(folder.apps) { folder.apps.take(4).map { it.key } }
     val previewIcons by remember(shownKeys, icons) { derivedStateOf { shownKeys.map { icons.value[it] } } }
@@ -162,7 +164,8 @@ internal fun FolderRow(
                 onLongClick = if (longPressInParent) null else {
                     {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongClick()
+                        press?.cancel()
+                        onLongClick(bounds.rect)
                     }
                 },
             )
@@ -170,7 +173,7 @@ internal fun FolderRow(
             .semantics {
                 if (longPressInParent) {
                     onLongClick("Folder options") {
-                        onLongClick()
+                        onLongClick(bounds.rect)
                         true
                     }
                 }

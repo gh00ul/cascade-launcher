@@ -59,8 +59,10 @@ and Android won't update an app across a key change.
   Tap it to pick up where you left off; long-press for "Not now" until the next time headphones connect.
 - **Dark text on light wallpapers.** Text, icons and the status bar switch to dark automatically when your
   wallpaper is light. You can also force white or dark text in settings.
-- **Long-press menu.** The app's icon and name, round buttons for what you reach for most (favorite, rename, app
-  info, uninstall), then its notifications, shortcuts and the rest (folders, hide) in cards, like Settings.
+- **Long-press menu.** Pops from the row you're holding, the moment the long press lands, with the app's icon and
+  name, round buttons for what you reach for most (favorite, rename, app info, uninstall), its notifications,
+  shortcuts (loaded while your finger is still down, so they're there on the first frame) and the rest (folders,
+  hide). Hold a favorite and drag instead, and the menu steps aside so you can move it.
 - **Home menu.** Long-press empty space and a small card pops up at your finger with Wallpaper, Widgets,
   Favorites and Settings.
 - **Search.** Matches app names by prefix, word start, initials ("gm" finds Google Maps), or fuzzy match.
@@ -176,7 +178,7 @@ restricted settings*, then grant access.
 app/src/main/java/com/gh00ul/cascade/
   data/            app list + icons (AppRepository), settings (Prefs), search
   notifications/   NotificationListenerService, the notification store, and media sessions (NowPlaying)
-  ui/home/         home screen, clock header, alphabet wave, app rows, music player, search, sheets, update card
+  ui/home/         home screen, clock header, alphabet wave, app rows, music player, search, menus, update card
   ui/theme/        colors, text styles, and the wallpaper brightness check
   settings/        settings screens
   update/          self-update from GitHub Releases (Updater, install result receiver)

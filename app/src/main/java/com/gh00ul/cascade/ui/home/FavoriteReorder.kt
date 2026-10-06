@@ -52,6 +52,9 @@ private class RowPlace {
     var coordinates: LayoutCoordinates? = null
 }
 
+/** How often a favorite held while another settles checks whether it can lift yet: about a frame. */
+private const val SettleWaitMillis = 16L
+
 /** How much a lifted favorite grows, and how strong the pill behind it gets. */
 private const val LiftScale = 0.03f
 private const val LiftBackdrop = 0.3f
@@ -291,7 +294,24 @@ internal fun Modifier.liftToReorder(
                     if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
                 }
             } == null
-            if (!held || !state.pick(key)) return@awaitEachGesture
+            if (!held) return@awaitEachGesture
+            // Another row still settling from its drop: this one lifts once that's done, while the finger stays down and
+            // still. The row leaves its long press to this, so a let-go now would be its tap: it's taken, opening nothing.
+            while (!state.pick(key)) {
+                if (state.held == null) return@awaitEachGesture
+                val change = withTimeoutOrNull(SettleWaitMillis) {
+                    awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id }
+                }
+                if (change != null) {
+                    if (!change.pressed) {
+                        change.consume()
+                        return@awaitEachGesture
+                    }
+                    if (change.isConsumed || (change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                        return@awaitEachGesture
+                    }
+                }
+            }
             menu(place.coordinates?.takeIf { it.isAttached }?.boundsInRoot())
             var travel = 0f
             var dragging = false

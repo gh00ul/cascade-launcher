@@ -117,6 +117,57 @@ class FavoriteReorderTest {
         assertSettles()
     }
 
+    /**
+     * Another favorite held while the one just dropped is still settling: it lifts (and its menu opens) once the settle
+     * ends, and letting go never counts as a tap that opens it.
+     */
+    @Test fun holdingAnotherWhileOneSettlesLiftsIt() {
+        show()
+        val phone = row(FakeApps.phone)
+        val pitch = pitch()
+        hold(phone)
+        compose.mainClock.autoAdvance = false
+        phone.performTouchInput {
+            repeat(24) { moveBy(Offset(0f, pitch * 2.2f / 24)) }
+            up()
+        }
+        // A couple of frames into Phone's settle.
+        repeat(2) { compose.mainClock.advanceTimeByFrame() }
+        val camera = row(FakeApps.camera)
+        camera.performTouchInput { down(center) }
+        compose.mainClock.advanceTimeBy(1_000)
+        camera.performTouchInput { up() }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertTrue("Camera wasn't opened by letting go", launched.isEmpty())
+        assertEquals("Phone's menu, then Camera's", listOf(FakeApps.phone.key, FakeApps.camera.key), menus)
+        assertEquals(listOf("Messages", "Mail", "Phone", "Camera", "Photos", "Music"), labels)
+        assertSettles()
+    }
+
+    /** Let go before the settle ends: no lift, and no tap either. */
+    @Test fun lettingGoWhileOneSettlesOpensNothing() {
+        show()
+        val phone = row(FakeApps.phone)
+        val pitch = pitch()
+        hold(phone)
+        compose.mainClock.autoAdvance = false
+        phone.performTouchInput {
+            repeat(24) { moveBy(Offset(0f, pitch * 2.2f / 24)) }
+            up()
+        }
+        val camera = row(FakeApps.camera)
+        camera.performTouchInput { down(center) }
+        // Past the long press, still inside the settle.
+        compose.mainClock.advanceTimeBy(android.view.ViewConfiguration.getLongPressTimeout().toLong() + 16)
+        camera.performTouchInput { up() }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertTrue("Camera wasn't opened", launched.isEmpty())
+        assertEquals(listOf(FakeApps.phone.key), menus)
+        assertSettles()
+    }
+
     @Test fun aTapStillOpensTheApp() {
         show()
         row(FakeApps.camera).performTouchInput {

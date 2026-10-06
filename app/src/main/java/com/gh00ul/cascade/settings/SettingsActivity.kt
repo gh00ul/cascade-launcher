@@ -14,11 +14,14 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -54,6 +57,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -133,7 +137,7 @@ private fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
         },
     ) { padding ->
         when (screen) {
-            SettingsScreen.MAIN -> MainSettings(padding, settings, onNavigate = { screen = it })
+            SettingsScreen.MAIN -> MainSettings(padding, settings, apps, onNavigate = { screen = it })
             SettingsScreen.FAVORITES -> FavoritesSettings(padding, settings, apps, icons, onAdd = { screen = SettingsScreen.ADD_FAVORITE })
             SettingsScreen.ADD_FAVORITE -> AddFavorite(padding, settings, apps, icons, onDone = { screen = SettingsScreen.FAVORITES })
             SettingsScreen.HIDDEN -> HiddenApps(padding, settings, apps, icons)
@@ -142,9 +146,13 @@ private fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
 }
 
 @Composable
-private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, onNavigate: (SettingsScreen) -> Unit) {
+private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, apps: List<AppEntry>, onNavigate: (SettingsScreen) -> Unit) {
     val context = LocalContext.current
     val prefs = context.launcher.prefs
+    // Count only installed apps so the summaries match the screens they open; raw counts until the first load.
+    val installed = remember(apps) { apps.mapTo(HashSet()) { it.key } }
+    val favoriteCount = if (apps.isEmpty()) settings.favorites.size else settings.favorites.count { it in installed }
+    val hiddenCount = if (apps.isEmpty()) settings.hidden.size else settings.hidden.count { it in installed }
     var isDefault by remember { mutableStateOf(LauncherActions.isDefaultLauncher(context)) }
     var hasAccess by remember { mutableStateOf(LauncherActions.hasNotificationAccess(context)) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
@@ -182,7 +190,7 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, onN
         item {
             SettingRow(
                 title = "Favorites",
-                summary = "${settings.favorites.size} apps · add, remove or reorder",
+                summary = "$favoriteCount apps · add, remove or reorder",
                 onClick = { onNavigate(SettingsScreen.FAVORITES) },
             )
         }
@@ -230,7 +238,7 @@ private fun MainSettings(padding: PaddingValues, settings: LauncherSettings, onN
         item {
             SettingRow(
                 title = "Hidden apps",
-                summary = if (settings.hidden.isEmpty()) "None. Long-press an app to hide it." else "${settings.hidden.size} hidden",
+                summary = if (hiddenCount == 0) "None. Long-press an app to hide it." else "$hiddenCount hidden",
                 onClick = { onNavigate(SettingsScreen.HIDDEN) },
             )
         }
@@ -253,10 +261,15 @@ private fun FavoritesSettings(
     val favorites = settings.favorites.mapNotNull { byKey[it] }
 
     fun move(from: Int, to: Int) {
-        // Rebuilt from the installed favorites, which also drops entries for uninstalled apps.
-        val keys = favorites.map { it.key }.toMutableList()
-        keys.add(to, keys.removeAt(from))
-        prefs.setFavorites(keys)
+        // Swaps the two keys in the stored list, so favorites of apps that are missing for now
+        // (disabled, on an unmounted SD card, still restoring) keep their place.
+        val a = favorites[from].key
+        val b = favorites[to].key
+        prefs.update { s ->
+            val i = s.favorites.indexOf(a)
+            val j = s.favorites.indexOf(b)
+            if (i < 0 || j < 0) s else s.copy(favorites = s.favorites.toMutableList().also { it[i] = b; it[j] = a })
+        }
     }
 
     LazyColumn(contentPadding = padding) {
@@ -275,7 +288,7 @@ private fun FavoritesSettings(
                         IconButton(onClick = { move(index, index + 1) }, enabled = index < favorites.lastIndex) {
                             Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move down")
                         }
-                        IconButton(onClick = { prefs.setFavorites(favorites.map { it.key } - app.key) }) {
+                        IconButton(onClick = { prefs.update { it.copy(favorites = it.favorites - app.key) } }) {
                             Icon(Icons.Filled.Close, contentDescription = "Remove")
                         }
                     }
@@ -307,7 +320,8 @@ private fun AddFavorite(
     val candidates = remember(apps, settings.favorites, query) {
         (if (query.isBlank()) apps else searchApps(apps, query)).filter { it.key !in settings.favorites }
     }
-    LazyColumn(contentPadding = padding) {
+    // The keyboard is up while searching; keep the end of the list scrollable above it.
+    LazyColumn(contentPadding = padding, modifier = Modifier.consumeWindowInsets(padding).imePadding()) {
         item {
             OutlinedTextField(
                 value = query,
@@ -403,12 +417,15 @@ private fun SettingRow(
 
 @Composable
 private fun SwitchRow(title: String, summary: String?, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
-    SettingRow(
-        title = title,
-        summary = summary,
-        enabled = enabled,
-        onClick = { onChange(!checked) },
-        trailing = { Switch(checked = checked, onCheckedChange = onChange, enabled = enabled) },
+    // The whole row is the switch, so TalkBack reads the title and the state as one item.
+    ListItem(
+        headlineContent = { Text(title) },
+        supportingContent = summary?.let { { Text(it) } },
+        trailingContent = { Switch(checked = checked, onCheckedChange = null, enabled = enabled) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        modifier = Modifier
+            .alpha(if (enabled) 1f else 0.4f)
+            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange),
     )
 }
 

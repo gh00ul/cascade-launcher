@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
@@ -51,6 +50,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +63,7 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -95,6 +96,7 @@ fun AppRow(
     val bounds = remember { BoundsHolder() }
     val haptics = LocalHapticFeedback.current
     val hasNotifications = notifications.isNotEmpty()
+    val showDot = notifications.any { it.showBadge }
     val canExpand = hasNotifications && onToggleExpand != null
     val showExpanded = expanded && hasNotifications
     val iconSize = if (large) 40.dp else 34.dp
@@ -109,6 +111,7 @@ fun AppRow(
                 .combinedClickable(
                     // The long-press haptic is fired by hand below; the default would fire it twice.
                     hapticFeedbackEnabled = false,
+                    onLongClickLabel = "App options",
                     onClick = { onClick(bounds.rect) },
                     onLongClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -116,6 +119,8 @@ fun AppRow(
                     },
                 )
                 .semantics {
+                    // The badge dot is visual only.
+                    if (hasNotifications) stateDescription = notificationCount(notifications.size)
                     if (canExpand) {
                         customActions = listOf(
                             CustomAccessibilityAction(if (showExpanded) "Hide notifications" else "Show notifications") {
@@ -131,7 +136,7 @@ fun AppRow(
             if (showIcon) {
                 Box {
                     AppIcon(icon, iconSize)
-                    if (hasNotifications) {
+                    if (showDot) {
                         Box(
                             Modifier
                                 .align(Alignment.TopEnd)
@@ -153,8 +158,8 @@ fun AppRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (app.isWork) Text("  work", style = style.small.copy(color = style.content.copy(alpha = 0.55f)))
-                    if (!showIcon && hasNotifications) {
+                    if (app.isManagedProfile) Text("  work", style = style.small.copy(color = style.content.copy(alpha = 0.55f)))
+                    if (!showIcon && showDot) {
                         Spacer(Modifier.width(10.dp))
                         Box(Modifier.size(8.dp).background(style.accent, CircleShape))
                     }
@@ -196,6 +201,9 @@ private fun NotificationPreview(notification: AppNotification, more: Int, onClic
     }
 }
 
+/** Spoken state for a row's notification badge. */
+internal fun notificationCount(n: Int) = if (n == 1) "1 notification" else "$n notifications"
+
 /** Every notification of one app; tap to open, swipe sideways to dismiss. */
 @Composable
 internal fun ExpandedNotifications(notifications: List<AppNotification>, startPadding: androidx.compose.ui.unit.Dp, onOpen: (AppNotification) -> Unit) {
@@ -216,23 +224,38 @@ internal fun ExpandedNotifications(notifications: List<AppNotification>, startPa
 @Composable
 private fun NotificationItem(notification: AppNotification, onOpen: (AppNotification) -> Unit) {
     val style = LocalLauncherStyle.current
-    val state = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled) NotificationStore.dismiss(notification)
-            value != SwipeToDismissBoxValue.Settled
-        },
-    )
+    val state = rememberSwipeToDismissBoxState()
+    val scope = rememberCoroutineScope()
     SwipeToDismissBox(
         state = state,
         backgroundContent = {},
         enableDismissFromStartToEnd = notification.clearable,
         enableDismissFromEndToStart = notification.clearable,
+        // Runs only once the swipe settles, so dragging back before letting go cancels nothing.
+        onDismiss = {
+            NotificationStore.dismiss(notification)
+            // The row leaves when the store drops the notification; if the cancel didn't go through, bring it back.
+            scope.launch {
+                delay(1_000)
+                state.reset()
+            }
+        },
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .clickable { onOpen(notification) }
+                .semantics {
+                    if (notification.clearable) {
+                        customActions = listOf(
+                            CustomAccessibilityAction("Dismiss") {
+                                NotificationStore.dismiss(notification)
+                                true
+                            },
+                        )
+                    }
+                }
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -81,10 +81,14 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
+A tag builds exactly that version. Every other build (pushes to `main`, local builds) is `X.Y.Z-dev.N`, N commits
+after the last `v*` tag, so it installs over that release and the next tag installs over it.
+
 The signing key comes from two repository secrets, `KEYSTORE_BASE64` (the base64-encoded `release.jks`)
 and `KEYSTORE_PASSWORD`. For signed local builds, put the same files in `.signing/` as `release.jks` and
-`keystore.properties` (containing `password=...`). Both are git-ignored. Without them, local release builds
-fall back to the debug key.
+`keystore.properties` (containing `password=...`; write a backslash as `\\`). Both are git-ignored. Without
+`.signing/release.jks`, local release builds use the debug key and print a warning; with `release.jks` but no
+password, release builds fail.
 
 Keep a backup of the key. If it's lost, existing installs can't be updated.
 
@@ -96,6 +100,7 @@ Keep a backup of the key. If it's lost, existing installs can't be updated.
 | Notification access (optional) | Powers the notification dots and previews, and the music controls. Nothing leaves the device. |
 | `EXPAND_STATUS_BAR` | Lets swipe-down open the notification shade. |
 | `REQUEST_DELETE_PACKAGES` | Powers "Uninstall" in the app menu. |
+| `SET_ALARM` | Lets a tap on the clock open the alarm list; clock apps require it. Cascade never sets alarms. |
 
 There is no internet permission, so Cascade can't send anything anywhere.
 

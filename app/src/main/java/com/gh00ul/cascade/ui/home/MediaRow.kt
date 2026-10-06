@@ -217,6 +217,7 @@ fun MediaRow(
     }
     val longPress by rememberUpdatedState(onLongClick)
     val hasNotifications = notifications.isNotEmpty()
+    val showDot = notifications.any { it.showBadge }
     val tier2 = !resting && (state.hasDuration || state.isLive || state.canSkipPrevious || state.canSkipNext)
     val restFraction = if (resting && state.hasDuration) {
         (state.positionAt(SystemClock.elapsedRealtime()).toFloat() / state.durationMs).coerceIn(0f, 1f)
@@ -256,11 +257,13 @@ fun MediaRow(
                     )
                     .semantics {
                         contentDescription = listOfNotNull(state.title, state.subtitle.ifEmpty { null }, appLabel).joinToString(", ")
-                        stateDescription = when {
+                        val playback = when {
                             state.isBuffering -> "Loading"
                             state.isPlaying -> "Playing"
                             else -> "Paused"
                         }
+                        // The badge dot is visual only.
+                        stateDescription = if (hasNotifications) "$playback, ${notificationCount(notifications.size)}" else playback
                         customActions = buildList {
                             if (state.canPlayPause) add(CustomAccessibilityAction(if (state.isPaused) "Play" else "Pause") { toggle(state.isPaused); true })
                             if (state.canSkipNext) add(CustomAccessibilityAction("Next track") { next(); true })
@@ -290,11 +293,11 @@ fun MediaRow(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (showArt) {
-                    MediaArt(state.art, icon, hasNotifications, monochrome)
+                    MediaArt(state.art, icon, showDot, monochrome)
                     Spacer(Modifier.width(12.dp))
                 }
                 TrackText(state, appLabel, scrubMs, skipDir, rtl, Modifier.weight(1f))
-                if (!showArt && hasNotifications) {
+                if (!showArt && showDot) {
                     Spacer(Modifier.width(8.dp))
                     Box(Modifier.size(8.dp).background(style.accent, CircleShape))
                 }
@@ -386,7 +389,7 @@ private fun TrackText(state: NowPlayingState, appLabel: String?, scrubMs: Long?,
 }
 
 @Composable
-private fun MediaArt(art: ImageBitmap?, icon: IconImage?, hasNotifications: Boolean, monochrome: Boolean) {
+private fun MediaArt(art: ImageBitmap?, icon: IconImage?, showDot: Boolean, monochrome: Boolean) {
     val style = LocalLauncherStyle.current
     Box {
         Crossfade(art, animationSpec = tween(300), label = "art") { bitmap ->
@@ -417,7 +420,7 @@ private fun MediaArt(art: ImageBitmap?, icon: IconImage?, hasNotifications: Bool
                 contentAlignment = Alignment.Center,
             ) { AppIcon(icon, 17.dp) }
         }
-        if (hasNotifications) {
+        if (showDot) {
             Box(
                 Modifier
                     .align(Alignment.TopEnd)

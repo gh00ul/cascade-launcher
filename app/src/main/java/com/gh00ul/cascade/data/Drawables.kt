@@ -37,10 +37,10 @@ fun Drawable.renderTo(size: Int, filter: ColorFilter? = null): Bitmap {
 
 /**
  * An app icon ready to draw. A [isGlyph] icon is a white silhouette (Android 13 themed icon) that the UI
- * tints with its current text color.
+ * tints with its current text color; its profile [badge], if any, is drawn over it untinted.
  */
 @Immutable
-class IconImage(val bitmap: ImageBitmap, val isGlyph: Boolean)
+class IconImage(val bitmap: ImageBitmap, val isGlyph: Boolean, val badge: ImageBitmap? = null)
 
 /**
  * The app's themed-icon layer when it ships one (Android 13+) as a white glyph,

@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,14 +91,36 @@ object NowPlaying {
     /** Debug builds only: report Cascade's own fake session as if it came from this package. */
     internal var debugAlias: String? = null
 
-    private class Tracked(val controller: MediaController, val callback: MediaController.Callback)
+    /** Kept current by the callbacks: each getter is a binder call, and metadata unparcels the art. */
+    private class Tracked(val controller: MediaController) {
+        lateinit var callback: MediaController.Callback
+        var playback: PlaybackState? = null
+        var metadata: MediaMetadata? = null
+        var thumb: Bitmap? = null
 
-    /** Read once per controller per publish: each getter is a binder call, and metadata unparcels the art. */
+        fun updateMetadata(m: MediaMetadata?) {
+            val bitmap = m?.let {
+                it.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+                    ?: it.getBitmap(MediaMetadata.METADATA_KEY_ART)
+                    ?: it.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+            }
+            thumb = bitmap?.let { runCatching { thumbnail(it) }.getOrNull() }
+            // Keep only the text: the full-size art (and the parcel behind it) would otherwise live as long as the session.
+            metadata = m?.let { src ->
+                MediaMetadata.Builder().apply {
+                    for (k in TEXT_KEYS) src.getString(k)?.let { putString(k, it) }
+                    putLong(MediaMetadata.METADATA_KEY_DURATION, src.getLong(MediaMetadata.METADATA_KEY_DURATION))
+                }.build()
+            }
+        }
+    }
+
     private class Snapshot(
         val token: MediaSession.Token,
         val controller: MediaController,
         val playback: PlaybackState?,
         val metadata: MediaMetadata?,
+        val thumb: Bitmap?,
     )
 
     private val handler = Handler(Looper.getMainLooper())
@@ -131,6 +154,15 @@ object NowPlaying {
         PlaybackState.STATE_SKIPPING_TO_NEXT,
         PlaybackState.STATE_SKIPPING_TO_PREVIOUS,
         PlaybackState.STATE_SKIPPING_TO_QUEUE_ITEM,
+    )
+    /** The metadata [toState] reads, besides the duration. */
+    private val TEXT_KEYS = listOf(
+        MediaMetadata.METADATA_KEY_TITLE,
+        MediaMetadata.METADATA_KEY_DISPLAY_TITLE,
+        MediaMetadata.METADATA_KEY_ARTIST,
+        MediaMetadata.METADATA_KEY_ALBUM_ARTIST,
+        MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE,
+        MediaMetadata.METADATA_KEY_ALBUM,
     )
 
     private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { track(it.orEmpty()) }
@@ -188,16 +220,30 @@ object NowPlaying {
     }
 
     private fun register(token: MediaSession.Token, controller: MediaController): Tracked {
-        val callback = object : MediaController.Callback() {
-            override fun onPlaybackStateChanged(state: PlaybackState?) = publish()
-            override fun onMetadataChanged(metadata: MediaMetadata?) = publish()
+        val tracked = Tracked(controller)
+        tracked.callback = object : MediaController.Callback() {
+            override fun onPlaybackStateChanged(state: PlaybackState?) {
+                tracked.playback = state
+                publish()
+            }
+
+            override fun onMetadataChanged(metadata: MediaMetadata?) {
+                tracked.updateMetadata(metadata)
+                // The cover can change with the same text and size (radio, placeholder art): read it again.
+                if (token == shown) artKey = null
+                publish()
+            }
+
             override fun onSessionDestroyed() {
                 sessions.remove(token)?.let { it.controller.unregisterCallback(it.callback) }
                 publish()
             }
         }
-        controller.registerCallback(callback, handler)
-        return Tracked(controller, callback)
+        controller.registerCallback(tracked.callback, handler)
+        // Callbacks only report changes; read the current values once.
+        tracked.playback = controller.playbackState
+        tracked.updateMetadata(controller.metadata)
+        return tracked
     }
 
     /**
@@ -212,21 +258,21 @@ object NowPlaying {
         hidden.retainAll(sessions.keys)
         var wake = Long.MAX_VALUE
         val eligible = sessions.mapNotNull { (token, tracked) ->
-            val playback = tracked.controller.playbackState
-            val metadata = tracked.controller.metadata
+            val playback = tracked.playback
+            val metadata = tracked.metadata
             val s = playback?.state ?: return@mapNotNull null
             if (metadata == null || s !in ACTIVE_STATES) return@mapNotNull null
             if (s in PLAYING_STATES) {
                 pausedSince -= token
                 hidden -= token
-                return@mapNotNull Snapshot(token, tracked.controller, playback, metadata)
+                return@mapNotNull Snapshot(token, tracked.controller, playback, metadata, tracked.thumb)
             }
             // Paused, or stuck buffering: retire after 30 minutes, and allow hiding.
             if (token in hidden) return@mapNotNull null
             val left = pausedSince.getOrPut(token) { now } + STALE_PAUSE_MS - now
             if (left <= 0) return@mapNotNull null
             wake = minOf(wake, left)
-            Snapshot(token, tracked.controller, playback, metadata)
+            Snapshot(token, tracked.controller, playback, metadata, tracked.thumb)
         }
         if (wake != Long.MAX_VALUE) handler.postDelayed(recheck, wake + 1_000)
         val chosen = eligible.firstOrNull { it.playback?.state in PLAYING_STATES }
@@ -266,16 +312,17 @@ object NowPlaying {
             ?: ""
         val pkg = controller.packageName.let { if (it == ownPackage) debugAlias ?: it else it }
         val trackKey = "$pkg|$title|$subtitle|${metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)}"
-        val bitmap = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
-            ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_ART)
-            ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
-        // Include the bitmap's size: many apps post the title first and the cover a moment later.
-        val key = "$trackKey|${bitmap?.width}x${bitmap?.height}"
+        val thumb = snapshot.thumb
+        // Include the cover's size: many apps post the title first and the cover a moment later.
+        val key = "$trackKey|${thumb?.width}x${thumb?.height}"
         if (key != artKey) {
             artKey = key
-            val thumb = bitmap?.let { runCatching { thumbnail(it) }.getOrNull() }
-            art = thumb?.asImageBitmap()
-            artSeed = thumb?.let { runCatching { seedColor(it) }.getOrNull() }
+            // Re-posted metadata usually carries the same cover; keep the old image so it doesn't crossfade to itself.
+            val same = thumb != null && runCatching { art?.asAndroidBitmap()?.sameAs(thumb) == true }.getOrDefault(false)
+            if (!same) {
+                art = thumb?.asImageBitmap()
+                artSeed = thumb?.let { runCatching { seedColor(it) }.getOrNull() }
+            }
         }
         val playback = snapshot.playback
         val actions = playback?.actions ?: 0L

@@ -9,13 +9,18 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -50,7 +55,9 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -91,10 +98,12 @@ private sealed interface Row {
 
 private fun buildRows(apps: List<AppEntry>): List<Row> = buildList {
     var section: String? = null
+    // Sections come in one run each; should one ever repeat, a second header would be a duplicate list key.
+    val seen = HashSet<String>()
     for (app in apps) {
         if (app.section != section) {
             section = app.section
-            add(Row.Section(app.section))
+            if (seen.add(app.section)) add(Row.Section(app.section))
         }
         add(Row.App(app))
     }
@@ -168,10 +177,16 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     }
 
     val byKey = remember(apps) { apps.associateBy { it.key } }
+    // Collapse for good once the expanded row has no notifications left, so the next one doesn't reopen it by itself.
+    LaunchedEffect(expandedKey, notifications, byKey, mediaApp) {
+        val key = expandedKey ?: return@LaunchedEffect
+        val app = if (key == "media") mediaApp else byKey[key.substringAfter(':')]
+        if (app == null || notifications[app.notificationKey].isNullOrEmpty()) expandedKey = null
+    }
     val favorites = remember(byKey, settings.favorites) { settings.favorites.mapNotNull { byKey[it] } }
     val rows = remember(apps, settings.hidden) { buildRows(apps.filter { it.key !in settings.hidden }) }
     val letterRows = remember(rows) {
-        buildMap { rows.forEachIndexed { i, row -> if (row is Row.Section) put(row.letter, i + FIRST_APP_ROW) } }
+        buildMap { rows.forEachIndexed { i, row -> if (row is Row.Section && row.letter !in this) put(row.letter, i + FIRST_APP_ROW) } }
     }
     val letters = remember(letterRows) { letterRows.keys.toList() }
     val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 } }
@@ -188,10 +203,15 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             renameApp = null
             homeMenuOpen = false
             expandedKey = null
-            if (listState.firstVisibleItemIndex > 4) listState.scrollToItem(0) else listState.animateScrollToItem(0)
+            // Its own coroutine: a touch that interrupts the scroll would otherwise end this collector for good.
+            scope.launch { if (listState.firstVisibleItemIndex > 4) listState.scrollToItem(0) else listState.animateScrollToItem(0) }
         }
     }
-    BackHandler(enabled = !atTop && !searchOpen) { scope.launch { listState.animateScrollToItem(0) } }
+    // Back is always ours on the home screen: before Android 12 the default finishes the home activity.
+    BackHandler(enabled = !searchOpen) {
+        expandedKey = null
+        if (!atTop) scope.launch { listState.animateScrollToItem(0) }
+    }
 
     val swipeDownAction by rememberUpdatedState(settings.swipeDownAction)
     val pullDown = remember {
@@ -204,6 +224,11 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            // Side nav bar (3-button, landscape) and side cutouts.
+            val layoutDirection = LocalLayoutDirection.current
+            val sideInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues()
+            val startInset = sideInsets.calculateStartPadding(layoutDirection)
+            val endInset = sideInsets.calculateEndPadding(layoutDirection)
             val homeHeight = maxHeight - statusTop
             val homeHeightPx = with(density) { homeHeight.toPx() }.coerceAtLeast(1f)
             // 0 on the home page, 1 once the app list covers the screen. Read only while drawing.
@@ -230,6 +255,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
+                    // Hidden from TalkBack while search covers it.
+                    .then(if (searchOpen) Modifier.clearAndSetSemantics {} else Modifier)
                     .nestedScroll(pullDown)
                     // Fade rows out as they slide under the status bar.
                     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
@@ -243,7 +270,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                             blendMode = BlendMode.DstIn,
                         )
                     },
-                contentPadding = PaddingValues(top = statusTop, bottom = navBottom + 16.dp),
+                contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom + 16.dp),
             ) {
                 item(key = "home", contentType = "home") {
                     HomePage(
@@ -327,7 +354,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .padding(top = statusTop, bottom = navBottom)
+                        .padding(top = statusTop, bottom = navBottom, end = endInset)
                         .fillMaxHeight(0.8f),
                 )
             }

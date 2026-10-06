@@ -2,6 +2,7 @@ package com.gh00ul.cascade.util
 
 import android.annotation.SuppressLint
 import android.app.ActivityOptions
+import android.app.AlarmManager
 import android.app.SearchManager
 import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
@@ -91,8 +92,19 @@ object LauncherActions {
         Class.forName("android.app.StatusBarManager").getMethod("expandNotificationsPanel").invoke(statusBar)
     }.isSuccess
 
+    /** Clock apps guard SHOW_ALARMS with SET_ALARM; if it is still refused, open the next alarm or the clock app itself. */
     fun openAlarms(context: Context) {
-        start(context, Intent(AlarmClock.ACTION_SHOW_ALARMS))
+        val show = Intent(AlarmClock.ACTION_SHOW_ALARMS)
+        if (start(context, show)) return
+        val next = context.getSystemService(AlarmManager::class.java).nextAlarmClock?.showIntent
+        if (next != null && next.sendFromLauncher(context)) return
+        val pm = context.packageManager
+        val clock = pm.resolveActivity(show, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+            ?.takeIf { it != "android" } // the chooser, not a clock app
+        val launch = clock?.let { pm.getLaunchIntentForPackage(it) }
+        if (launch == null || !start(context, launch)) {
+            Toast.makeText(context, "Couldn't open the clock app", Toast.LENGTH_SHORT).show()
+        }
     }
 
     fun openCalendar(context: Context) {

@@ -22,7 +22,17 @@ import com.gh00ul.cascade.data.IconImage
 /** An app icon; themed glyphs take the surrounding content color so they read on any background. */
 @Composable
 fun AppIcon(icon: IconImage?, size: Dp, modifier: Modifier = Modifier) {
-    AppIcon(icon?.bitmap, size, modifier, tint = if (icon?.isGlyph == true) LocalContentColor.current else null)
+    val tint = if (icon?.isGlyph == true) LocalContentColor.current else null
+    val badge = icon?.badge
+    if (icon == null || badge == null) {
+        AppIcon(icon?.bitmap, size, modifier, tint = tint)
+    } else {
+        // A work badge stays in its own colors over the tinted glyph.
+        Box(modifier.size(size)) {
+            AppIcon(icon.bitmap, size, tint = tint)
+            AppIcon(badge, size)
+        }
+    }
 }
 
 @Composable

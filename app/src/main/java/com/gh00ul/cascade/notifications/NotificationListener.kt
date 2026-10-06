@@ -1,6 +1,7 @@
 package com.gh00ul.cascade.notifications
 
 import android.service.notification.NotificationListenerService
+import android.service.notification.NotificationListenerService.RankingMap
 import android.service.notification.StatusBarNotification
 
 /**
@@ -10,7 +11,7 @@ import android.service.notification.StatusBarNotification
 class NotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         instance = this
-        sync()
+        NotificationStore.reset(runCatching { activeNotifications }.getOrNull(), currentRanking, packageName)
         NowPlaying.start(applicationContext)
     }
 
@@ -20,11 +21,17 @@ class NotificationListener : NotificationListenerService() {
         NowPlaying.stop()
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification?) = sync()
+    // Apply what each callback delivers: re-reading every notification is a binder call on the main thread.
+    override fun onNotificationPosted(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
+        if (sbn != null) NotificationStore.posted(sbn, rankingMap, packageName)
+    }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) = sync()
+    override fun onNotificationRemoved(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
+        if (sbn != null) NotificationStore.removed(sbn.key, rankingMap)
+    }
 
-    private fun sync() = NotificationStore.publish(runCatching { activeNotifications }.getOrNull(), packageName)
+    // Pausing an app (Focus mode, app timers), Do Not Disturb and dot settings arrive only as ranking changes.
+    override fun onNotificationRankingUpdate(rankingMap: RankingMap?) = NotificationStore.ranked(rankingMap)
 
     companion object {
         @Volatile

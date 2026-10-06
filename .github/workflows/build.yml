@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # main builds are numbered from the last tag, so they need the history and tags
 
       - name: Check the tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -46,8 +48,13 @@ jobs:
           fi
           mkdir -p .signing
           echo "$KEYSTORE_BASE64" | base64 -d > .signing/release.jks
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION=0.0.1; fi
-          ./gradlew assembleRelease -PappVersion="$VERSION"
+          # Tags build that version; main builds become X.Y.Z-dev.N of the last tag (see app/build.gradle.kts).
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            ./gradlew assembleRelease -PappVersion="${GITHUB_REF_NAME#v}"
+          else
+            ./gradlew assembleRelease
+          fi
+          VERSION=$(jq -er '.elements[0].versionName' app/build/outputs/apk/release/output-metadata.json)
           cp app/build/outputs/apk/release/app-release.apk "cascade-$VERSION.apk"
           rm -f .signing/release.jks
 

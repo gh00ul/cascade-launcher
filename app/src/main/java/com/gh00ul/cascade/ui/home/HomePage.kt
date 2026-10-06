@@ -57,6 +57,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -68,6 +72,7 @@ import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.util.LauncherActions
+import com.gh00ul.cascade.util.sendFromLauncher
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -167,7 +172,7 @@ fun HomePage(
 
         if (favorites.isEmpty()) {
             Text(
-                "Long-press any app to add it here.\nScroll down, or slide along the letters on the right, to see all apps.",
+                "Long-press any app to add it here.\nScroll down, or slide along the letters at the edge, to see all apps.",
                 style = style.small,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
@@ -240,12 +245,18 @@ private fun Clock(modifier: Modifier = Modifier) {
         Text(
             time,
             style = style.clock,
-            modifier = Modifier.clickable(interactionSource = null, indication = null) { LauncherActions.openAlarms(context) },
+            modifier = Modifier.clickable(
+                interactionSource = null, indication = null,
+                onClickLabel = "Open alarms", role = Role.Button,
+            ) { LauncherActions.openAlarms(context) },
         )
         Text(
             date,
             style = style.date,
-            modifier = Modifier.clickable(interactionSource = null, indication = null) { LauncherActions.openCalendar(context) },
+            modifier = Modifier.clickable(
+                interactionSource = null, indication = null,
+                onClickLabel = "Open calendar", role = Role.Button,
+            ) { LauncherActions.openCalendar(context) },
         )
         if (alarm != null) {
             val pattern = DateFormat.getBestDateTimePattern(locale, if (is24h) "EEEHmm" else "EEEhmma")
@@ -254,7 +265,14 @@ private fun Clock(modifier: Modifier = Modifier) {
                 style = style.small,
                 modifier = Modifier
                     .padding(top = 4.dp)
-                    .clickable(interactionSource = null, indication = null) { LauncherActions.openAlarms(context) },
+                    .clickable(
+                        interactionSource = null, indication = null,
+                        onClickLabel = "Open alarms", role = Role.Button,
+                    ) {
+                        // That exact alarm when the clock app offers it, else the alarm list.
+                        val shown = context.getSystemService(AlarmManager::class.java).nextAlarmClock?.showIntent?.sendFromLauncher(context)
+                        if (shown != true) LauncherActions.openAlarms(context)
+                    },
             )
         }
     }
@@ -295,12 +313,12 @@ fun AllAppsHeader(onSearch: () -> Unit, onSettings: () -> Unit) {
             shape = CircleShape,
             color = style.content.copy(alpha = 0.12f),
             contentColor = style.content,
-            modifier = Modifier.weight(1f).height(48.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
         ) {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Search, contentDescription = null)
                 Spacer(Modifier.width(12.dp))
-                Text("Search apps", color = style.content.copy(alpha = 0.75f))
+                Text("Search apps", color = style.content.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         IconButton(onClick = onSettings) {
@@ -314,6 +332,9 @@ fun SectionHeader(letter: String) {
     Text(
         letter,
         style = LocalLauncherStyle.current.section,
-        modifier = Modifier.padding(start = 28.dp, top = 18.dp, bottom = 2.dp),
+        // Lets screen readers jump letter to letter with heading navigation.
+        modifier = Modifier
+            .semantics { heading() }
+            .padding(start = 28.dp, top = 18.dp, bottom = 2.dp),
     )
 }

@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -50,6 +50,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,6 +99,8 @@ fun SearchOverlay(
     Box(
         Modifier
             .fillMaxSize()
+            // A pane for TalkBack; it also keeps the home screen underneath out of reach.
+            .semantics { paneTitle = "Search" }
             .background(style.scrim.copy(alpha = 0.94f))
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
     ) {
@@ -115,26 +119,45 @@ fun SearchOverlay(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .height(52.dp),
+                    .heightIn(min = 52.dp)
+                    // Taps on the icon or padding go to the field, not through to the dismiss handler behind.
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            focus.requestFocus()
+                            keyboard?.show()
+                        }
+                    },
             ) {
                 Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Search, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
-                    Box(Modifier.weight(1f)) {
-                        if (query.isEmpty()) Text("Search apps or the web", color = style.content.copy(alpha = 0.55f), fontSize = 17.sp)
-                        BasicTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            singleLine = true,
-                            textStyle = TextStyle(color = style.content, fontSize = 17.sp),
-                            cursorBrush = SolidColor(style.accent),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, autoCorrectEnabled = false),
-                            keyboardActions = KeyboardActions(onGo = { submit() }),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(focus),
-                        )
-                    }
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = TextStyle(color = style.content, fontSize = 17.sp),
+                        cursorBrush = SolidColor(style.accent),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, autoCorrectEnabled = false),
+                        keyboardActions = KeyboardActions(onGo = { submit() }),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focus),
+                        // The placeholder sits inside the field so TalkBack reads it as the field's name.
+                        decorationBox = { inner ->
+                            Box {
+                                if (query.isEmpty()) {
+                                    Text(
+                                        "Search apps or the web",
+                                        color = style.content.copy(alpha = 0.55f),
+                                        fontSize = 17.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Close, contentDescription = "Clear") }
                     }

@@ -111,7 +111,10 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
     val style = LocalLauncherStyle.current
     val locale = LocalConfiguration.current.locales[0]
     val is24h = DateFormat.is24HourFormat(context)
-    val date = SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd"), locale).format(Date(now))
+    // Formats are reused across minute ticks. A SimpleDateFormat keeps the time zone it was made in, so they are rebuilt
+    // on the broadcasts that bump alarmChecks (which include a time zone change) and on each start.
+    val dateFormat = remember(locale, alarmChecks) { SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd"), locale) }
+    val date = dateFormat.format(Date(now))
     val alarm = remember(alarmChecks) { context.getSystemService(AlarmManager::class.java).nextAlarmClock }
     val timers by NotificationStore.timers.collectAsStateWithLifecycle()
     val event = rememberNextEvent(settings.showCalendar, now)
@@ -121,13 +124,15 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
     }
 
     Column(modifier) {
-        val time = SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale).format(Date(now))
+        val timeFormat = remember(locale, is24h, alarmChecks) { SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale) }
+        val time = timeFormat.format(Date(now))
         when (settings.clockStyle) {
             ClockStyle.CLASSIC -> Text(time, style = style.clock, modifier = openAlarms)
             ClockStyle.BOLD -> Text(time, style = style.clockBold, modifier = openAlarms)
             // One two-line Text, so clockStacked's line height sets the gap between hours and minutes.
             ClockStyle.STACKED -> Column(openAlarms.clearAndSetSemantics { contentDescription = time }) {
-                Text(SimpleDateFormat(if (is24h) "HH\nmm" else "hh\nmm", locale).format(Date(now)), style = style.clockStacked)
+                val stackedFormat = remember(locale, is24h, alarmChecks) { SimpleDateFormat(if (is24h) "HH\nmm" else "hh\nmm", locale) }
+                Text(stackedFormat.format(Date(now)), style = style.clockStacked)
             }
         }
         Text(

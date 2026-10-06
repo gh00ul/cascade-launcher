@@ -46,8 +46,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -70,9 +71,16 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/**
+ * Where the row is, for the launch animation. Rows move on every scroll frame, so this keeps the coordinates and
+ * works out the bounds only when the row is tapped.
+ */
 private class BoundsHolder {
-    var rect: Rect? = null
+    var coordinates: LayoutCoordinates? = null
+    val rect: Rect? get() = coordinates?.takeIf { it.isAttached }?.boundsInWindow()
 }
+
+private val RowShape = RoundedCornerShape(16.dp)
 
 /**
  * One app in a list: icon, name, and (for favorites) the latest notification underneath.
@@ -108,8 +116,8 @@ fun AppRow(
             Modifier
                 .fillMaxWidth()
                 .rowSwipe(onSwipeRight = onToggleExpand.takeIf { canExpand })
-                .onGloballyPositioned { bounds.rect = it.boundsInWindow() }
-                .clip(RoundedCornerShape(16.dp))
+                .onPlaced { bounds.coordinates = it }
+                .clip(RowShape)
                 .combinedClickable(
                     // The long-press haptic is fired by hand below; the default would fire it twice.
                     hapticFeedbackEnabled = false,

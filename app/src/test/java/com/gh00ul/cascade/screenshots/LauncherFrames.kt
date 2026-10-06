@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -40,10 +41,11 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NowPlayingState
 import com.gh00ul.cascade.ui.home.AllAppsHeader
 import com.gh00ul.cascade.ui.home.AlphabetWave
-import com.gh00ul.cascade.ui.home.AppRow
 import com.gh00ul.cascade.ui.home.HomePage
+import com.gh00ul.cascade.ui.home.ListAppRow
 import com.gh00ul.cascade.ui.home.SearchOverlay
 import com.gh00ul.cascade.ui.home.SectionHeader
+import com.gh00ul.cascade.ui.home.homeScrim
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.colorScheme
@@ -131,11 +133,12 @@ private sealed interface ListRow {
     val key: String
 
     data class Section(val letter: String) : ListRow {
-        override val key: String get() = "section:$letter"
+        override val key = "section:$letter"
     }
 
     data class App(val app: AppEntry) : ListRow {
-        override val key: String get() = "app:${app.key}"
+        override val key = "app:${app.key}"
+        val expandKey = "all:${app.key}"
     }
 }
 
@@ -158,6 +161,7 @@ internal const val FIRST_APP_ROW = 2
 /**
  * LauncherScreen's layout with its state passed in: the scrim, the home page, the A–Z list, the alphabet strip and
  * search. LauncherScreen itself reads the app repository through `context.launcher`, which these tests don't start.
+ * The scrim and the list rows are LauncherScreen's own (`homeScrim`, `ListAppRow`), fed the same per-entry states.
  * Insets are zero under Robolectric, so they are left out. Callbacks do nothing.
  */
 @Composable
@@ -177,6 +181,9 @@ internal fun HomeScreen(
     val style = LocalLauncherStyle.current
     val density = LocalDensity.current
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = firstItem)
+    // LauncherScreen hands these on as the states it collects; rows and favorites read their own entries.
+    val iconsState = rememberUpdatedState(icons)
+    val notificationsState = rememberUpdatedState(notifications)
     val scope = rememberCoroutineScope()
     val mediaApp = remember(apps, media?.packageName) {
         media?.let { m -> apps.firstOrNull { it.packageName == m.packageName && !it.isWork } }
@@ -195,19 +202,7 @@ internal fun HomeScreen(
             else (listState.firstVisibleItemScrollOffset / homeHeightPx).coerceIn(0f, 1f)
         }
 
-        Box(
-            Modifier
-                .fillMaxSize()
-                .drawBehind {
-                    val p = progress()
-                    drawRect(style.scrim, alpha = 0.12f + 0.58f * p)
-                    // The soft wash behind the clock, fading as the list scrolls up.
-                    drawRect(
-                        Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f),
-                        alpha = 1f - p,
-                    )
-                },
-        )
+        Box(Modifier.fillMaxSize().homeScrim(style.scrim, progress))
 
         LazyColumn(
             state = listState,
@@ -225,8 +220,8 @@ internal fun HomeScreen(
                     minHeight = homeHeight,
                     bottomInset = 0.dp,
                     favorites = favorites,
-                    icons = icons,
-                    notifications = notifications,
+                    icons = iconsState,
+                    notifications = notificationsState,
                     settings = settings,
                     onLaunch = { _, _ -> },
                     onAppLongPress = {},
@@ -246,19 +241,17 @@ internal fun HomeScreen(
             items(rows, key = { it.key }, contentType = { if (it is ListRow.Section) 0 else 1 }) { row ->
                 when (row) {
                     is ListRow.Section -> SectionHeader(row.letter)
-                    is ListRow.App -> AppRow(
+                    is ListRow.App -> ListAppRow(
                         app = row.app,
-                        icon = icons[row.app.key],
-                        notifications = notifications[row.app.notificationKey].orEmpty(),
+                        expandKey = row.expandKey,
+                        icons = iconsState,
+                        notifications = notificationsState,
                         showIcon = settings.showIcons,
-                        showPreview = false,
-                        large = false,
                         iconSize = settings.iconSize.listDp.dp,
-                        onClick = {},
-                        onLongClick = {},
-                        onNotificationClick = {},
-                        modifier = Modifier.padding(start = 20.dp, end = 44.dp),
-                        expanded = expandedKey == "all:${row.app.key}",
+                        expanded = expandedKey == row.expandKey,
+                        onLaunch = { _, _ -> },
+                        onLongPress = {},
+                        onOpenNotification = { _, _ -> },
                         onToggleExpand = {},
                     )
                 }

@@ -63,6 +63,8 @@ Requirements: JDK 17+ and the Android SDK (API 36).
 ./gradlew assembleRelease      # minified, ~1.4 MB
 ```
 
+Add `-PcascadeComposeReports` to a build to also write the Compose compiler's stability reports to `app/build/compose_compiler`.
+
 Install the debug build on a connected device:
 
 ```bash

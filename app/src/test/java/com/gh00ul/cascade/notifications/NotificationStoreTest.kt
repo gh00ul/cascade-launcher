@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -174,6 +175,22 @@ class NotificationStoreTest {
         assertEquals(listOf("Receipt", "Newsletter"), titles(FakeApps.mail.notificationKey))
         assertEquals(listOf("Missed call"), titles(FakeApps.phone.notificationKey))
         assertEquals(3, NotificationStore.byApp.value.size)
+    }
+
+    @Test fun appsWhoseNotificationsDidNotChangeKeepTheirList() {
+        val maya = sbn(messages, message("Maya"), id = 1, postTime = 1_000)
+        NotificationStore.reset(arrayOf(maya, sbn(mail, message("Receipt"), id = 2, postTime = 2_000)), rankingMap(ranking(maya.key)), own)
+        val mailList = NotificationStore.byApp.value.getValue(FakeApps.mail.notificationKey)
+        val chatList = NotificationStore.byApp.value.getValue(FakeApps.messages.notificationKey)
+        // Another app posts, and a ranking update changes nothing for Mail: its row's input stays the same instance.
+        NotificationStore.posted(sbn(phone, message("Missed call"), id = 3, postTime = 3_000), null, own)
+        assertSame(mailList, NotificationStore.byApp.value.getValue(FakeApps.mail.notificationKey))
+        assertSame(chatList, NotificationStore.byApp.value.getValue(FakeApps.messages.notificationKey))
+        NotificationStore.ranked(rankingMap(ranking(maya.key, showBadge = false)))
+        assertSame(mailList, NotificationStore.byApp.value.getValue(FakeApps.mail.notificationKey))
+        // The app that changed gets a new list.
+        assertNotSame(chatList, NotificationStore.byApp.value.getValue(FakeApps.messages.notificationKey))
+        assertFalse(NotificationStore.byApp.value.getValue(FakeApps.messages.notificationKey).single().showBadge)
     }
 
     @Test fun repostingAKeyReplacesItsEntryAndResorts() {

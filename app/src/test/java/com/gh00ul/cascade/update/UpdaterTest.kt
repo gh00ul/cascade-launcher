@@ -1,11 +1,18 @@
 package com.gh00ul.cascade.update
 
+import android.app.Application
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36], application = Application::class)
 class UpdaterTest {
     private val apk = "https://example.com/Cascade.apk"
     private val minute = 60_000L
@@ -95,5 +102,14 @@ class UpdaterTest {
     @Test fun offeredReleaseCarriesTagVersionNameCodeAndApk() {
         assertEquals(Updater.Release("v0.6.0", "0.6.0", 600_000, apk), Updater.newerRelease("v0.6.0", apk, installedCode = 500_003))
         assertEquals("0.6.0", Updater.newerRelease("0.6.0", apk, installedCode = 500_003)?.versionName)
+    }
+
+    @Test fun dismissWinsOverAStoredTagReadBeforeIt() {
+        val context = RuntimeEnvironment.getApplication()
+        // Home's first composition started reading the stored tag off the main thread; "Not now" was tapped before
+        // that read landed.
+        Updater.dismiss(context, Updater.Release("v0.6.0", "0.6.0", 600_000, apk))
+        Updater.storedDismissed("v0.5.0")
+        assertEquals("v0.6.0", Updater.dismissed(context).value)
     }
 }

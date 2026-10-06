@@ -1,10 +1,12 @@
 package com.gh00ul.cascade.notifications
 
 import android.app.Application
+import android.graphics.Bitmap
 import com.gh00ul.cascade.testing.MediaFixtures
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,5 +57,38 @@ class NowPlayingStateTest {
         state.previous()
         state.seekTo(-5)
         state.seekTo(Long.MAX_VALUE)
+    }
+
+    @Test fun thumbnailShrinksLargeArtAndLeavesItUsable() {
+        val cover = Bitmap.createBitmap(1000, 500, Bitmap.Config.ARGB_8888)
+        val thumb = NowPlaying.thumbnail(cover)
+        assertEquals(192 to 96, thumb.width to thumb.height)
+        // The cover belongs to the session's metadata, and the thumbnail is what the player draws.
+        assertFalse(cover.isRecycled)
+        assertFalse(thumb.isRecycled)
+    }
+
+    @Test fun smallArtIsItsOwnThumbnail() {
+        val cover = Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888)
+        assertSame(cover, NowPlaying.thumbnail(cover))
+        assertFalse(cover.isRecycled)
+    }
+
+    @Test fun hardwareArtGetsASoftwareThumbnail() {
+        val cover = Bitmap.createBitmap(800, 800, Bitmap.Config.ARGB_8888).copy(Bitmap.Config.HARDWARE, false)
+        val thumb = NowPlaying.thumbnail(cover)
+        // Only the full-size software copy in between is freed.
+        assertEquals(Bitmap.Config.ARGB_8888, thumb.config)
+        assertEquals(192, thumb.width)
+        assertFalse(cover.isRecycled)
+        assertFalse(thumb.isRecycled)
+    }
+
+    @Test fun seedColorLeavesTheArtUsable() {
+        // 24 px art is what createScaledBitmap may hand back unscaled.
+        for (art in listOf(media.art, Bitmap.createBitmap(24, 24, Bitmap.Config.ARGB_8888))) {
+            seedColor(art)
+            assertFalse(art.isRecycled)
+        }
     }
 }

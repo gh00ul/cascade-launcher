@@ -1,6 +1,8 @@
 package com.gh00ul.cascade.ui.theme
 
+import android.content.Context
 import android.os.Build
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -24,8 +26,11 @@ fun LauncherTheme(dark: Boolean = true, content: @Composable () -> Unit) {
 }
 
 @Composable
-fun colorScheme(dark: Boolean) = when {
-    Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(LocalContext.current) else dynamicLightColorScheme(LocalContext.current)
+fun colorScheme(dark: Boolean) = colorScheme(LocalContext.current, dark)
+
+/** The same scheme outside composition, for callers that remember it: the dynamic one reads dozens of system colors. */
+fun colorScheme(context: Context, dark: Boolean): ColorScheme = when {
+    Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     dark -> darkColorScheme()
     else -> lightColorScheme()
 }

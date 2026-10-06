@@ -83,9 +83,35 @@ android {
         // Robolectric needs the merged debug manifest and resources (HOME activity, themes, versionName).
         unitTests.isIncludeAndroidResources = true
     }
+
+    // Files nothing reads at runtime: kotlinx-coroutines' hook for the coroutines debug agent (never installed on a
+    // phone), the Kotlin builtins and tooling metadata (only kotlin-reflect, which the app doesn't use, reads them), and
+    // the libraries' license texts.
+    packaging {
+        resources.excludes += setOf("DebugProbesKt.bin", "kotlin/**.kotlin_builtins", "kotlin-tooling-metadata.json", "META-INF/**/LICENSE.txt")
+    }
+}
+
+androidComponents {
+    // The libraries' version stamps go only from release builds: Android Studio's Layout Inspector reads them on debug ones.
+    onVariants(selector().withBuildType("release")) { it.packaging.resources.excludes.add("META-INF/*.version") }
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+
+composeCompiler {
+    // Types the compiler can't prove immutable but this app never mutates (see the file for why each is safe), so
+    // composables taking them skip when an equal value comes in, not only the same instance.
+    stabilityConfigurationFiles.add(layout.projectDirectory.file("compose-stability.conf"))
+    // -PcascadeComposeReports also writes the compiler's stability reports (*-classes.txt, *-composables.txt) and
+    // metrics to build/compose_compiler; other builds don't.
+    if (providers.gradleProperty("cascadeComposeReports").isPresent) {
+        reportsDestination = layout.buildDirectory.dir("compose_compiler")
+        metricsDestination = layout.buildDirectory.dir("compose_compiler")
+        // The reports aren't a compile input, so an up-to-date compile would write none: always rerun it.
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach { outputs.upToDateWhen { false } }
+    }
+}
 
 // JVM screenshot tests (src/test/.../screenshots, see SCREENSHOTS.md) only run with -PcascadeScreenshots,
 // which also limits the run to them; ordinary unit test runs skip them.
@@ -126,6 +152,7 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.github.takahirom.roborazzi:roborazzi:1.76.0")
     testImplementation(platform("androidx.compose:compose-bom:2025.10.01"))
     testImplementation("androidx.compose.ui:ui-test-junit4")

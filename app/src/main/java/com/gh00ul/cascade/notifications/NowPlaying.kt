@@ -142,7 +142,7 @@ object NowPlaying {
     private var clearPending = false
     private val clear = Runnable {
         clearPending = false
-        _state.value = null
+        removePlayer()
         // A shown session held only through the grace gives way to the next one in line.
         publish(force = true)
     }
@@ -316,7 +316,7 @@ object NowPlaying {
             if (immediate && !betweenTracks(previous)) {
                 handler.removeCallbacks(clear)
                 clearPending = false
-                _state.value = null
+                removePlayer()
             } else {
                 // The player stays up through the grace, so hide() still acts on it.
                 shown = previous
@@ -332,6 +332,14 @@ object NowPlaying {
         // Chatty apps re-post their state every second; emit only what a viewer could notice.
         if (prev != null && prev.sameExceptPosition(next) && abs(prev.positionAt(now) - next.positionAt(now)) < 750) return
         _state.value = next
+    }
+
+    /** No player. Its art goes too: the cover of a session that may be gone shouldn't outlive it here. */
+    private fun removePlayer() {
+        _state.value = null
+        artKey = null
+        art = null
+        artSeed = null
     }
 
     /** The shown session is still there and active, and has only dropped its title for a moment. */
@@ -367,6 +375,8 @@ object NowPlaying {
             if (!same) {
                 art = thumb?.asImageBitmap()
                 artSeed = thumb?.let { runCatching { seedColor(it) }.getOrNull() }
+                // Start the GPU upload now rather than in the frame that first draws the new cover.
+                thumb?.prepareToDraw()
             }
         }
         val playback = snapshot.playback
@@ -402,16 +412,20 @@ object NowPlaying {
         )
     }
 
-    private fun thumbnail(bitmap: Bitmap): Bitmap {
+    /** At most 192 px, in software (seedColor and sameAs read its pixels). Never recycles [bitmap]: the metadata owns it. */
+    internal fun thumbnail(bitmap: Bitmap): Bitmap {
         val source = if (bitmap.config == Bitmap.Config.HARDWARE) bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: bitmap else bitmap
         val scale = 192f / max(source.width, source.height)
-        return if (scale < 1f) {
-            Bitmap.createScaledBitmap(
-                source,
-                (source.width * scale).roundToInt().coerceAtLeast(1),
-                (source.height * scale).roundToInt().coerceAtLeast(1),
-                true,
-            )
-        } else source
+        if (scale >= 1f) return source
+        val thumb = Bitmap.createScaledBitmap(
+            source,
+            (source.width * scale).roundToInt().coerceAtLeast(1),
+            (source.height * scale).roundToInt().coerceAtLeast(1),
+            true,
+        )
+        // A full-size software copy of hardware art was only a step to the thumbnail: free it now, not at some later
+        // GC. createScaledBitmap can hand back its source, which is then the thumbnail.
+        if (source !== bitmap && source !== thumb) source.recycle()
+        return thumb
     }
 }

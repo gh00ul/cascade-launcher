@@ -13,6 +13,7 @@ import android.graphics.drawable.Drawable
 import android.os.Build
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -33,6 +34,26 @@ fun Drawable.renderTo(size: Int, filter: ColorFilter? = null): Bitmap {
     drawable.colorFilter = filter
     drawable.draw(Canvas(bitmap))
     return bitmap
+}
+
+/**
+ * A finished bitmap moved to graphics memory (Android 9+, as Launcher3 does): it's drawn without a texture upload
+ * the first time it scrolls into view, and no second copy stays in the app's memory. A hardware bitmap can't be drawn
+ * into or read back, so call this only after all software drawing; the original is recycled. Where the copy fails
+ * (or isn't supported, as in tests), the original stays.
+ */
+fun Bitmap.toHardware(): Bitmap {
+    if (Build.VERSION.SDK_INT < 28 || config == Bitmap.Config.HARDWARE) return this
+    val copy = runCatching { copy(Bitmap.Config.HARDWARE, false) }.getOrNull() ?: return this
+    recycle()
+    return copy
+}
+
+/** [Bitmap.toHardware] for a bitmap already wrapped for Compose. */
+fun ImageBitmap.toHardware(): ImageBitmap {
+    val bitmap = asAndroidBitmap()
+    val copy = bitmap.toHardware()
+    return if (copy === bitmap) this else copy.asImageBitmap()
 }
 
 /**

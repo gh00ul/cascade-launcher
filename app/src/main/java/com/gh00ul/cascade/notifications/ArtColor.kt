@@ -10,7 +10,15 @@ import android.graphics.Color
 internal fun seedColor(art: Bitmap): Int? {
     val source = if (art.config == Bitmap.Config.HARDWARE) art.copy(Bitmap.Config.ARGB_8888, false) ?: return null else art
     val small = Bitmap.createScaledBitmap(source, 24, 24, true)
-    val pixels = IntArray(576).also { small.getPixels(it, 0, 24, 0, 0, 24, 24) }
+    val pixels = IntArray(576)
+    try {
+        small.getPixels(pixels, 0, 24, 0, 0, 24, 24)
+    } finally {
+        // Free the copies now rather than at some later GC, but never [art], which the player draws. createScaledBitmap
+        // hands back its source when that is already 24 px.
+        if (small !== source) small.recycle()
+        if (source !== art) source.recycle()
+    }
     val count = IntArray(36)
     val saturation = FloatArray(36)
     val red = IntArray(36)

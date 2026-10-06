@@ -66,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -160,6 +161,10 @@ internal fun mediaColors(seed: Int?, style: LauncherStyle, monochrome: Boolean):
 /** Holds the last non-null value so an exit animation still has something to draw. */
 internal class Latest<T>(var value: T? = null)
 
+private val PlayerShape = RoundedCornerShape(20.dp)
+/** With the controls tier showing, the row's lower corners tuck in toward it. */
+private val PlayerTopShape = RoundedCornerShape(20.dp, 20.dp, 8.dp, 8.dp)
+
 /**
  * The music app's row turned into a player: art, title and artist, play/pause, then previous / seek bar / next.
  * Swipe right for notifications (like every row), swipe left for the next track. When [resting], only the first
@@ -233,20 +238,22 @@ fun MediaRow(
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
                 .pointerInput(Unit) { detectTapGestures(onLongPress = { longPress?.invoke() }) }
-                .drawBehind {
+                // Redrawn with every progress tick and scroll frame; the gradient is rebuilt only while its colors animate.
+                .drawWithCache {
                     val brush = Brush.horizontalGradient(
                         listOf(washStart, washEnd),
                         startX = if (rtl) size.width else 0f,
                         endX = if (rtl) 0f else size.width,
                     )
-                    drawRoundRect(brush, cornerRadius = CornerRadius(20.dp.toPx()), alpha = washAlpha)
+                    val corner = CornerRadius(20.dp.toPx())
+                    onDrawBehind { drawRoundRect(brush, cornerRadius = corner, alpha = washAlpha) }
                 },
         ) {
             Row(
                 Modifier
                     .fillMaxWidth()
                     .rowSwipe(onSwipeRight = onToggleExpand.takeIf { hasNotifications }, onSwipeLeft = next.takeIf { state.canSkipNext })
-                    .clip(if (tier2) RoundedCornerShape(20.dp, 20.dp, 8.dp, 8.dp) else RoundedCornerShape(20.dp))
+                    .clip(if (tier2) PlayerTopShape else PlayerShape)
                     .combinedClickable(
                         onClickLabel = "Open player",
                         onLongClickLabel = onLongClickLabel,
@@ -548,7 +555,9 @@ private fun SeekBar(state: NowPlayingState, line: Color, track: Color, onScrub: 
             Canvas(Modifier.fillMaxWidth().height(4.dp)) {
                 val y = size.height / 2
                 val fraction = sliderState.coercedValueAsFraction
-                val (from, to) = if (layoutDirection == LayoutDirection.Rtl) size.width to size.width * (1 - fraction) else 0f to size.width * fraction
+                val rtl = layoutDirection == LayoutDirection.Rtl
+                val from = if (rtl) size.width else 0f
+                val to = if (rtl) size.width * (1 - fraction) else size.width * fraction
                 drawLine(track, Offset(0f, y), Offset(size.width, y), size.height, StrokeCap.Round)
                 drawLine(line, Offset(from, y), Offset(to, y), size.height, StrokeCap.Round)
             }

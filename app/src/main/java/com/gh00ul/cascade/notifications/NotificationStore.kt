@@ -145,6 +145,7 @@ object NotificationStore {
         stale = false
         pendingRanking = null
         val r = Ranking()
+        val previous = _byApp.value
         _byApp.value = entries.values
             .mapNotNull { (app, n) ->
                 if (ranking == null || !ranking.getRanking(n.key, r)) return@mapNotNull app to n
@@ -153,7 +154,12 @@ object NotificationStore {
                 app to n.copy(showBadge = r.canShowBadge())
             }
             .groupBy({ it.first }, { it.second })
-            .mapValues { (_, list) -> list.sortedByDescending { it.postTime } }
+            .mapValues { (app, list) ->
+                val sorted = list.sortedByDescending { it.postTime }
+                // An app whose notifications didn't change keeps its list, so its row (which Compose compares by
+                // identity) skips recomposing when another app posts.
+                previous[app]?.takeIf { it == sorted } ?: sorted
+            }
     }
 
     /** Opens what the notification points at. Returns false when it has nothing to open. */

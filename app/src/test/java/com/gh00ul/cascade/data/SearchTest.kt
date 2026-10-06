@@ -58,4 +58,29 @@ class SearchTest {
         // One letter is a prefix, word start or substring match, never a fuzzy one.
         assertEquals(listOf("Maps", "Camera"), labels(listOf(app("Maps"), app("Camera"), app("Phone")), "m"))
     }
+
+    @Test fun typingIntoTheSameListFindsWhatAFreshSearchFinds() {
+        val apps = listOf(
+            app("Rogue Maps"), app("Phone"), app("Google Maps"), app("Gmail"), app("Pro Gmail Client"), app("Dogma"),
+            app("Cài đặt"), app("Chat", originalLabel = "Messages"), app("Calculator"), app("Camera"),
+        )
+        val queries = listOf("g", "gm", "gma", "gmai", "m", "ma", "map", "mess", "c", "ca", "cai d", "  CA ")
+        // A copy is a new list, so each of these normalizes the labels anew.
+        val fresh = queries.map { labels(apps.toList(), it) }
+        // Typing: every keystroke searches the same list, reusing the labels normalized for the first one.
+        assertEquals(fresh, queries.map { labels(apps, it) })
+        assertEquals(listOf("Gmail", "Pro Gmail Client", "Google Maps", "Dogma", "Rogue Maps"), fresh[1])
+        assertEquals(listOf("Chat"), fresh[7])
+    }
+
+    @Test fun newListIsNotServedTheLastListsLabels() {
+        val before = listOf(app("Phone"), app("Maps"))
+        assertEquals(emptyList<String>(), labels(before, "ch"))
+        // Renaming Phone publishes a new list of the same size; its labels must be read, not the last list's.
+        val after = listOf(app("Chat", originalLabel = "Phone"), app("Maps"))
+        assertEquals(listOf("Chat"), labels(after, "ch"))
+        assertEquals(listOf("Chat"), labels(after, "ph"))
+        assertEquals(listOf("Phone"), labels(before, "ph"))
+        assertEquals(emptyList<String>(), labels(before, "ch"))
+    }
 }

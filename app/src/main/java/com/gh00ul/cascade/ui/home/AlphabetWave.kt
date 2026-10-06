@@ -3,9 +3,9 @@ package com.gh00ul.cascade.ui.home
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -15,9 +15,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -43,6 +45,8 @@ import kotlin.math.min
 private val MaxSlot = 22.dp
 private val WaveSpread = 52.dp
 private val WaveDepth = 64.dp
+/** The glow is baked this much stronger and faded back by alpha, so the wave spring's overshoot past 1 still fits. */
+private const val GlowHeadroom = 1.25f
 
 /**
  * The letter strip on the end edge. Dragging along it makes the letters near your finger swell and bulge
@@ -67,7 +71,7 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
         label = "wave",
     )
 
-    Canvas(
+    Spacer(
         modifier
             .width(36.dp)
             .semantics {
@@ -119,50 +123,58 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
                     }
                     selected = -1
                 }
-            },
-    ) {
-        val count = letters.size
-        if (count == 0) return@Canvas
-        val slot = min(size.height / count, MaxSlot.toPx())
-        val top = (size.height - slot * count) / 2f
-        // Letters rest 14dp in from the screen edge and bulge inward, toward the list (mirrored in RTL).
-        val rtl = layoutDirection == LayoutDirection.Rtl
-        val restX = if (rtl) 14.dp.toPx() else size.width - 14.dp.toPx()
-        val inward = if (rtl) 1f else -1f
-        val spread = WaveSpread.toPx()
-        val depth = WaveDepth.toPx()
-        // Large fonts in a short strip: shrink resting letters to their slot (capitals are ~0.71em tall).
-        val fit = (slot / (style.letter.fontSize.toPx() * 0.8f)).coerceAtMost(1f)
-        val touching = !touchY.isNaN() && wave > 0f
-
-        if (touching) {
-            val center = Offset(restX + inward * depth * 0.6f, touchY)
-            val radius = 170.dp.toPx()
-            drawCircle(
-                Brush.radialGradient(listOf(style.scrim.copy(alpha = 0.6f * wave), Color.Transparent), center, radius),
-                radius,
-                center,
-            )
-        }
-
-        layouts.forEachIndexed { i, layout ->
-            val cy = top + slot * (i + 0.5f)
-            val influence = if (touching) {
-                val d = cy - touchY
-                exp(-(d * d) / (2f * spread * spread)) * wave
-            } else 0f
-            val cx = restX + inward * depth * influence
-            // The letter under the finger still swells to the full 2.6x.
-            val scale = fit + (2.6f - fit) * influence
-            val color = if (i == selected) style.accent else style.content
-            withTransform({ scale(scale, scale, pivot = Offset(cx, cy)) }) {
-                drawText(
-                    layout,
-                    color = color,
-                    topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f),
-                    alpha = 0.55f + 0.45f * influence,
-                )
             }
-        }
-    }
+            // Drawn on every frame of a drag, so nothing here allocates: the glow is built once per size and style, the
+            // finger moves it (translate) and the wave fades it in (alpha).
+            .drawWithCache {
+                val glowRadius = 170.dp.toPx()
+                val glow = Brush.radialGradient(
+                    listOf(style.scrim.copy(alpha = 0.6f * GlowHeadroom), Color.Transparent),
+                    center = Offset.Zero,
+                    radius = glowRadius,
+                )
+                onDrawBehind {
+                    val count = letters.size
+                    if (count == 0) return@onDrawBehind
+                    val slot = min(size.height / count, MaxSlot.toPx())
+                    val top = (size.height - slot * count) / 2f
+                    // Letters rest 14dp in from the screen edge and bulge inward, toward the list (mirrored in RTL).
+                    val rtl = layoutDirection == LayoutDirection.Rtl
+                    val restX = if (rtl) 14.dp.toPx() else size.width - 14.dp.toPx()
+                    val inward = if (rtl) 1f else -1f
+                    val spread = WaveSpread.toPx()
+                    val depth = WaveDepth.toPx()
+                    // Large fonts in a short strip: shrink resting letters to their slot (capitals are ~0.71em tall).
+                    val fit = (slot / (style.letter.fontSize.toPx() * 0.8f)).coerceAtMost(1f)
+                    val touching = !touchY.isNaN() && wave > 0f
+
+                    if (touching) {
+                        translate(restX + inward * depth * 0.6f, touchY) {
+                            drawCircle(glow, glowRadius, Offset.Zero, alpha = (wave / GlowHeadroom).coerceAtMost(1f))
+                        }
+                    }
+
+                    for (i in layouts.indices) {
+                        val layout = layouts[i]
+                        val cy = top + slot * (i + 0.5f)
+                        val influence = if (touching) {
+                            val d = cy - touchY
+                            exp(-(d * d) / (2f * spread * spread)) * wave
+                        } else 0f
+                        val cx = restX + inward * depth * influence
+                        // The letter under the finger still swells to the full 2.6x.
+                        val scale = fit + (2.6f - fit) * influence
+                        val color = if (i == selected) style.accent else style.content
+                        withTransform({ scale(scale, scale, pivot = Offset(cx, cy)) }) {
+                            drawText(
+                                layout,
+                                color = color,
+                                topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f),
+                                alpha = 0.55f + 0.45f * influence,
+                            )
+                        }
+                    }
+                }
+            },
+    )
 }

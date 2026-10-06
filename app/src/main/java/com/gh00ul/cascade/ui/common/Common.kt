@@ -7,6 +7,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SnapshotMutationPolicy
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -17,7 +22,37 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gh00ul.cascade.data.IconImage
+
+/**
+ * [key]'s entry in a map that is only ever replaced whole (the icon map, notifications by app), as a state of its own.
+ * Whoever reads it recomposes only when that entry changes under [policy], not on every new map; and while it stays
+ * the same, the first instance is kept. A null [key] reads null.
+ */
+@Composable
+fun <K : Any, V : Any> rememberEntry(
+    map: State<Map<K, V>>,
+    key: K?,
+    policy: SnapshotMutationPolicy<V?> = structuralEqualityPolicy(),
+): State<V?> = remember(map, key, policy) { derivedStateOf(policy) { key?.let { map.value[it] } } }
+
+/**
+ * For a value read during composition, so the first frame is right, and read again by a lifecycle effect on every
+ * start or resume. An effect that registers while the lifecycle is already at that state runs at once, replaying the
+ * event in the same frame as that composition: [consume] is true for that one run, so the read isn't made twice.
+ */
+class ReplaySkip internal constructor(private var pending: Boolean) {
+    fun consume(): Boolean = pending.also { pending = false }
+}
+
+/** A [ReplaySkip] that skips only if the lifecycle was at least [state] when this was first composed. */
+@Composable
+fun rememberReplaySkip(state: Lifecycle.State): ReplaySkip {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    return remember { ReplaySkip(lifecycle.currentState.isAtLeast(state)) }
+}
 
 /** An app icon; themed glyphs take the surrounding content color so they read on any background. */
 @Composable

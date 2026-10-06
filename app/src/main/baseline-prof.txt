@@ -1,0 +1,15 @@
+# Baseline profile rules for Cascade's own code
+# =============================================
+# Hand-written, because a recorded profile (Macrobenchmark's BaselineProfileRule and the baselineprofile plugin)
+# has to run the app on a device or an emulator, and this project builds without either.
+#
+# These mark every class and method of Cascade as hot, startup and post-startup, the way the Compose libraries mark
+# whole modules in theirs. ProfileInstaller (already a dependency, through Compose) then has ART compile it ahead of
+# time at install, so home's first frames don't run interpreted or wait for the JIT. Cascade's own code is small
+# (about 200 classes after R8), so compiling all of it costs little. The libraries' own rules are merged in
+# automatically.
+#
+# AGP expands the wildcards against the release classes before R8 runs (expandReleaseArtProfileWildcards), and R8
+# rewrites the result to the obfuscated names, so the rules survive minification. Debug builds ignore profiles.
+HSPLcom/gh00ul/cascade/**->**(**)**
+Lcom/gh00ul/cascade/**;

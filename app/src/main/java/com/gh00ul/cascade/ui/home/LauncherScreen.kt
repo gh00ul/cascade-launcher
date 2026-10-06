@@ -3,6 +3,7 @@ package com.gh00ul.cascade.ui.home
 import com.gh00ul.cascade.update.Updater
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -29,20 +30,22 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -54,11 +57,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -66,6 +71,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.SwipeDownAction
 import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.launcher
@@ -73,6 +79,8 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.notifications.NowPlaying
 import com.gh00ul.cascade.settings.SettingsActivity
+import com.gh00ul.cascade.ui.common.rememberEntry
+import com.gh00ul.cascade.ui.common.rememberReplaySkip
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.colorScheme
@@ -85,15 +93,18 @@ import kotlinx.coroutines.launch
 /** Index of the first A–Z row: the home page and the all-apps header come before it. */
 private const val FIRST_APP_ROW = 2
 
+/** A–Z list rows. Keys are built once per row, not each time the list asks for them while scrolling. */
 private sealed interface Row {
     val key: String
 
     data class Section(val letter: String) : Row {
-        override val key: String get() = "section:$letter"
+        override val key = "section:$letter"
     }
 
     data class App(val app: AppEntry) : Row {
-        override val key: String get() = "app:${app.key}"
+        override val key = "app:${app.key}"
+        /** [LauncherScreen]'s expanded key while this row's notifications are open. */
+        val expandKey = "all:${app.key}"
     }
 }
 
@@ -110,6 +121,60 @@ private fun buildRows(apps: List<AppEntry>): List<Row> = buildList {
     }
 }
 
+/** The A–Z rows' side padding; the alphabet strip takes the end. */
+private val ListRowPadding = Modifier.padding(start = 20.dp, end = 44.dp)
+
+/**
+ * One app in the A–Z list. It looks up its own icon and notifications, so a new icon map or a notification regroup
+ * recomposes only the rows whose entry changed: icons by identity, notification lists by equality.
+ */
+@Composable
+internal fun ListAppRow(
+    app: AppEntry,
+    expandKey: String,
+    icons: State<Map<String, IconImage>>,
+    notifications: State<Map<String, List<AppNotification>>>,
+    showIcon: Boolean,
+    iconSize: Dp,
+    expanded: Boolean,
+    onLaunch: (AppEntry, Rect?) -> Unit,
+    onLongPress: (AppEntry) -> Unit,
+    onOpenNotification: (AppEntry, AppNotification) -> Unit,
+    onToggleExpand: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
+    val appNotifications by rememberEntry(notifications, app.notificationKey)
+    AppRow(
+        app = app,
+        icon = icon,
+        notifications = appNotifications.orEmpty(),
+        showIcon = showIcon,
+        showPreview = false,
+        large = false,
+        iconSize = iconSize,
+        onClick = { onLaunch(app, it) },
+        onLongClick = { onLongPress(app) },
+        onNotificationClick = { onOpenNotification(app, it) },
+        modifier = modifier.then(ListRowPadding),
+        expanded = expanded,
+        onToggleExpand = { onToggleExpand(expandKey) },
+    )
+}
+
+/**
+ * The tint over the wallpaper: light on the home page and heavier once the list covers it ([progress], read only while
+ * drawing), with a soft wash behind the clock so it reads on bright skies. The wash fades as the list scrolls up.
+ */
+internal fun Modifier.homeScrim(scrim: Color, progress: () -> Float) = drawWithCache {
+    val wash = Brush.verticalGradient(listOf(scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f)
+    onDrawBehind {
+        val p = progress()
+        drawRect(scrim, alpha = 0.12f + 0.58f * p)
+        drawRect(wash, alpha = 1f - p)
+    }
+}
+
 /**
  * One continuous list, like Niagara: the home page (clock + favorites) fills the first screen and the full
  * A–Z app list continues below it. The alphabet wave on the right edge jumps anywhere in the list.
@@ -121,10 +186,13 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     val density = LocalDensity.current
     val launcher = context.launcher
     val apps by launcher.repository.apps.collectAsStateWithLifecycle()
-    val icons by launcher.repository.icons.collectAsStateWithLifecycle()
+    // Kept as states: each row reads its own entry (rememberEntry), so a new icon map or a notification regroup
+    // recomposes only the rows whose entry changed, never this whole screen.
+    val icons = launcher.repository.icons.collectAsStateWithLifecycle()
     val settings by launcher.prefs.settings.collectAsStateWithLifecycle()
-    val notifications by NotificationStore.byApp.collectAsStateWithLifecycle()
+    val notifications = NotificationStore.byApp.collectAsStateWithLifecycle()
     val nowPlaying by NowPlaying.state.collectAsStateWithLifecycle()
+    ReportDrawnWhen { apps.isNotEmpty() }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -135,6 +203,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     // Row whose notifications are swiped open; "fav:" and "all:" prefixes keep the two lists apart.
     var expandedKey by remember { mutableStateOf<String?>(null) }
     val toggleExpand: (String) -> Unit = { key -> expandedKey = if (expandedKey == key) null else key }
+    val showSheet: (AppEntry) -> Unit = { sheetApp = it }
 
     val wallpaperDarkText = rememberWallpaperSupportsDarkText()
     val darkText = when (settings.textColor) {
@@ -142,18 +211,28 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         TextColor.LIGHT -> false
         TextColor.DARK -> true
     }
-    val accent = colorScheme(dark = !darkText).primary
+    // Only the primary color is needed, and the dynamic scheme reads dozens of system colors: build it when the text
+    // mode or the configuration changes, not on every recomposition.
+    val configuration = LocalConfiguration.current
+    val accent = remember(darkText, context, configuration) { colorScheme(context, dark = !darkText).primary }
     val style = remember(darkText, accent) { LauncherStyle(darkText, accent) }
-    SideEffect {
-        val window = (view.context as? Activity)?.window ?: return@SideEffect
-        WindowCompat.getInsetsController(window, view).apply {
-            isAppearanceLightStatusBars = darkText
-            isAppearanceLightNavigationBars = darkText
+    // Set when the text mode changes, in the apply phase like a SideEffect, so the first frame already has it. It
+    // registers nothing, so BATTERY.md's LifecycleStartEffect rule for listeners doesn't apply.
+    DisposableEffect(darkText) {
+        (view.context as? Activity)?.window?.let { window ->
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = darkText
+                isAppearanceLightNavigationBars = darkText
+            }
         }
+        onDispose {}
     }
 
+    // Read during composition for the first frame. Composed while resumed, the ON_RESUME below is replayed in the same
+    // frame, so it skips these two binder calls once; every later resume reads them again.
     var isDefault by remember { mutableStateOf(LauncherActions.isDefaultLauncher(context)) }
     var hasNotificationAccess by remember { mutableStateOf(LauncherActions.hasNotificationAccess(context)) }
+    val replayedResume = rememberReplaySkip(Lifecycle.State.RESUMED)
     var defaultPromptHidden by rememberSaveable { mutableStateOf(false) }
     // Music player: the playing app's favorite row turns into it. A player that is paused when you come home rests.
     val media = nowPlaying?.takeIf { settings.showMediaControls }
@@ -177,8 +256,10 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     LaunchedEffect(media?.sessionId) { if (expandedKey == "media") expandedKey = null }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        isDefault = LauncherActions.isDefaultLauncher(context)
-        hasNotificationAccess = LauncherActions.hasNotificationAccess(context)
+        if (!replayedResume.consume()) {
+            isDefault = LauncherActions.isDefaultLauncher(context)
+            hasNotificationAccess = LauncherActions.hasNotificationAccess(context)
+        }
         NowPlaying.refresh()
         if (launcher.prefs.settings.value.autoUpdateCheck) Updater.check(context)
         val live = NowPlaying.state.value
@@ -201,10 +282,15 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
 
     val byKey = remember(apps) { apps.associateBy { it.key } }
     // Collapse for good once the expanded row has no notifications left, so the next one doesn't reopen it by itself.
-    LaunchedEffect(expandedKey, notifications, byKey, mediaApp) {
-        val key = expandedKey ?: return@LaunchedEffect
-        val app = if (key == "media") mediaApp else byKey[key.substringAfter(':')]
-        if (app == null || notifications[app.notificationKey].isNullOrEmpty()) expandedKey = null
+    // Watched from inside the effect, so neither expanding a row nor a regroup recomposes this whole screen.
+    val currentByKey by rememberUpdatedState(byKey)
+    val currentMediaApp by rememberUpdatedState(mediaApp)
+    LaunchedEffect(Unit) {
+        snapshotFlow {
+            val key = expandedKey ?: return@snapshotFlow false
+            val app = if (key == "media") currentMediaApp else currentByKey[key.substringAfter(':')]
+            app == null || notifications.value[app.notificationKey].isNullOrEmpty()
+        }.collect { emptied -> if (emptied) expandedKey = null }
     }
     val favorites = remember(byKey, settings.favorites) { settings.favorites.mapNotNull { byKey[it] } }
     val rows = remember(apps, settings.hidden) { buildRows(apps.filter { it.key !in settings.hidden }) }
@@ -260,19 +346,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                 else (listState.firstVisibleItemScrollOffset / homeHeightPx).coerceIn(0f, 1f)
             }
 
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .drawBehind {
-                        val p = progress()
-                        drawRect(style.scrim, alpha = 0.12f + 0.58f * p)
-                        // A soft wash behind the clock so it reads on bright skies; fades as the list scrolls up.
-                        drawRect(
-                            Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f),
-                            alpha = 1f - p,
-                        )
-                    },
-            )
+            Box(Modifier.fillMaxSize().homeScrim(style.scrim, progress))
 
             LazyColumn(
                 state = listState,
@@ -286,15 +360,16 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         compositingStrategy = CompositingStrategy.Offscreen
                         alpha = if (searchOpen) 0f else 1f
                     }
-                    .drawWithContent {
-                        drawContent()
+                    // Redrawn on every scroll frame; the gradient is built once per size.
+                    .drawWithCache {
                         val top = statusTop.toPx()
                         val fadeEnd = top + 20.dp.toPx()
-                        drawRect(
-                            Brush.verticalGradient(listOf(Color.Transparent, Color.Black), startY = top * 0.5f, endY = fadeEnd),
-                            size = Size(size.width, fadeEnd),
-                            blendMode = BlendMode.DstIn,
-                        )
+                        val fade = Brush.verticalGradient(listOf(Color.Transparent, Color.Black), startY = top * 0.5f, endY = fadeEnd)
+                        val fadeSize = Size(size.width, fadeEnd)
+                        onDrawWithContent {
+                            drawContent()
+                            drawRect(fade, size = fadeSize, blendMode = BlendMode.DstIn)
+                        }
                     },
                 contentPadding = PaddingValues(start = startInset, top = statusTop, end = endInset, bottom = navBottom + 16.dp),
             ) {
@@ -307,7 +382,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         notifications = notifications,
                         settings = settings,
                         onLaunch = launch,
-                        onAppLongPress = { sheetApp = it },
+                        onAppLongPress = showSheet,
                         onOpenNotification = openNotification,
                         onEmptyLongPress = { homeMenuOpen = true },
                         expandedKey = expandedKey,
@@ -351,20 +426,18 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                 items(rows, key = { it.key }, contentType = { if (it is Row.Section) 0 else 1 }) { row ->
                     when (row) {
                         is Row.Section -> SectionHeader(row.letter)
-                        is Row.App -> AppRow(
+                        is Row.App -> ListAppRow(
                             app = row.app,
-                            icon = icons[row.app.key],
-                            notifications = notifications[row.app.notificationKey].orEmpty(),
+                            expandKey = row.expandKey,
+                            icons = icons,
+                            notifications = notifications,
                             showIcon = settings.showIcons,
-                            showPreview = false,
-                            large = false,
                             iconSize = settings.iconSize.listDp.dp,
-                            onClick = { launch(row.app, it) },
-                            onLongClick = { sheetApp = row.app },
-                            onNotificationClick = { openNotification(row.app, it) },
-                            modifier = Modifier.padding(start = 20.dp, end = 44.dp),
-                            expanded = expandedKey == "all:${row.app.key}",
-                            onToggleExpand = { toggleExpand("all:${row.app.key}") },
+                            expanded = expandedKey == row.expandKey,
+                            onLaunch = launch,
+                            onLongPress = showSheet,
+                            onOpenNotification = openNotification,
+                            onToggleExpand = toggleExpand,
                         )
                     }
                 }
@@ -375,8 +448,9 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                 Modifier
                     .fillMaxWidth()
                     .height(statusTop + 16.dp)
-                    .drawBehind {
-                        drawRect(Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.5f), Color.Transparent)), alpha = if (searchOpen) 0f else progress())
+                    .drawWithCache {
+                        val scrim = Brush.verticalGradient(listOf(style.scrim.copy(alpha = 0.5f), Color.Transparent))
+                        onDrawBehind { drawRect(scrim, alpha = if (searchOpen) 0f else progress()) }
                     },
             )
 
@@ -394,14 +468,14 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             if (searchOpen) {
                 SearchOverlay(
                     apps = apps,
-                    icons = icons,
+                    icons = icons.value,
                     showIcons = settings.showIcons,
                     iconSize = settings.iconSize.listDp.dp,
                     onLaunch = { app, bounds ->
                         launch(app, bounds)
                         searchOpen = false
                     },
-                    onLongPress = { sheetApp = it },
+                    onLongPress = showSheet,
                     onDismiss = { searchOpen = false },
                 )
             }
@@ -409,12 +483,14 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     }
 
     sheetApp?.let { app ->
+        val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
+        val appNotifications by rememberEntry(notifications, app.notificationKey)
         AppActionsSheet(
             app = app,
-            icon = icons[app.key],
+            icon = icon,
             isFavorite = app.key in settings.favorites,
             isHidden = app.key in settings.hidden,
-            notifications = notifications[app.notificationKey].orEmpty(),
+            notifications = appNotifications.orEmpty(),
             onOpenNotification = { openNotification(app, it) },
             onRename = { renameApp = app },
             onDismiss = { sheetApp = null },

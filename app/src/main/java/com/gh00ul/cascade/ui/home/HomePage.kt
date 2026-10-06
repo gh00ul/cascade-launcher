@@ -45,8 +45,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -71,20 +73,25 @@ import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.notifications.AppNotification
+import com.gh00ul.cascade.ui.common.rememberEntry
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.sendFromLauncher
 import java.text.SimpleDateFormat
 import java.util.Date
 
-/** The first screen: clock up top, favorites near the thumb. Fills the viewport, grows if favorites need more room. */
+/**
+ * The first screen: clock up top, favorites near the thumb. Fills the viewport, grows if favorites need more room.
+ * [icons] and [notifications] are read entry by entry, inside each favorite, so a new icon map or a notification regroup
+ * recomposes only the favorites whose own entry changed, not the page.
+ */
 @Composable
 fun HomePage(
     minHeight: Dp,
     bottomInset: Dp,
     favorites: List<AppEntry>,
-    icons: Map<String, IconImage>,
-    notifications: Map<String, List<AppNotification>>,
+    icons: State<Map<String, IconImage>>,
+    notifications: State<Map<String, List<AppNotification>>>,
     settings: LauncherSettings,
     onLaunch: (AppEntry, Rect?) -> Unit,
     onAppLongPress: (AppEntry) -> Unit,
@@ -104,12 +111,13 @@ fun HomePage(
 
     @Composable
     fun Player(state: NowPlayingState, app: AppEntry?, expandKey: String, expanded: Boolean) {
-        val notificationsForApp = app?.let { notifications[it.notificationKey] }.orEmpty()
+        val icon by rememberEntry(icons, app?.key, referentialEqualityPolicy())
+        val notificationsForApp by rememberEntry(notifications, app?.notificationKey)
         MediaRow(
             state = state,
             appLabel = app?.label,
-            icon = app?.let { icons[it.key] },
-            notifications = notificationsForApp,
+            icon = icon,
+            notifications = notificationsForApp.orEmpty(),
             showArt = settings.showIcons,
             iconSize = settings.iconSize.homeDp.dp,
             // Settings disables Monochrome while icons are hidden, so it mustn't grey the player then either.
@@ -205,10 +213,12 @@ fun HomePage(
                     if (hostedState != null) {
                         Player(hostedState, app, "fav:${app.key}", expandedKey == "fav:${app.key}")
                     } else {
+                        val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
+                        val appNotifications by rememberEntry(notifications, app.notificationKey)
                         AppRow(
                             app = app,
-                            icon = icons[app.key],
-                            notifications = notifications[app.notificationKey].orEmpty(),
+                            icon = icon,
+                            notifications = appNotifications.orEmpty(),
                             showIcon = settings.showIcons,
                             showPreview = settings.showNotificationPreviews,
                             large = true,

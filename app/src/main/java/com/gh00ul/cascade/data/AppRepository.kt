@@ -26,25 +26,29 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 
 data class AppEntry(
@@ -62,7 +66,8 @@ data class AppEntry(
     val section: String,
 ) {
     val packageName: String get() = component.packageName
-    val notificationKey: String get() = notificationKey(packageName, user)
+    /** Built once rather than on every read: rows look it up on each composition. Not part of equals or copy. */
+    val notificationKey: String = notificationKey(packageName, user)
 }
 
 fun notificationKey(packageName: String, user: UserHandle): String {
@@ -91,7 +96,7 @@ internal fun <T> sortIntoSections(
     val primary = locales[0] ?: Locale.getDefault()
     // ICU's own, which java.text.Collator wraps on Android anyway: JVM tests then check the same rules.
     val collator = Collator.getInstance(primary).apply { strength = Collator.PRIMARY }
-    val index = sectionIndex(primary, locales)
+    val index = sectionIndex(locales, primary)
     return items
         .map { item ->
             // Sorted by the trimmed name too, not just bucketed by it: ICU doesn't ignore spaces, so " Zoom" came
@@ -108,12 +113,31 @@ internal fun <T> sortIntoSections(
         .map { it.first }
 }
 
+/** An A–Z index and the languages it was built for. */
+private class SectionIndex(val locales: LocaleList, val primary: Locale, val index: AlphabeticIndex.ImmutableIndex<Any>)
+
+/**
+ * The last index built. Building one adds about a dozen alphabets, and the languages rarely change, so every sort
+ * (each reload, each rename) reuses it. An ImmutableIndex is thread-safe, so they can share it.
+ */
+@Volatile private var lastSectionIndex: SectionIndex? = null
+
+/** Builds the index for [locales] ahead of the first sort, so the app list load can do it while labels load. */
+private fun warmSectionIndex(locales: LocaleList = LocaleList.getDefault()) {
+    sectionIndex(locales, locales[0] ?: Locale.getDefault())
+}
+
+private fun sectionIndex(locales: LocaleList, primary: Locale): AlphabeticIndex.ImmutableIndex<Any> {
+    lastSectionIndex?.let { if (it.locales == locales && it.primary == primary) return it.index }
+    return buildSectionIndex(primary, locales).also { lastSectionIndex = SectionIndex(locales, primary, it) }
+}
+
 /**
  * The sections of the user's languages, then (as the system's own index does) other common alphabets so
  * their names aren't all lumped under "#": A–Z, Å/Ä/Ö after Z in Swedish, pinyin A–Z for Chinese, kana rows
  * for Japanese, initial consonants for Korean.
  */
-private fun sectionIndex(primary: Locale, locales: LocaleList): AlphabeticIndex.ImmutableIndex<Any> =
+private fun buildSectionIndex(primary: Locale, locales: LocaleList): AlphabeticIndex.ImmutableIndex<Any> =
     AlphabeticIndex<Any>(primary).apply {
         // The default cap of 99 labels would thin out every alphabet, A–Z included.
         setMaxLabelCount(300)
@@ -130,22 +154,30 @@ private fun sectionIndex(primary: Locale, locales: LocaleList): AlphabeticIndex.
  */
 private const val EVENT_COALESCE_MS = 250L
 
+/**
+ * Threads a reload uses for labels and icons. Several, so a cold start isn't one app at a time (each label can open
+ * the app's resources, each icon decodes and draws); few, so the UI and render threads keep their cores.
+ */
+private const val LOAD_THREADS = 3
+
+/** Icons rendered between two publishes of the icon map, after the favorites' own publish. */
+internal const val ICON_PUBLISH_EVERY = 24
+
 class AppRepository(
     private val context: Context,
     private val prefs: Prefs,
     private val scope: CoroutineScope,
+    /** Where reloads run: the list, its labels and the icons, at most [LOAD_THREADS] at once. Tests pass their own. */
+    private val workers: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(LOAD_THREADS),
 ) {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
     private val userManager = context.getSystemService(UserManager::class.java)
-    private val installed = MutableStateFlow<List<InstalledApp>?>(null)
+    /** The list the last reload installed; null until the first. Written under [lock]. */
+    @Volatile private var installed: List<InstalledApp>? = null
 
+    private val _apps = MutableStateFlow<List<AppEntry>>(emptyList())
     /** Every launchable app, renames applied, sorted for the A–Z list. */
-    val apps: StateFlow<List<AppEntry>> =
-        combine(installed.filterNotNull(), prefs.settings.map { it.renames }.distinctUntilChanged()) { list, renames ->
-            buildEntries(list, renames)
-        }
-            .flowOn(Dispatchers.Default)
-            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val apps: StateFlow<List<AppEntry>> = _apps.asStateFlow()
 
     private val iconCache = ConcurrentHashMap<String, IconImage>()
     /** The profile badge layer for glyph icons; the same for every app in a profile, so drawn once per size. */
@@ -157,6 +189,8 @@ class AppRepository(
     private val lock = Any()
     /** Bumped by every refresh; a load job only writes shared state while its own is current. Guarded by [lock]. */
     private var generation = 0
+    /** Whether [registerForChanges] has run. Guarded by [callback]. */
+    private var registered = false
 
     private var lastLocales = context.resources.configuration.locales
     private var lastDensityDpi = context.resources.configuration.densityDpi
@@ -183,32 +217,16 @@ class AppRepository(
     }
 
     init {
-        // Registered for the life of the process, not just while home is started: the repository is app-scoped and
-        // also feeds Settings, these events are rare, and catching up on every start would cost a full reload per
-        // return home.
-        launcherApps.registerCallback(callback, Handler(Looper.getMainLooper()))
-        val profileEvents = IntentFilter().apply {
-            addAction(Intent.ACTION_MANAGED_PROFILE_ADDED)
-            addAction(Intent.ACTION_MANAGED_PROFILE_REMOVED)
-            addAction(Intent.ACTION_MANAGED_PROFILE_AVAILABLE)
-            addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE)
-            // The generic ones also cover profiles that aren't managed, such as app clones.
-            if (Build.VERSION.SDK_INT >= 34) {
-                addAction(Intent.ACTION_PROFILE_ADDED)
-                addAction(Intent.ACTION_PROFILE_REMOVED)
-            }
-            if (Build.VERSION.SDK_INT >= 35) {
-                addAction(Intent.ACTION_PROFILE_AVAILABLE)
-                addAction(Intent.ACTION_PROFILE_UNAVAILABLE)
-            }
-        }
-        ContextCompat.registerReceiver(context, profileReceiver, profileEvents, ContextCompat.RECEIVER_NOT_EXPORTED)
         scope.launch {
             prefs.settings.map { it.showIcons && it.monochromeIcons }.distinctUntilChanged().drop(1).collect { refresh(clearIcons = true) }
         }
         // Icons are rendered at the home size; loadIcons re-renders any cached icon whose width no longer matches.
         scope.launch {
             prefs.settings.map { it.iconSize }.distinctUntilChanged().drop(1).collect { refresh() }
+        }
+        // A rename re-sorts the installed list. A reload publishes its own list, with the renames current by then.
+        scope.launch(workers) {
+            prefs.settings.map { it.renames }.distinctUntilChanged().collect { installed?.let { publishSorted(it) } }
         }
         refresh()
     }
@@ -238,27 +256,87 @@ class AppRepository(
             ++generation
         }
         loadJob?.cancel()
-        loadJob = scope.launch(Dispatchers.Default) {
+        loadJob = scope.launch(workers) {
+            registerForChanges()
             // Invalidation above stays immediate: the job that survives a burst re-renders every icon it dropped.
             if (coalesce) delay(EVENT_COALESCE_MS)
+            // The A–Z index for the current languages builds while the list and its labels load.
+            val index = launch { warmSectionIndex() }
             val me = Process.myUserHandle()
-            val list = userManager.userProfiles.flatMap { user ->
+            val profiles = userManager.userProfiles
+            // One profile's activity list at a time; the labels, each of which can open the app's resources, in
+            // parallel on the workers and in list order.
+            val list = profiles.flatMap { user ->
                 val serial = userManager.getSerialNumberForUser(user)
                 val other = user != me
                 val managed = other && isManagedProfile(user)
                 runCatching { launcherApps.getActivityList(null, user) }.getOrDefault(emptyList())
                     .filter { it.componentName.packageName != context.packageName }
-                    .map { InstalledApp("${it.componentName.flattenToString()}#$serial", it.label.toString(), it, other, managed) }
-            }
-            if (!ifCurrent(gen) { retargetMovedKeys(installed.value, list); installed.value = list }) return@launch
+                    .map { async { InstalledApp("${it.componentName.flattenToString()}#$serial", it.label.toString(), it, other, managed) } }
+            }.awaitAll()
+            if (!ifCurrent(gen) { retargetMovedKeys(installed, list); installed = list }) return@launch
             seedFavorites(list)
-            loadIcons(list, gen)
+            index.join()
+            // The favorites' icons render while the list sorts, and go out after it.
+            val published = async { publishSorted(list, gen) }
+            loadIcons(list, profiles, gen, published)
+        }
+    }
+
+    /**
+     * Registers for package and profile changes, once: from the first reload, before its first look at the app list,
+     * so no change is missed, but off the main thread, as both are binder calls that held up the first frame (the
+     * system is busiest at boot). A reload cancelled before it ran leaves it to the next one.
+     *
+     * Registered for the life of the process, not just while home is started: the repository is app-scoped and also
+     * feeds Settings, these events are rare, and catching up on every start would cost a full reload per return home.
+     */
+    private fun registerForChanges() {
+        synchronized(callback) {
+            if (registered) return
+            launcherApps.registerCallback(callback, Handler(Looper.getMainLooper()))
+            val profileEvents = IntentFilter().apply {
+                addAction(Intent.ACTION_MANAGED_PROFILE_ADDED)
+                addAction(Intent.ACTION_MANAGED_PROFILE_REMOVED)
+                addAction(Intent.ACTION_MANAGED_PROFILE_AVAILABLE)
+                addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE)
+                // The generic ones also cover profiles that aren't managed, such as app clones.
+                if (Build.VERSION.SDK_INT >= 34) {
+                    addAction(Intent.ACTION_PROFILE_ADDED)
+                    addAction(Intent.ACTION_PROFILE_REMOVED)
+                }
+                if (Build.VERSION.SDK_INT >= 35) {
+                    addAction(Intent.ACTION_PROFILE_AVAILABLE)
+                    addAction(Intent.ACTION_PROFILE_UNAVAILABLE)
+                }
+            }
+            ContextCompat.registerReceiver(context, profileReceiver, profileEvents, ContextCompat.RECEIVER_NOT_EXPORTED)
+            registered = true
         }
     }
 
     /** Runs [write] unless a newer refresh has started since generation [gen]; returns whether it ran. */
     private inline fun ifCurrent(gen: Int, write: () -> Unit): Boolean = synchronized(lock) {
         (gen == generation).also { if (it) write() }
+    }
+
+    /**
+     * Sorts [list] with the current renames and publishes it, unless a newer list was installed since or (with [gen])
+     * a newer refresh started. A rename that lands meanwhile sorts it again, so a reload's list always goes out before
+     * its icons. Returns the published entries, or null when superseded.
+     */
+    private fun publishSorted(list: List<InstalledApp>, gen: Int? = null): List<AppEntry>? {
+        while (true) {
+            val renames = prefs.settings.value.renames
+            val entries = buildEntries(list, renames)
+            synchronized(lock) {
+                if (installed !== list || (gen != null && gen != generation)) return null
+                if (prefs.settings.value.renames == renames) {
+                    _apps.value = entries
+                    return entries
+                }
+            }
+        }
     }
 
     /** Only a work profile gets the "work" tag; other kinds (app clones, ...) can only be told apart from Android 15. */
@@ -368,45 +446,115 @@ class AppRepository(
         return target(old) == target(now)
     }
 
-    private suspend fun loadIcons(list: List<InstalledApp>, gen: Int) {
-        val favorites = prefs.settings.value.favorites.toSet()
-        val monochrome = prefs.settings.value.let { it.showIcons && it.monochromeIcons }
+    /**
+     * Renders the icons [list] lacks: favorites first, so the home screen fills in before the long list does, then
+     * the rest in A–Z order with hidden apps last. Nothing is published before [published], the list itself.
+     */
+    private suspend fun loadIcons(
+        list: List<InstalledApp>,
+        profiles: List<UserHandle>,
+        gen: Int,
+        published: Deferred<List<AppEntry>?>,
+    ) {
+        val settings = prefs.settings.value
+        val monochrome = settings.showIcons && settings.monochromeIcons
         // At least 48dp: the long-press sheet and the player draw icons that big whatever the list size.
-        val size = (maxOf(prefs.settings.value.iconSize.homeDp, 48) * context.resources.displayMetrics.density).roundToInt()
-        var sincePublish = 0
-        // Favorites first so the home screen fills in before the long list does.
-        for (app in list.sortedBy { it.key !in favorites }) {
-            yield()
-            // Every icon is size x size, so one drawn for an earlier screen density gets redrawn.
-            if (iconCache[app.key]?.bitmap?.width == size) continue
-            val icon = renderIcon(app, monochrome, size) ?: continue
-            if (!ifCurrent(gen) { iconCache[app.key] = icon }) return
-            if (++sincePublish >= 16) {
-                if (!ifCurrent(gen) { _icons.value = HashMap(iconCache) }) return
-                sincePublish = 0
-            }
-        }
+        val size = (maxOf(settings.iconSize.homeDp, 48) * context.resources.displayMetrics.density).roundToInt()
+        val live = list.associateBy { it.key }
+        // Apps that are gone lose their icons now, so no publish of this reload carries them.
+        if (!ifCurrent(gen) { iconCache.keys.retainAll(live.keys) }) return
+        // Every icon is size x size, so one drawn for an earlier screen density gets redrawn.
+        fun stale(app: InstalledApp) = iconCache[app.key]?.bitmap?.width != size
+        val complete = renderInParallel(
+            first = settings.favorites.mapNotNull { live[it] }.filter(::stale),
+            rest = rest@{
+                val sorted = published.await() ?: return@rest emptyList()
+                val favorites = settings.favorites.toHashSet()
+                sorted.mapNotNull { entry -> live[entry.key]?.takeIf { it.key !in favorites && stale(it) } }
+                    .sortedBy { it.key in settings.hidden }
+            },
+            threads = LOAD_THREADS,
+            dispatcher = workers,
+            render = { app ->
+                val icon = renderIcon(app, monochrome, size)
+                // A newer refresh may have invalidated this icon while it rendered: never put a stale one back.
+                icon == null || ifCurrent(gen) { iconCache[app.key] = icon }
+            },
+            publish = { published.await() != null && ifCurrent(gen) { _icons.value = HashMap(iconCache) } },
+        )
+        if (!complete || published.await() == null) return
         ifCurrent(gen) {
-            iconCache.keys.retainAll(list.mapTo(HashSet()) { it.key })
+            iconCache.keys.retainAll(live.keys)
+            badgeCache.keys.retainAll(profiles.toSet())
             _icons.value = HashMap(iconCache)
         }
     }
 
+    // Each layer moves to graphics memory (toHardware) only once nothing draws into it any more.
     private fun renderIcon(app: InstalledApp, monochrome: Boolean, size: Int): IconImage? = runCatching {
         val dpi = context.resources.displayMetrics.densityDpi
-        if (!monochrome) return@runCatching IconImage(app.info.getBadgedIcon(dpi).renderTo(size).asImageBitmap(), isGlyph = false)
+        if (!monochrome) return@runCatching IconImage(app.info.getBadgedIcon(dpi).renderTo(size).toHardware().asImageBitmap(), isGlyph = false)
         val mono = app.info.getIcon(dpi).renderMonochrome(size)
-        if (!app.isWork) return@runCatching mono
+        if (!app.isWork) return@runCatching IconImage(mono.bitmap.toHardware(), mono.isGlyph)
         val pm = context.packageManager
         if (mono.isGlyph) {
             // The UI tints glyphs, which would flatten a badge drawn into one to a blob: keep it as its own layer.
             val badge = badgeCache[app.info.user]?.takeIf { it.width == size } ?: run {
                 val blank = BitmapDrawable(context.resources, Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888))
-                pm.getUserBadgedIcon(blank, app.info.user).renderTo(size).asImageBitmap().also { badgeCache[app.info.user] = it }
+                pm.getUserBadgedIcon(blank, app.info.user).renderTo(size).toHardware().asImageBitmap().also { badgeCache[app.info.user] = it }
             }
-            return@runCatching IconImage(mono.bitmap, isGlyph = true, badge = badge)
+            return@runCatching IconImage(mono.bitmap.toHardware(), isGlyph = true, badge = badge)
         }
         val plain = BitmapDrawable(context.resources, mono.bitmap.asAndroidBitmap())
-        IconImage(pm.getUserBadgedIcon(plain, app.info.user).renderTo(size).asImageBitmap(), isGlyph = false)
+        IconImage(pm.getUserBadgedIcon(plain, app.info.user).renderTo(size).toHardware().asImageBitmap(), isGlyph = false)
     }.getOrNull()
+}
+
+/**
+ * Calls [render] on every item of [first], then of the list [rest] returns (asked once, when [first] runs out), on
+ * [threads] workers on [dispatcher]. Calls [publish] once all of [first] are done, then after every [publishEvery]
+ * more; one that comes due before all of [first] are done is skipped, so every publish has them all. Stops as soon as
+ * [render] or [publish] returns false (a newer load took over) and, between items, on cancellation. Returns whether
+ * it got through every item.
+ */
+internal suspend fun <T> renderInParallel(
+    first: List<T>,
+    rest: suspend () -> List<T>,
+    threads: Int,
+    dispatcher: CoroutineDispatcher,
+    publishEvery: Int = ICON_PUBLISH_EVERY,
+    render: (T) -> Boolean,
+    publish: suspend () -> Boolean,
+): Boolean = coroutineScope {
+    val next = AtomicInteger()
+    val firstLeft = AtomicInteger(first.size)
+    val sincePublish = AtomicInteger()
+    val superseded = AtomicBoolean()
+    val later = async(start = CoroutineStart.LAZY) { rest() }
+    List(threads) {
+        launch(dispatcher) {
+            while (!superseded.get()) {
+                val i = next.getAndIncrement()
+                val isFirst = i < first.size
+                val item = if (isFirst) first[i] else (later.await().getOrNull(i - first.size) ?: break)
+                ensureActive()
+                if (!render(item)) {
+                    superseded.set(true)
+                    break
+                }
+                val due = if (isFirst) firstLeft.decrementAndGet() == 0 else {
+                    sincePublish.incrementAndGet() % publishEvery == 0 && firstLeft.get() == 0
+                }
+                if (!due) continue
+                ensureActive()
+                if (!publish()) {
+                    superseded.set(true)
+                    break
+                }
+            }
+        }
+    }.joinAll()
+    // Never started when every worker stopped before reaching it.
+    later.cancel()
+    !superseded.get()
 }

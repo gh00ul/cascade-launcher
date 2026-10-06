@@ -22,24 +22,51 @@ fun String.normalizedForSearch(): String {
     }
 }
 
+/** A label as [score] reads it: normalized, split into words, and those words' initials. */
+private class SearchKey(val text: String) {
+    val words = text.split(' ', '-', '_', '.', ':').filter { it.isNotEmpty() }
+    val initials = words.joinToString("") { it.take(1) }
+}
+
+/** [apps]' labels as search keys, in the same order. [original] is null where it normalizes to the same as [label]. */
+private class SearchIndex(val apps: List<AppEntry>, val label: List<SearchKey>, val original: List<SearchKey?>)
+
+/**
+ * The index of the last list searched. Search runs on the main thread on every keystroke, and normalizing every
+ * label is most of its cost; while the list stays the same, typing only scores. Keyed by identity: the repository
+ * publishes a new list for every change (an install, a rename), which then gets a new index.
+ */
+@Volatile private var lastIndex: SearchIndex? = null
+
+private fun searchIndex(apps: List<AppEntry>): SearchIndex {
+    lastIndex?.let { if (it.apps === apps) return it }
+    val label = apps.map { SearchKey(it.label.normalizedForSearch()) }
+    val original = apps.mapIndexed { i, app ->
+        app.originalLabel.takeIf { it != app.label }?.normalizedForSearch()?.takeIf { it != label[i].text }?.let(::SearchKey)
+    }
+    return SearchIndex(apps, label, original).also { lastIndex = it }
+}
+
 /** Best matches first: prefix, then word start, then initials ("gm" → Google Maps), then substring, then fuzzy. */
 fun searchApps(apps: List<AppEntry>, query: String): List<AppEntry> {
     val q = query.trim().normalizedForSearch()
     if (q.isEmpty()) return emptyList()
+    val index = searchIndex(apps)
     return apps
-        .mapNotNull { app ->
-            val score = maxOf(score(app.label.normalizedForSearch(), q), score(app.originalLabel.normalizedForSearch(), q))
+        .mapIndexedNotNull { i, app ->
+            // An unrenamed app's original label is its label; scoring it again can't raise the score.
+            val score = maxOf(score(index.label[i], q), index.original[i]?.let { score(it, q) } ?: 0)
             if (score > 0) app to score else null
         }
         .sortedWith(compareByDescending<Pair<AppEntry, Int>> { it.second }.thenBy { it.first.label.length })
         .map { it.first }
 }
 
-private fun score(label: String, q: String): Int {
+private fun score(key: SearchKey, q: String): Int {
+    val label = key.text
     if (label.startsWith(q)) return 100
-    val words = label.split(' ', '-', '_', '.', ':').filter { it.isNotEmpty() }
-    if (words.any { it.startsWith(q) }) return 80
-    if (words.joinToString("") { it.take(1) }.startsWith(q)) return 60
+    if (key.words.any { it.startsWith(q) }) return 80
+    if (key.initials.startsWith(q)) return 60
     if (q in label) return 40
     var matched = 0
     for (c in label) if (matched < q.length && c == q[matched]) matched++

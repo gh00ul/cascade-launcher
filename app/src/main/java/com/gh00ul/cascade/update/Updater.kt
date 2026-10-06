@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
@@ -24,6 +25,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Self-update from GitHub Releases: finds a newer release, downloads its APK, checks that it is Cascade signed
@@ -61,13 +63,19 @@ object Updater {
     @Volatile private var lastAttempt = 0L
 
     private val _dismissed = MutableStateFlow<String?>(null)
+    private val dismissedRead = AtomicBoolean(false)
+    /** [_dismissed] holds the stored tag, or a newer one from [dismiss]. */
     @Volatile private var dismissedLoaded = false
 
-    /** The release tag the user hid from the home screen card; Settings still offers it. */
+    /**
+     * The release tag the user hid from the home screen card; Settings still offers it. Home asks for it in its first
+     * composition, so the stored tag is read on [scope]. That can't let a hidden offer flash up: at cold start the
+     * state is Idle, and [check] reads the tag before it publishes an offer.
+     */
     fun dismissed(context: Context): StateFlow<String?> {
-        if (!dismissedLoaded) {
-            dismissedLoaded = true
-            _dismissed.value = prefs(context).getString(DISMISSED, null)
+        if (!dismissedLoaded && dismissedRead.compareAndSet(false, true)) {
+            val app = context.applicationContext
+            scope.launch { loadDismissed(prefs(app)) }
         }
         return _dismissed.asStateFlow()
     }
@@ -78,23 +86,39 @@ object Updater {
         _dismissed.value = release.tag
     }
 
+    private fun loadDismissed(prefs: SharedPreferences) {
+        if (!dismissedLoaded) storedDismissed(prefs.getString(DISMISSED, null))
+    }
+
+    /** The tag read from storage. A [dismiss] that landed while it was being read is newer, and wins. */
+    internal fun storedDismissed(tag: String?) {
+        _dismissed.compareAndSet(null, tag)
+        dismissedLoaded = true
+    }
+
     /**
      * Checks GitHub at most every 6 hours after a completed check and every 30 minutes after a failed one, or right
      * away when [force]d from Settings.
      */
     fun check(context: Context, force: Boolean = false) {
         val app = context.applicationContext
-        val prefs = prefs(app)
         val now = System.currentTimeMillis()
         if (busy) return
-        if (!force && !autoCheckDue(now, prefs.getLong(LAST_CHECK, 0L), lastAttempt)) return
+        // autoCheckDue's in-memory half first, so most returns home stop here without touching the disk.
+        if (!force && now - lastAttempt in 0 until RETRY_INTERVAL_MS) return
         // Don't knock down an offer or an install that's under way with a background check.
         if (!force && _state.value.let { it is State.Available || it is State.Downloading || it is State.Installing }) return
-        lastAttempt = now
         busy = true
-        _state.value = State.Checking
+        // LAST_CHECK is read on scope too: home's first check runs while its first frame is being composed.
         scope.launch {
-            _state.value = try {
+            val prefs = prefs(app)
+            if (!force && !autoCheckDue(now, prefs.getLong(LAST_CHECK, 0L), lastAttempt)) {
+                busy = false
+                return@launch
+            }
+            lastAttempt = now
+            _state.value = State.Checking
+            val result = try {
                 val json = request(LATEST, "application/vnd.github+json").inputStream.bufferedReader().use { JSONObject(it.readText()) }
                 prefs.edit().putLong(LAST_CHECK, now).apply()
                 val tag = json.getString("tag_name")
@@ -111,6 +135,9 @@ object Updater {
             } catch (e: Exception) {
                 State.Failed("Couldn't check for updates (${e.javaClass.simpleName}).", null)
             }
+            // A release the user hid stays hidden: home must know the stored tag before it sees the offer.
+            loadDismissed(prefs)
+            _state.value = result
             busy = false
         }
     }

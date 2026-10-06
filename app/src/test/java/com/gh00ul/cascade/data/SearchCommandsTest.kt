@@ -70,6 +70,15 @@ class SearchCommandsTest {
         assertEquals(Command.Play("Blinding Lights"), parse("play Blinding Lights"))
     }
 
+    /** A capital İ lowercases to two characters ("i" and a combining dot); what was typed still comes back whole. */
+    @Test fun lettersThatLowercaseLongerKeepTheirPlace() {
+        assertEquals(Command.Directions("İzmir"), parse("nav İzmir"))
+        assertEquals(Command.MapSearch("İstanbul İKEA"), parse("maps İstanbul İKEA"))
+        assertEquals(Command.Play("İbrahim Tatlıses"), parse("play İbrahim Tatlıses"))
+        assertEquals(Command.SiteSearch(Site.YOUTUBE, "İ"), parse("yt İ"))
+        assertEquals(Command.SiteSearch(Site.WIKIPEDIA, "Ankara"), parse("W  Ankara"))
+    }
+
     @Test fun nothingElseIsACommand() {
         for (q in listOf("", "maps", "play", "yt", "Phone", "24*7", "Calendar", "nav")) assertNull(q, parse(q))
     }

@@ -75,7 +75,9 @@ private const val MAX_TIMER_SECONDS = 24 * 60 * 60
  * evening, today or tomorrow.
  */
 fun parseCommand(query: String, now: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): Command? {
-    val q = query.trim().lowercase().replace(Regex("\\s+"), " ")
+    // Lowercased letter by letter, so it stays as long as what was typed and a match's range maps back onto it: a
+    // whole-string lowercase() turns a capital İ into two characters.
+    val q = buildString { query.trim().forEach { append(it.lowercaseChar()) } }.replace(Regex("\\s+"), " ")
     if (q.isEmpty()) return null
     timer(q)?.let { return it }
     alarm(q, now, zone)?.let { return it }

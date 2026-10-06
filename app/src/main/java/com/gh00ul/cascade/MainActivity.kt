@@ -8,6 +8,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.home.LauncherScreen
 import com.gh00ul.cascade.ui.theme.LauncherTheme
 import kotlinx.coroutines.channels.Channel
@@ -29,6 +30,18 @@ class MainActivity : ComponentActivity() {
         // screen's own back handlers (close search, scroll to top) still run ahead of this one.
         onBackPressedDispatcher.addCallback(this) { }
         setContent { LauncherTheme { LauncherScreen(homePressFlow) } }
+    }
+
+    // Nothing shows notifications while home is stopped: regroup once on return. ON_START reaches the collectors after
+    // onStart returns, so they resubscribe to the fresh list.
+    override fun onStart() {
+        super.onStart()
+        NotificationStore.resume()
+    }
+
+    override fun onStop() {
+        NotificationStore.pause()
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {

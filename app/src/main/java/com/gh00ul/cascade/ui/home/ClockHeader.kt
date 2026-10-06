@@ -24,8 +24,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -83,10 +84,16 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val clock = LocalNow.current
     var now by remember { mutableLongStateOf(clock()) }
-    DisposableEffect(context) {
+    // Bumped when the next alarm may have changed, so AlarmManager isn't asked again on every minute tick.
+    var alarmChecks by remember { mutableIntStateOf(0) }
+    // Registered only while home is visible: TIME_TICK would otherwise wake the process every minute while another app
+    // is in front. Each start catches up on the time and the alarm, reading them after registering, so a tick that
+    // arrives during registration is either delivered or already in the read.
+    LifecycleStartEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, intent: Intent) {
                 now = clock()
+                if (intent.action != Intent.ACTION_TIME_TICK) alarmChecks++
             }
         }
         val filter = IntentFilter().apply {
@@ -96,15 +103,16 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
             addAction(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED)
         }
         ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        onDispose { context.unregisterReceiver(receiver) }
+        now = clock()
+        alarmChecks++
+        onStopOrDispose { context.unregisterReceiver(receiver) }
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { now = clock() }
 
     val style = LocalLauncherStyle.current
     val locale = LocalConfiguration.current.locales[0]
     val is24h = DateFormat.is24HourFormat(context)
     val date = SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd"), locale).format(Date(now))
-    val alarm = remember(now) { context.getSystemService(AlarmManager::class.java).nextAlarmClock }
+    val alarm = remember(alarmChecks) { context.getSystemService(AlarmManager::class.java).nextAlarmClock }
     val timers by NotificationStore.timers.collectAsStateWithLifecycle()
     val event = rememberNextEvent(settings.showCalendar, now)
     val battery = rememberBattery(settings.showBattery)
@@ -241,30 +249,41 @@ private fun rememberNextEvent(enabled: Boolean, now: Long): CalendarEvent? {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val clock = LocalNow.current
-    val visible by lifecycle.currentStateFlow.collectAsStateWithLifecycle()
-    val event by produceState<CalendarEvent?>(null, enabled, now / 300_000, visible.isAtLeast(Lifecycle.State.RESUMED)) {
+    // Counts returns home. Unlike a RESUMED/not-RESUMED key, it doesn't change when home pauses on the way out.
+    var resumes by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { resumes++ }
+    val resumed = resumes
+    val event by produceState<CalendarEvent?>(null, enabled, now / 300_000, resumed) {
         if (!enabled) {
             value = null
             return@produceState
         }
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@produceState
+        // A resume since this composition (the effect replays ON_RESUME when first composed resumed) relaunches this
+        // with the new count, so leave the query to that run.
+        if (resumes != resumed) return@produceState
         value = withContext(Dispatchers.IO) { nextCalendarEvent(context, clock()) }
     }
     // Drop an event that ended since the last query.
     return event?.takeIf { it.allDay || it.end > now }
 }
 
-internal class Battery(val level: Int, val charging: Boolean, val fullInMs: Long)
+/** A data class, so a broadcast that only changed the temperature or voltage doesn't recompose the header. */
+internal data class Battery(val level: Int, val charging: Boolean, val fullInMs: Long)
 
-/** Battery level and charging state from the sticky ACTION_BATTERY_CHANGED broadcast, or null when [enabled] is off. */
+/**
+ * Battery level and charging state from the sticky ACTION_BATTERY_CHANGED broadcast, or null when [enabled] is off.
+ * Listens only while home is visible, since the broadcast comes often while charging; the sticky intent catches up on
+ * each start, and the last value stays meanwhile.
+ */
 @Composable
 private fun rememberBattery(enabled: Boolean): Battery? {
     val context = LocalContext.current
     var battery by remember { mutableStateOf<Battery?>(null) }
-    DisposableEffect(context, enabled) {
+    LifecycleStartEffect(context, enabled) {
         if (!enabled) {
             battery = null
-            return@DisposableEffect onDispose {}
+            return@LifecycleStartEffect onStopOrDispose {}
         }
         val manager = context.getSystemService(BatteryManager::class.java)
         fun read(intent: Intent?) {
@@ -284,7 +303,7 @@ private fun rememberBattery(enabled: Boolean): Battery? {
         }
         // Sticky: registering returns the current state right away.
         read(ContextCompat.registerReceiver(context, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED))
-        onDispose { context.unregisterReceiver(receiver) }
+        onStopOrDispose { context.unregisterReceiver(receiver) }
     }
     return battery
 }

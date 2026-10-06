@@ -29,6 +29,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -122,6 +123,13 @@ private fun sectionIndex(primary: Locale, locales: LocaleList): AlphabeticIndex.
         for (tag in listOf("th", "ar", "he", "el", "uk", "sr")) addLabels(Locale.forLanguageTag(tag))
     }.buildImmutableIndex()
 
+/**
+ * How long a package or profile event waits before reloading. They come in bursts (on Android 15 a work profile
+ * toggle sends onPackagesAvailable, MANAGED_PROFILE_AVAILABLE and PROFILE_AVAILABLE), and each one cancels the
+ * previous wait, so a burst ends in one reload.
+ */
+private const val EVENT_COALESCE_MS = 250L
+
 class AppRepository(
     private val context: Context,
     private val prefs: Prefs,
@@ -160,21 +168,24 @@ class AppRepository(
             val suffix = "#${userManager.getSerialNumberForUser(user)}"
             fun stale(key: String) = key.startsWith("$packageName/") && key.endsWith(suffix)
             prefs.update { s -> s.copy(favorites = s.favorites.filterNot(::stale), hidden = s.hidden.filterNotTo(LinkedHashSet(), ::stale)) }
-            refresh(packageName)
+            refresh(packageName, coalesce = true)
         }
-        override fun onPackageAdded(packageName: String, user: UserHandle) = refresh(packageName)
-        override fun onPackageChanged(packageName: String, user: UserHandle) = refresh(packageName)
+        override fun onPackageAdded(packageName: String, user: UserHandle) = refresh(packageName, coalesce = true)
+        override fun onPackageChanged(packageName: String, user: UserHandle) = refresh(packageName, coalesce = true)
         override fun onPackagesAvailable(packageNames: Array<String>, user: UserHandle, replacing: Boolean) =
-            refresh(*packageNames)
+            refresh(*packageNames, coalesce = true)
         override fun onPackagesUnavailable(packageNames: Array<String>, user: UserHandle, replacing: Boolean) =
-            refresh(*packageNames)
+            refresh(*packageNames, coalesce = true)
     }
 
     private val profileReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) = refresh()
+        override fun onReceive(context: Context, intent: Intent) = refresh(coalesce = true)
     }
 
     init {
+        // Registered for the life of the process, not just while home is started: the repository is app-scoped and
+        // also feeds Settings, these events are rare, and catching up on every start would cost a full reload per
+        // return home.
         launcherApps.registerCallback(callback, Handler(Looper.getMainLooper()))
         val profileEvents = IntentFilter().apply {
             addAction(Intent.ACTION_MANAGED_PROFILE_ADDED)
@@ -211,8 +222,11 @@ class AppRepository(
         refresh()
     }
 
-    /** Reloads the app list; icons of [changedPackages] (all, with [clearIcons]) are re-rendered, the rest come from cache. */
-    fun refresh(vararg changedPackages: String, clearIcons: Boolean = false) {
+    /**
+     * Reloads the app list; icons of [changedPackages] (all, with [clearIcons]) are re-rendered, the rest come from cache.
+     * With [coalesce], for bursty system events, the reload waits [EVENT_COALESCE_MS] so the next event can replace it.
+     */
+    fun refresh(vararg changedPackages: String, clearIcons: Boolean = false, coalesce: Boolean = false) {
         // Invalidate and start a new generation in one step: the previous job may be mid-render and must not
         // put its stale icon back into the cache after this.
         val gen = synchronized(lock) {
@@ -225,6 +239,8 @@ class AppRepository(
         }
         loadJob?.cancel()
         loadJob = scope.launch(Dispatchers.Default) {
+            // Invalidation above stays immediate: the job that survives a burst re-renders every icon it dropped.
+            if (coalesce) delay(EVENT_COALESCE_MS)
             val me = Process.myUserHandle()
             val list = userManager.userProfiles.flatMap { user ->
                 val serial = userManager.getSerialNumberForUser(user)

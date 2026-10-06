@@ -1,11 +1,50 @@
 package com.gh00ul.cascade.update
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdaterTest {
     private val apk = "https://example.com/Cascade.apk"
+    private val minute = 60_000L
+    private val hour = 60 * minute
+    private val t0 = 1_791_000_000_000L
+
+    @Test fun autoCheckIsDueSixHoursAfterACompletedCheck() {
+        // A completed check also counts as an attempt.
+        assertFalse(Updater.autoCheckDue(t0, t0, t0))
+        assertFalse(Updater.autoCheckDue(t0 + hour, t0, t0))
+        assertFalse(Updater.autoCheckDue(t0 + 6 * hour - 1, t0, t0))
+        assertTrue(Updater.autoCheckDue(t0 + 6 * hour, t0, t0))
+    }
+
+    @Test fun failedAttemptHoldsOffRetriesForThirtyMinutes() {
+        // Offline or rate-limited: LAST_CHECK is old (or never written), only the attempt is recent.
+        for (lastCheck in listOf(0L, t0 - 2 * 24 * hour)) {
+            assertFalse(Updater.autoCheckDue(t0, lastCheck, t0))
+            assertFalse(Updater.autoCheckDue(t0 + 29 * minute, lastCheck, t0))
+            assertFalse(Updater.autoCheckDue(t0 + 30 * minute - 1, lastCheck, t0))
+        }
+    }
+
+    @Test fun failedAttemptIsRetriedAfterThirtyMinutes() {
+        assertTrue(Updater.autoCheckDue(t0 + 30 * minute, 0L, t0))
+        assertTrue(Updater.autoCheckDue(t0 + 30 * minute, t0 - 2 * 24 * hour, t0))
+        // But not before six hours have passed since the last completed check.
+        assertFalse(Updater.autoCheckDue(t0 + 30 * minute, t0 - hour, t0))
+    }
+
+    @Test fun timestampsInTheFutureMeanTheClockMovedBackAndCountAsDue() {
+        assertTrue(Updater.autoCheckDue(t0, t0 + hour, 0L))
+        assertTrue(Updater.autoCheckDue(t0, t0 - 7 * hour, t0 + minute))
+        assertTrue(Updater.autoCheckDue(t0, t0 + 1, t0 + 1))
+    }
+
+    @Test fun firstRunIsDue() {
+        assertTrue(Updater.autoCheckDue(t0, 0L, 0L))
+    }
 
     @Test fun versionCodesMatchBuildGradle() {
         // app/build.gradle.kts: (major * 10000 + minor * 100 + patch) * 1000, plus the dev build count.

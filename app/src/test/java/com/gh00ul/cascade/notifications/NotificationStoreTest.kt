@@ -12,6 +12,9 @@ import com.gh00ul.cascade.testing.FIXED_NOW
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeNotifications
 import com.gh00ul.cascade.testing.FakeNotifications.sbn
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,7 +38,10 @@ class NotificationStoreTest {
     private val phone = FakeApps.phone.packageName
     private val clock = "com.example.clock"
 
-    @After fun clear() = NotificationStore.clear()
+    @After fun clear() {
+        NotificationStore.clear()
+        NotificationStore.resume()
+    }
 
     private fun message(title: String, text: String = "Hi") = FakeNotifications.message(context, title, text)
 
@@ -329,5 +335,70 @@ class NotificationStoreTest {
         // Pausing it swaps the chronometer for text, and the chip goes.
         NotificationStore.posted(sbn(clock, builder().setContentTitle("Pasta").setContentText("Paused").setOngoing(true).build(), id = 1), null, own)
         assertEquals(listOf("Tea"), NotificationStore.timers.value.map { it.title })
+    }
+
+    @Test fun pausedStoreRegroupsOnceOnResume() {
+        val maya = sbn(messages, message("Maya"), id = 1, postTime = 1_000)
+        val receipt = sbn(mail, message("Receipt"), id = 2, postTime = 2_000)
+        NotificationStore.reset(arrayOf(maya, receipt), rankingMap(ranking(maya.key), ranking(receipt.key)), own)
+        val byApp = NotificationStore.byApp.value
+        // Another app in front: each callback only records its change.
+        NotificationStore.pause()
+        val sam = sbn(messages, message("Sam"), id = 3, postTime = 3_000)
+        NotificationStore.posted(sam, rankingMap(ranking(maya.key), ranking(receipt.key), ranking(sam.key)), own)
+        NotificationStore.removed(receipt.key, rankingMap(ranking(maya.key), ranking(sam.key)))
+        NotificationStore.ranked(rankingMap(ranking(maya.key, showBadge = false), ranking(sam.key)))
+        assertSame(byApp, NotificationStore.byApp.value)
+        // Back home: all three at once, under the latest ranking.
+        NotificationStore.resume()
+        val list = NotificationStore.byApp.value.getValue(FakeApps.messages.notificationKey)
+        assertEquals(listOf("Sam" to true, "Maya" to false), list.map { it.title to it.showBadge })
+        assertFalse(FakeApps.mail.notificationKey in NotificationStore.byApp.value)
+    }
+
+    @Test fun timersStillEmitWhilePaused() {
+        NotificationStore.pause()
+        NotificationStore.posted(sbn(clock, FakeNotifications.timer(context, "Tea", FIXED_NOW + 60_000)), null, own)
+        assertEquals(listOf("Tea"), NotificationStore.timers.value.map { it.title })
+    }
+
+    @Test fun noOpCallbacksDoNotEmit() {
+        val chat = sbn(messages, message("Book club"), id = 1, postTime = 1_000)
+        val ranks = rankingMap(ranking(chat.key))
+        NotificationStore.reset(arrayOf(chat), ranks, own)
+        var emissions = 0
+        val job = CoroutineScope(Dispatchers.Unconfined).launch { NotificationStore.byApp.collect { emissions++ } }
+        try {
+            // The current value, on subscribing.
+            assertEquals(1, emissions)
+            val navigation = builder().setContentTitle("200 ft").setContentText("Turn left onto Pine St").setOngoing(true).build()
+            NotificationStore.posted(sbn("com.example.maps", navigation, id = 2), ranks, own)
+            NotificationStore.removed("unknown key", ranks)
+            NotificationStore.ranked(rankingMap(ranking(chat.key)))
+            NotificationStore.posted(sbn(messages, message("Book club"), id = 1, postTime = 1_000), ranks, own)
+            NotificationStore.resume()
+            assertEquals(1, emissions)
+            // A real change still does.
+            NotificationStore.posted(sbn(messages, message("Maya"), id = 3, postTime = 2_000), ranks, own)
+            assertEquals(2, emissions)
+        } finally {
+            job.cancel()
+        }
+    }
+
+    @Test fun clearWhilePausedDropsThePendingRegroup() {
+        NotificationStore.reset(arrayOf(sbn(messages, message("Maya"), id = 1)), null, own)
+        NotificationStore.pause()
+        NotificationStore.posted(sbn(mail, message("Receipt"), id = 2), null, own)
+        // Notification access turned off while away.
+        NotificationStore.clear()
+        NotificationStore.resume()
+        assertTrue(NotificationStore.byApp.value.isEmpty())
+        // Reconnecting while away fills the list on the way back.
+        NotificationStore.pause()
+        NotificationStore.reset(arrayOf(sbn(mail, message("Receipt"), id = 2)), null, own)
+        assertTrue(NotificationStore.byApp.value.isEmpty())
+        NotificationStore.resume()
+        assertEquals(listOf("Receipt"), titles(FakeApps.mail.notificationKey))
     }
 }

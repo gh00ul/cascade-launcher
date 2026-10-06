@@ -49,6 +49,35 @@ object NotificationStore {
     val timers: StateFlow<List<LiveTimer>> = _timers.asStateFlow()
     private val timerEntries = LinkedHashMap<String, LiveTimer>()
 
+    /**
+     * False while home is stopped: nothing collects [byApp] then, so callbacks only record their change in [entries]
+     * and [resume] regroups once. Starts true, so a listener that connects before home first starts still fills it.
+     */
+    private var live = true
+    /**
+     * The ranking that came with the last change while paused. Each RankingMap the listener gets is complete, so the
+     * latest one is all [resume] needs.
+     */
+    private var pendingRanking: RankingMap? = null
+    /** [entries] or the ranking changed while paused. */
+    private var stale = false
+
+    /**
+     * Home stopped (another app in front, screen off). Regrouping allocates a map and a list per app for every post,
+     * removal and ranking update; until [resume], callbacks keep only [entries] current, which is O(1). Chatty ongoing
+     * updates (navigation, downloads, media) already return before regrouping. Timers still emit: they change rarely,
+     * and the clock header collects them lifecycle-aware. Main thread only.
+     */
+    fun pause() {
+        live = false
+    }
+
+    /** Home started: regroup once if anything changed while paused, before the collectors resubscribe. */
+    fun resume() {
+        live = true
+        if (stale) group(pendingRanking)
+    }
+
     /** The full list, read once per connection; after that each callback applies its own change. */
     internal fun reset(active: Array<StatusBarNotification>?, ranking: RankingMap?, ownPackage: String) {
         entries.clear()
@@ -77,6 +106,8 @@ object NotificationStore {
     internal fun clear() {
         entries.clear()
         _byApp.value = emptyMap()
+        stale = false
+        pendingRanking = null
         timerEntries.clear()
         _timers.value = emptyList()
     }
@@ -102,6 +133,17 @@ object NotificationStore {
     }
 
     private fun emit(ranking: RankingMap?) {
+        if (!live) {
+            pendingRanking = ranking
+            stale = true
+            return
+        }
+        group(ranking)
+    }
+
+    private fun group(ranking: RankingMap?) {
+        stale = false
+        pendingRanking = null
         val r = Ranking()
         _byApp.value = entries.values
             .mapNotNull { (app, n) ->

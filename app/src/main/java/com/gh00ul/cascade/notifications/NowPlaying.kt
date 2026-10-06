@@ -138,7 +138,7 @@ object NowPlaying {
     private var art: ImageBitmap? = null
     private var artSeed: Int? = null
 
-    private val recheck = Runnable { publish(force = true) }
+    private val recheck = Runnable { publish() }
     private var clearPending = false
     private val clear = Runnable {
         clearPending = false
@@ -228,9 +228,12 @@ object NowPlaying {
         val tracked = Tracked(controller)
         tracked.callback = object : MediaController.Callback() {
             override fun onPlaybackStateChanged(state: PlaybackState?) {
+                val stateChanged = tracked.playback?.state != state?.state
                 tracked.playback = state
                 tracked.playbackSince = SystemClock.elapsedRealtime()
-                publish()
+                // Chatty apps re-post their position every second; with nobody watching, only the state code matters
+                // to the pause and hide bookkeeping.
+                if (stateChanged || _state.subscriptionCount.value > 0) publish()
             }
 
             override fun onMetadataChanged(metadata: MediaMetadata?) {
@@ -258,8 +261,8 @@ object NowPlaying {
     /**
      * Recomputes the shown session. The pause and hide bookkeeping runs on every call, so plays and pauses while home
      * isn't showing still count; the rest is skipped while nothing observes the state (launcher stopped or screen off),
-     * and [refresh] on resume catches up. [immediate] removes the player without the between-tracks grace, unless the
-     * shown session is only between tracks.
+     * and so is the 30-minute recheck, which [refresh] on resume reschedules as it catches up. [immediate] removes the
+     * player without the between-tracks grace, unless the shown session is only between tracks.
      */
     private fun publish(force: Boolean = false, immediate: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
@@ -278,8 +281,8 @@ object NowPlaying {
         pausedSince -= playing
         hidden -= playing
         for ((owner, since) in resting) if (owner !in playing) pausedSince.getOrPut(owner) { since }
-        if (!force && _state.subscriptionCount.value == 0) return
         handler.removeCallbacks(recheck)
+        if (!force && _state.subscriptionCount.value == 0) return
         var wake = Long.MAX_VALUE
         val eligible = sessions.mapNotNull { (token, tracked) ->
             val playback = tracked.playback

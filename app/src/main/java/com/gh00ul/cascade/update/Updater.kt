@@ -33,6 +33,8 @@ import java.net.URL
 object Updater {
     private const val LATEST = "https://api.github.com/repos/gh00ul/cascade-launcher/releases/latest"
     private const val AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
+    /** Offline or rate-limited, a check fails without writing LAST_CHECK; this keeps it from retrying on every return home. */
+    private const val RETRY_INTERVAL_MS = 30 * 60 * 1000L
     private const val PREFS = "updater"
     private const val LAST_CHECK = "last_check"
     private const val DISMISSED = "dismissed_tag"
@@ -55,6 +57,8 @@ object Updater {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var busy = false
+    /** When the last check of any kind started, successful or not; in memory, so a restart may check once more. */
+    @Volatile private var lastAttempt = 0L
 
     private val _dismissed = MutableStateFlow<String?>(null)
     @Volatile private var dismissedLoaded = false
@@ -74,15 +78,19 @@ object Updater {
         _dismissed.value = release.tag
     }
 
-    /** Checks GitHub at most every 6 hours, or right away when [force]d from Settings. */
+    /**
+     * Checks GitHub at most every 6 hours after a completed check and every 30 minutes after a failed one, or right
+     * away when [force]d from Settings.
+     */
     fun check(context: Context, force: Boolean = false) {
         val app = context.applicationContext
         val prefs = prefs(app)
         val now = System.currentTimeMillis()
         if (busy) return
-        if (!force && now - prefs.getLong(LAST_CHECK, 0L) in 0 until AUTO_CHECK_INTERVAL_MS) return
+        if (!force && !autoCheckDue(now, prefs.getLong(LAST_CHECK, 0L), lastAttempt)) return
         // Don't knock down an offer or an install that's under way with a background check.
         if (!force && _state.value.let { it is State.Available || it is State.Downloading || it is State.Installing }) return
+        lastAttempt = now
         busy = true
         _state.value = State.Checking
         scope.launch {
@@ -97,6 +105,8 @@ object Updater {
                 newerRelease(tag, apk, PackageInfoCompat.getLongVersionCode(installed))?.let { State.Available(it) }
                     ?: State.UpToDate(installed.versionName.orEmpty())
             } catch (_: FileNotFoundException) {
+                // 404: no release published yet. That's an answer too, so wait the full interval before asking again.
+                prefs.edit().putLong(LAST_CHECK, now).apply()
                 State.UpToDate(installedInfo(app).versionName.orEmpty())
             } catch (e: Exception) {
                 State.Failed("Couldn't check for updates (${e.javaClass.simpleName}).", null)
@@ -225,6 +235,13 @@ object Updater {
         return if (Build.VERSION.SDK_INT >= 33) pm.getPackageArchiveInfo(file.path, PackageManager.PackageInfoFlags.of(flags.toLong()))
         else pm.getPackageArchiveInfo(file.path, flags)
     }
+
+    /**
+     * Whether a background check is due: 6 hours after the last completed one ([lastCheck]) and 30 minutes after the
+     * last attempt. A timestamp in the future means the clock moved back, which counts as due.
+     */
+    internal fun autoCheckDue(now: Long, lastCheck: Long, lastAttempt: Long): Boolean =
+        now - lastCheck !in 0 until AUTO_CHECK_INTERVAL_MS && now - lastAttempt !in 0 until RETRY_INTERVAL_MS
 
     /** The release [tag] offers when it has an APK and is newer than [installedCode]; null otherwise. */
     internal fun newerRelease(tag: String, apkUrl: String?, installedCode: Long): Release? {

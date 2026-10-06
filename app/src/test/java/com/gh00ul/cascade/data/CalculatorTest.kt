@@ -175,6 +175,10 @@ class CalculatorTest {
         // Short ones and spaced minuses are still sums.
         assertAnswers("455", "555 - 100", "555 −100")
         assertAnswers("17", "24-7")
+        // Two numbers joined by a dash read as a sum unless they're a local number's 3 and 4 digits.
+        assertAnswers("37", "2024-1987")
+        assertAnswers("1,200", "1500-300")
+        assertAnswers("750", "1000-250")
         assertAnswers("666", "1234 - 568")
     }
 }

@@ -55,7 +55,13 @@ private const val MAX_LENGTH = 256
  */
 private object PhoneNumber {
     private val shape = Regex("""\+?\s?(\(\d{1,4}\)\s?)?\d{1,4}([-\s]\d{1,4}){1,5}""")
-    fun matches(text: String) = shape.matches(text) && text.count { it.isDigit() } >= 7
+    /** Two numbers and one dash: a local number only as its 3 and 4 digits ("555-0100"); "2024-1987" is a sum. */
+    private val dashedPair = Regex("""(\d+)-(\d+)""")
+    fun matches(text: String): Boolean {
+        if (!shape.matches(text) || text.count { it.isDigit() } < 7) return false
+        val pair = dashedPair.matchEntire(text) ?: return true
+        return pair.groupValues[1].length == 3 && pair.groupValues[2].length == 4
+    }
 }
 /** Significant digits shown, like a pocket calculator's. */
 private const val DIGITS = 10

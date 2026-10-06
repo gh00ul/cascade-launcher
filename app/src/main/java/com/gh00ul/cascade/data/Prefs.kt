@@ -134,7 +134,11 @@ class Prefs(context: Context) {
     private val state = MutableStateFlow(read())
     val settings: StateFlow<LauncherSettings> = state.asStateFlow()
 
-    fun update(transform: (LauncherSettings) -> LauncherSettings) = write(state.updateAndGet(transform))
+    /**
+     * Changes the settings and stores them. One at a time: the app list's worker and the widget prune update from other
+     * threads, and two updates writing out of order would store the older state last, losing the newer on a restart.
+     */
+    fun update(transform: (LauncherSettings) -> LauncherSettings) = synchronized(this) { write(state.updateAndGet(transform)) }
 
     fun toggleFavorite(key: String) = update {
         it.copy(favorites = if (key in it.favorites) it.favorites - key else it.favorites + key)

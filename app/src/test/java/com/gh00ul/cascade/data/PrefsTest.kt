@@ -15,6 +15,26 @@ import org.robolectric.annotation.Config
 class PrefsTest {
     private val context = RuntimeEnvironment.getApplication()
 
+    /**
+     * Two threads changing settings at once (the app list's worker and a tap on home): what's stored is the last state,
+     * never an older one written after it, so a restart brings back every change.
+     */
+    @Test fun concurrentUpdatesStoreTheLatestState() {
+        val prefs = Prefs(context)
+        repeat(20) { round ->
+            val start = java.util.concurrent.CountDownLatch(1)
+            val threads = (0 until 4).map { t ->
+                Thread {
+                    start.await()
+                    repeat(50) { i -> prefs.update { it.copy(favorites = it.favorites + "r$round-t$t-$i") } }
+                }.apply { start() }
+            }
+            start.countDown()
+            threads.forEach { it.join() }
+            assertEquals("Round $round", prefs.settings.value, Prefs(context).settings.value)
+        }
+    }
+
     @Test fun defaultsWhenNothingIsStored() {
         assertEquals(LauncherSettings(), Prefs(context).settings.value)
     }

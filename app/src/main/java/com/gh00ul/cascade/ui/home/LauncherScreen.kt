@@ -160,7 +160,18 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         media?.let { m -> apps.firstOrNull { it.packageName == m.packageName && !it.isWork } }
     }
     var mediaResting by remember { mutableStateOf(false) }
-    LaunchedEffect(media?.isPaused) { if (media?.isPaused == false) mediaResting = false }
+    // Home showed before any session was known (the listener connects late): the first one to appear decides.
+    var restPending by remember { mutableStateOf(false) }
+    // Reads the live state: on a recreated activity this runs after ON_RESUME's refresh(), while `media` is still stale.
+    LaunchedEffect(media?.isPaused) {
+        val live = NowPlaying.state.value
+        if (restPending && live != null) {
+            restPending = false
+            mediaResting = live.isPaused
+        } else if (live?.isPaused == false) {
+            mediaResting = false
+        }
+    }
     // The temporary player's notification list belongs to one session; don't carry it over to the next.
     LaunchedEffect(media?.sessionId) { if (expandedKey == "media") expandedKey = null }
 
@@ -168,7 +179,9 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         isDefault = LauncherActions.isDefaultLauncher(context)
         hasNotificationAccess = LauncherActions.hasNotificationAccess(context)
         NowPlaying.refresh()
-        mediaResting = NowPlaying.state.value?.isPaused == true
+        val live = NowPlaying.state.value
+        mediaResting = live?.isPaused == true
+        restPending = live == null
     }
     val roleRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         isDefault = LauncherActions.isDefaultLauncher(context)

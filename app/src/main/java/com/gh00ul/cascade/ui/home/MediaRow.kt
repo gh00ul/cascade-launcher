@@ -177,6 +177,7 @@ fun MediaRow(
     expanded: Boolean,
     onOpen: () -> Unit,
     onLongClick: (() -> Unit)?,
+    onLongClickLabel: String?,
     onToggleExpand: () -> Unit,
     onNotificationClick: (AppNotification) -> Unit,
     onHide: () -> Unit,
@@ -245,7 +246,7 @@ fun MediaRow(
                     .clip(if (tier2) RoundedCornerShape(20.dp, 20.dp, 8.dp, 8.dp) else RoundedCornerShape(20.dp))
                     .combinedClickable(
                         onClickLabel = "Open player",
-                        onLongClickLabel = if (onLongClick != null) "App options" else null,
+                        onLongClickLabel = onLongClickLabel,
                         hapticFeedbackEnabled = false,
                         onLongClick = onLongClick?.let { longClick ->
                             {
@@ -377,7 +378,13 @@ private fun TrackText(state: NowPlayingState, appLabel: String?, scrubMs: Long?,
     ) { current ->
         Column {
             Text(current.title, style = style.mediaTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Crossfade(scrubMs, animationSpec = tween(120), label = "subtitle") { scrub ->
+            // Keyed on whether a scrub is running, not its value, so each drag step updates the readout in place.
+            AnimatedContent(
+                targetState = scrubMs,
+                transitionSpec = { (fadeIn(tween(120)) togetherWith fadeOut(tween(120))) using null },
+                label = "subtitle",
+                contentKey = { it != null },
+            ) { scrub ->
                 if (scrub != null) {
                     Text("${formatTime(scrub)} / ${formatTime(state.durationMs)}", style = style.mediaTime, maxLines = 1)
                 } else if (current.subtitle.isNotEmpty()) {

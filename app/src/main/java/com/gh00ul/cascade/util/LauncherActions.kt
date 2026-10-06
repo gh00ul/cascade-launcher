@@ -118,10 +118,12 @@ object LauncherActions {
         start(context, Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Choose wallpaper"))
     }
 
-    fun webSearch(context: Context, query: String) {
-        if (!start(context, Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, query))) {
+    /** Returns false (after telling the user) when no app can search the web. */
+    fun webSearch(context: Context, query: String): Boolean {
+        val ok = start(context, Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, query)) ||
             start(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))))
-        }
+        if (!ok) Toast.makeText(context, "No app can search the web", Toast.LENGTH_SHORT).show()
+        return ok
     }
 
     fun isDefaultLauncher(context: Context): Boolean {

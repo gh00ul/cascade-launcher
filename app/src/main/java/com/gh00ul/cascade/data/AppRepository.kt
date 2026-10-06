@@ -149,7 +149,7 @@ class AppRepository(
         }
         ContextCompat.registerReceiver(context, profileReceiver, profileEvents, ContextCompat.RECEIVER_NOT_EXPORTED)
         scope.launch {
-            prefs.settings.map { it.monochromeIcons }.distinctUntilChanged().drop(1).collect { refresh(clearIcons = true) }
+            prefs.settings.map { it.showIcons && it.monochromeIcons }.distinctUntilChanged().drop(1).collect { refresh(clearIcons = true) }
         }
         refresh()
     }
@@ -336,7 +336,7 @@ class AppRepository(
 
     private suspend fun loadIcons(list: List<InstalledApp>, gen: Int) {
         val favorites = prefs.settings.value.favorites.toSet()
-        val monochrome = prefs.settings.value.monochromeIcons
+        val monochrome = prefs.settings.value.let { it.showIcons && it.monochromeIcons }
         val size = (ICON_DP * context.resources.displayMetrics.density).roundToInt()
         var sincePublish = 0
         // Favorites first so the home screen fills in before the long list does.

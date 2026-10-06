@@ -44,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -102,7 +103,7 @@ fun HomePage(
     val longPress by rememberUpdatedState(onEmptyLongPress)
 
     @Composable
-    fun Player(state: NowPlayingState, app: AppEntry?, expandKey: String) {
+    fun Player(state: NowPlayingState, app: AppEntry?, expandKey: String, expanded: Boolean) {
         val notificationsForApp = app?.let { notifications[it.notificationKey] }.orEmpty()
         MediaRow(
             state = state,
@@ -110,12 +111,14 @@ fun HomePage(
             icon = app?.let { icons[it.key] },
             notifications = notificationsForApp,
             showArt = settings.showIcons,
-            monochrome = settings.monochromeIcons,
+            // Settings disables Monochrome while icons are hidden, so it mustn't grey the player then either.
+            monochrome = settings.showIcons && settings.monochromeIcons,
             resting = mediaResting,
-            expanded = expandedKey == expandKey,
+            expanded = expanded,
             onOpen = onOpenMedia,
             // Sessions without a launchable app have no options sheet; long-press hides them instead.
             onLongClick = app?.let { { onAppLongPress(it) } } ?: onHideMedia.takeIf { !state.isPlaying },
+            onLongClickLabel = if (app != null) "App options" else "Hide player",
             onToggleExpand = { onToggleExpand(expandKey) },
             onNotificationClick = { n -> app?.let { onOpenNotification(it, n) } },
             onHide = onHideMedia,
@@ -138,6 +141,14 @@ fun HomePage(
         // The playing app's favorite row becomes the player; if it isn't a favorite, a temporary row sits on top.
         val hostKey = media?.let { m -> favorites.firstOrNull { it.packageName == m.packageName && !it.isWork }?.key }
         val floating = media?.takeIf { hostKey == null }
+        // Every temporary player expands as "media": tie that to the session it was opened on, so the next one starts collapsed.
+        val mediaExpandedFor = remember { Latest<Int>() }.also {
+            if (expandedKey != "media") it.value = null else if (it.value == null) it.value = floating?.sessionId
+        }
+        // A temporary player whose app becomes a favorite keeps its notifications open in that row.
+        LaunchedEffect(hostKey) {
+            if (hostKey != null && expandedKey == "media" && mediaExpandedFor.value == media?.sessionId) onToggleExpand("fav:$hostKey")
+        }
         // Targets are small keys, not the state itself: AnimatedContent remembers every target it has seen.
         val lastFloating = remember { Latest<NowPlayingState>() }.also { if (floating != null) it.value = floating }
         val lastFloatingApp = remember { Latest<AppEntry>() }.also {
@@ -166,7 +177,7 @@ fun HomePage(
                     heldApp.value = lastFloatingApp.value
                 }
                 val state = held.value ?: return@AnimatedContent
-                Player(state, heldApp.value, "media")
+                Player(state, heldApp.value, "media", expandedKey == "media" && mediaExpandedFor.value == state.sessionId)
             }
         }
 
@@ -191,7 +202,7 @@ fun HomePage(
                 ) { hosted ->
                     val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null
                     if (hostedState != null) {
-                        Player(hostedState, app, "fav:${app.key}")
+                        Player(hostedState, app, "fav:${app.key}", expandedKey == "fav:${app.key}")
                     } else {
                         AppRow(
                             app = app,

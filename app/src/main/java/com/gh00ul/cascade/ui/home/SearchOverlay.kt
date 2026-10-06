@@ -85,8 +85,8 @@ fun SearchOverlay(
         if (top != null) {
             onLaunch(top, null)
         } else if (query.isNotBlank()) {
-            LauncherActions.webSearch(context, query.trim())
-            onDismiss()
+            // Stays open when no app could take the search, so the query isn't lost.
+            if (LauncherActions.webSearch(context, query.trim())) onDismiss()
         }
     }
 
@@ -182,10 +182,7 @@ fun SearchOverlay(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    LauncherActions.webSearch(context, query.trim())
-                                    onDismiss()
-                                }
+                                .clickable { if (LauncherActions.webSearch(context, query.trim())) onDismiss() }
                                 .padding(horizontal = 8.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

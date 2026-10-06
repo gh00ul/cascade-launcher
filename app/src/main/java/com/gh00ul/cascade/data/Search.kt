@@ -4,9 +4,23 @@ import java.text.Normalizer
 
 private val combiningMarks = Regex("\\p{Mn}+")
 
-/** Lowercase and strip accents so "Café" matches "cafe". */
-fun String.normalizedForSearch(): String =
-    Normalizer.normalize(this, Normalizer.Form.NFD).replace(combiningMarks, "").lowercase()
+// Letters with no decomposition, so stripping marks alone never reaches their ASCII spelling.
+private val letterFolds = mapOf(
+    'đ' to "d", 'ð' to "d", 'ı' to "i", 'ł' to "l", 'ø' to "o", 'ħ' to "h", 'ŧ' to "t",
+    'æ' to "ae", 'œ' to "oe", 'ß' to "ss", 'þ' to "th", 'ς' to "σ",
+)
+
+/**
+ * Lowercase, strip accents and fold stroked letters so "Café" matches "cafe" and "Cài đặt" matches "cai dat".
+ * NFKD (not NFD) also maps fullwidth forms, ligatures and the compatibility jamo a Korean IME is composing.
+ */
+fun String.normalizedForSearch(): String {
+    val base = Normalizer.normalize(this, Normalizer.Form.NFKD).replace(combiningMarks, "").lowercase()
+    if (base.none { it in letterFolds }) return base
+    return buildString(base.length + 4) {
+        for (c in base) { val f = letterFolds[c]; if (f != null) append(f) else append(c) }
+    }
+}
 
 /** Best matches first: prefix, then word start, then initials ("gm" → Google Maps), then substring, then fuzzy. */
 fun searchApps(apps: List<AppEntry>, query: String): List<AppEntry> {

@@ -95,6 +95,8 @@ object NowPlaying {
     private class Tracked(val controller: MediaController) {
         lateinit var callback: MediaController.Callback
         var playback: PlaybackState? = null
+        /** [SystemClock.elapsedRealtime] when [playback] last changed: dates a pause. */
+        var playbackSince = 0L
         var metadata: MediaMetadata? = null
         var thumb: Bitmap? = null
 
@@ -128,8 +130,9 @@ object NowPlaying {
     private var ownPackage: String? = null
     /** Keyed by token: getActiveSessions hands out new MediaController objects for the same session every time. */
     private val sessions = LinkedHashMap<MediaSession.Token, Tracked>()
-    private val pausedSince = HashMap<MediaSession.Token, Long>()
-    private val hidden = HashSet<MediaSession.Token>()
+    // Keyed by package: an app that loses its session with its process and recreates it paused is the same player.
+    private val pausedSince = HashMap<String, Long>()
+    private val hidden = HashSet<String>()
     private var shown: MediaSession.Token? = null
     private var artKey: String? = null
     private var art: ImageBitmap? = null
@@ -140,6 +143,8 @@ object NowPlaying {
     private val clear = Runnable {
         clearPending = false
         _state.value = null
+        // A shown session held only through the grace gives way to the next one in line.
+        publish(force = true)
     }
 
     private val PLAYING_STATES = setOf(
@@ -162,7 +167,6 @@ object NowPlaying {
         MediaMetadata.METADATA_KEY_ARTIST,
         MediaMetadata.METADATA_KEY_ALBUM_ARTIST,
         MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE,
-        MediaMetadata.METADATA_KEY_ALBUM,
     )
 
     private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { track(it.orEmpty()) }
@@ -185,6 +189,7 @@ object NowPlaying {
         manager?.removeOnActiveSessionsChangedListener(sessionsListener)
         manager = null
         track(emptyList())
+        // Plays while disconnected can't be seen: start over, and register() dates a still-paused session on reconnect.
         pausedSince.clear()
         hidden.clear()
         shown = null
@@ -194,9 +199,9 @@ object NowPlaying {
     /** Re-check everything (Handler delays don't advance in deep sleep). Call on the main thread when home shows. */
     fun refresh() = publish(force = true, immediate = true)
 
-    /** Hide the shown (not playing) session until it plays again. */
+    /** Hide the shown (not playing) player until its app plays again. */
     fun hide() {
-        shown?.let { hidden += it }
+        shown?.let { sessions[it] }?.let { hidden += it.controller.packageName }
         publish(force = true, immediate = true)
     }
 
@@ -224,6 +229,7 @@ object NowPlaying {
         tracked.callback = object : MediaController.Callback() {
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 tracked.playback = state
+                tracked.playbackSince = SystemClock.elapsedRealtime()
                 publish()
             }
 
@@ -242,34 +248,54 @@ object NowPlaying {
         controller.registerCallback(tracked.callback, handler)
         // Callbacks only report changes; read the current values once.
         tracked.playback = controller.playbackState
+        // Already paused when first seen (start, reconnect): date it from the session's own last update.
+        val now = SystemClock.elapsedRealtime()
+        tracked.playbackSince = tracked.playback?.lastPositionUpdateTime?.takeIf { it in 1..now } ?: now
         tracked.updateMetadata(controller.metadata)
         return tracked
     }
 
     /**
-     * Recomputes the shown session. Skipped while nothing observes the state (launcher stopped or screen off);
-     * [refresh] on resume catches up. [immediate] removes the player without the between-tracks grace.
+     * Recomputes the shown session. The pause and hide bookkeeping runs on every call, so plays and pauses while home
+     * isn't showing still count; the rest is skipped while nothing observes the state (launcher stopped or screen off),
+     * and [refresh] on resume catches up. [immediate] removes the player without the between-tracks grace, unless the
+     * shown session is only between tracks.
      */
     private fun publish(force: Boolean = false, immediate: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        // Reads only cached state, so it's cheap. An app that plays clears its timer and hide; the others start resting.
+        val playing = HashSet<String>()
+        val resting = HashMap<String, Long>()
+        for (tracked in sessions.values) {
+            val playback = tracked.playback ?: continue
+            val owner = tracked.controller.packageName
+            if (playback.state in PLAYING_STATES) {
+                playing += owner
+            } else if (playback.state in ACTIVE_STATES) {
+                resting[owner] = max(tracked.playbackSince, resting[owner] ?: 0L)
+            }
+        }
+        pausedSince -= playing
+        hidden -= playing
+        for ((owner, since) in resting) if (owner !in playing) pausedSince.getOrPut(owner) { since }
         if (!force && _state.subscriptionCount.value == 0) return
         handler.removeCallbacks(recheck)
-        val now = SystemClock.elapsedRealtime()
-        pausedSince.keys.retainAll(sessions.keys)
-        hidden.retainAll(sessions.keys)
         var wake = Long.MAX_VALUE
         val eligible = sessions.mapNotNull { (token, tracked) ->
             val playback = tracked.playback
             val metadata = tracked.metadata
             val s = playback?.state ?: return@mapNotNull null
-            if (metadata == null || s !in ACTIVE_STATES) return@mapNotNull null
-            if (s in PLAYING_STATES) {
-                pausedSince -= token
-                hidden -= token
-                return@mapNotNull Snapshot(token, tracked.controller, playback, metadata, tracked.thumb)
+            // Nothing to show without a title: let the next session in line have the player, but only once the shown
+            // one's grace has run out.
+            if (s !in ACTIVE_STATES || titleOf(metadata) == null && (token != shown || _state.value == null)) {
+                return@mapNotNull null
             }
+            if (s in PLAYING_STATES) return@mapNotNull Snapshot(token, tracked.controller, playback, metadata, tracked.thumb)
             // Paused, or stuck buffering: retire after 30 minutes, and allow hiding.
-            if (token in hidden) return@mapNotNull null
-            val left = pausedSince.getOrPut(token) { now } + STALE_PAUSE_MS - now
+            val owner = tracked.controller.packageName
+            if (owner in hidden) return@mapNotNull null
+            // Unset only while another session of the same app plays.
+            val left = (pausedSince[owner] ?: now) + STALE_PAUSE_MS - now
             if (left <= 0) return@mapNotNull null
             wake = minOf(wake, left)
             Snapshot(token, tracked.controller, playback, metadata, tracked.thumb)
@@ -278,18 +304,23 @@ object NowPlaying {
         val chosen = eligible.firstOrNull { it.playback?.state in PLAYING_STATES }
             ?: eligible.firstOrNull { it.playback?.state != PlaybackState.STATE_PAUSED }
             ?: eligible.firstOrNull()
+        val previous = shown
         shown = chosen?.token
         val next = chosen?.let(::toState)
         val prev = _state.value
         if (next == null) {
             if (prev == null) return
-            if (immediate) {
+            if (immediate && !betweenTracks(previous)) {
                 handler.removeCallbacks(clear)
                 clearPending = false
                 _state.value = null
-            } else if (!clearPending) {
-                clearPending = true
-                handler.postDelayed(clear, REMOVE_GRACE_MS)
+            } else {
+                // The player stays up through the grace, so hide() still acts on it.
+                shown = previous
+                if (!clearPending) {
+                    clearPending = true
+                    handler.postDelayed(clear, REMOVE_GRACE_MS)
+                }
             }
             return
         }
@@ -300,18 +331,29 @@ object NowPlaying {
         _state.value = next
     }
 
+    /** The shown session is still there and active, and has only dropped its title for a moment. */
+    private fun betweenTracks(token: MediaSession.Token?): Boolean {
+        val tracked = token?.let { sessions[it] } ?: return false
+        return tracked.controller.packageName !in hidden &&
+            tracked.playback?.state in ACTIVE_STATES &&
+            titleOf(tracked.metadata) == null
+    }
+
+    private fun titleOf(metadata: MediaMetadata?): String? =
+        metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)?.takeIf { it.isNotBlank() }
+
     private fun toState(snapshot: Snapshot): NowPlayingState? {
         val controller = snapshot.controller
         val metadata = snapshot.metadata ?: return null
-        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
-            ?: metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            ?: return null
+        val title = titleOf(metadata) ?: return null
         val subtitle = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
             ?: metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
             ?: metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
             ?: ""
         val pkg = controller.packageName.let { if (it == ownPackage) debugAlias ?: it else it }
-        val trackKey = "$pkg|$title|$subtitle|${metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)}"
+        // Only what is shown: an album arriving a moment after the title must not replay the track change.
+        val trackKey = "$pkg|$title|$subtitle"
         val thumb = snapshot.thumb
         // Include the cover's size: many apps post the title first and the cover a moment later.
         val key = "$trackKey|${thumb?.width}x${thumb?.height}"
@@ -345,7 +387,8 @@ object NowPlaying {
             durationMs = duration,
             positionMs = playback?.position ?: 0L,
             positionUpdatedAt = playback?.lastPositionUpdateTime?.takeIf { it > 0 } ?: now,
-            speed = playback?.playbackSpeed?.takeIf { it > 0f } ?: 1f,
+            // Negative while rewinding; 0 (or garbage) while playing means normal speed.
+            speed = playback?.playbackSpeed?.takeIf { it != 0f && it.isFinite() } ?: 1f,
             canPlayPause = actions == 0L ||
                 actions and (PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE) != 0L,
             canSkipPrevious = actions and PlaybackState.ACTION_SKIP_TO_PREVIOUS != 0L,

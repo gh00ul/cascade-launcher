@@ -2,6 +2,7 @@ package com.gh00ul.cascade.testing
 
 import android.app.Notification
 import android.content.Context
+import android.os.Bundle
 import android.os.Process
 import android.os.UserHandle
 import android.service.notification.StatusBarNotification
@@ -51,5 +52,29 @@ object FakeNotifications {
         .setShowWhen(true)
         .setOngoing(true)
         .setContentTitle(title)
+        .build()
+
+    /** A running stopwatch counting up from [startedAt]; a null [title] gives it no title. */
+    fun stopwatch(context: Context, title: String?, startedAt: Long) = Notification.Builder(context, "timers")
+        .setSmallIcon(android.R.drawable.sym_def_app_icon)
+        .setUsesChronometer(true)
+        .setWhen(startedAt)
+        .setShowWhen(true)
+        .setOngoing(true)
+        .setContentTitle(title)
+        .build()
+
+    /** A chat named only by EXTRA_CONVERSATION_TITLE, with no EXTRA_TITLE. */
+    fun conversation(context: Context, conversationTitle: String, text: String) = Notification.Builder(context, "messages")
+        .setSmallIcon(android.R.drawable.sym_def_app_icon)
+        .addExtras(Bundle().apply { putCharSequence(Notification.EXTRA_CONVERSATION_TITLE, conversationTitle) })
+        .setContentText(text)
+        .build()
+
+    /** An expanded-text notification whose body is only in EXTRA_BIG_TEXT, with no EXTRA_TEXT. */
+    fun bigText(context: Context, title: String, body: String) = Notification.Builder(context, "messages")
+        .setSmallIcon(android.R.drawable.sym_def_app_icon)
+        .setContentTitle(title)
+        .setStyle(Notification.BigTextStyle().bigText(body))
         .build()
 }

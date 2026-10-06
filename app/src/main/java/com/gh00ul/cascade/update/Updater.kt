@@ -93,13 +93,9 @@ object Updater {
                 val assets = json.getJSONArray("assets")
                 val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
                     .firstOrNull { it.getString("name").endsWith(".apk") }?.getString("browser_download_url")
-                val code = versionCode(tag)
                 val installed = installedInfo(app)
-                when {
-                    apk == null || code == null -> State.UpToDate(installed.versionName.orEmpty())
-                    code > PackageInfoCompat.getLongVersionCode(installed) -> State.Available(Release(tag, tag.removePrefix("v"), code, apk))
-                    else -> State.UpToDate(installed.versionName.orEmpty())
-                }
+                newerRelease(tag, apk, PackageInfoCompat.getLongVersionCode(installed))?.let { State.Available(it) }
+                    ?: State.UpToDate(installed.versionName.orEmpty())
             } catch (_: FileNotFoundException) {
                 State.UpToDate(installedInfo(app).versionName.orEmpty())
             } catch (e: Exception) {
@@ -230,10 +226,18 @@ object Updater {
         else pm.getPackageArchiveInfo(file.path, flags)
     }
 
+    /** The release [tag] offers when it has an APK and is newer than [installedCode]; null otherwise. */
+    internal fun newerRelease(tag: String, apkUrl: String?, installedCode: Long): Release? {
+        val code = versionCode(tag) ?: return null
+        if (apkUrl == null || code <= installedCode) return null
+        return Release(tag, tag.removePrefix("v"), code, apkUrl)
+    }
+
     /** "v1.2.3" to the versionCode app/build.gradle.kts gives that release; null for tags that don't fit. */
-    private fun versionCode(tag: String): Long? {
+    internal fun versionCode(tag: String): Long? {
         val parts = Regex("""v?(\d+)\.(\d+)\.(\d+)""").matchEntire(tag.trim())?.groupValues ?: return null
-        val (major, minor, patch) = parts.drop(1).map(String::toLong)
+        // Digits too long for a Long don't fit either; toLong would throw and fail the whole check.
+        val (major, minor, patch) = parts.drop(1).map { it.toLongOrNull() ?: return null }
         return (major * 10000 + minor * 100 + patch) * 1000
     }
 

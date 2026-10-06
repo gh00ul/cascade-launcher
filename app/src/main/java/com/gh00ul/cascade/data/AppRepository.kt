@@ -13,6 +13,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.icu.text.AlphabeticIndex
+import android.icu.text.Collator
 import android.os.Build
 import android.os.Handler
 import android.os.LocaleList
@@ -41,7 +42,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
-import java.text.Collator
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
@@ -77,6 +77,50 @@ private class InstalledApp(
     val isWork: Boolean,
     val isManagedProfile: Boolean,
 )
+
+/**
+ * [items] in A–Z list order, each with the section it's filed under: "#" (digits, symbols and letters outside the
+ * index) first, then the sections in index order, each one run, and by name within a section.
+ */
+internal fun <T> sortIntoSections(
+    items: List<T>,
+    label: (T) -> String,
+    locales: LocaleList = LocaleList.getDefault(),
+): List<Pair<T, String>> {
+    val primary = locales[0] ?: Locale.getDefault()
+    // ICU's own, which java.text.Collator wraps on Android anyway: JVM tests then check the same rules.
+    val collator = Collator.getInstance(primary).apply { strength = Collator.PRIMARY }
+    val index = sectionIndex(primary, locales)
+    return items
+        .map { item ->
+            // Sorted by the trimmed name too, not just bucketed by it: ICU doesn't ignore spaces, so " Zoom" came
+            // before "Zebra".
+            val name = label(item).trim()
+            val bucket = index.getBucketIndex(name)
+            // Digits, symbols and letters the index has no section for all go under "#", first.
+            val section = index.getBucket(bucket)?.takeIf { it.labelType == AlphabeticIndex.Bucket.LabelType.NORMAL }?.label
+            Triple(item to (section ?: "#"), name, if (section == null) -1 else bucket)
+        }
+        // Index order first, so each section is one run: the collator alone splits some (Czech "ch" sorts
+        // after H, katakana ties with hiragana). Then by name within the section.
+        .sortedWith(compareBy<Triple<Pair<T, String>, String, Int>> { it.third }.thenBy(collator) { it.second })
+        .map { it.first }
+}
+
+/**
+ * The sections of the user's languages, then (as the system's own index does) other common alphabets so
+ * their names aren't all lumped under "#": A–Z, Å/Ä/Ö after Z in Swedish, pinyin A–Z for Chinese, kana rows
+ * for Japanese, initial consonants for Korean.
+ */
+private fun sectionIndex(primary: Locale, locales: LocaleList): AlphabeticIndex.ImmutableIndex<Any> =
+    AlphabeticIndex<Any>(primary).apply {
+        // The default cap of 99 labels would thin out every alphabet, A–Z included.
+        setMaxLabelCount(300)
+        for (i in 0 until locales.size()) addLabels(locales[i])
+        addLabels(Locale.ENGLISH, Locale.JAPANESE, Locale.KOREAN)
+        // Ukrainian and Serbian together cover Cyrillic, as in the Contacts index.
+        for (tag in listOf("th", "ar", "he", "el", "uk", "sr")) addLabels(Locale.forLanguageTag(tag))
+    }.buildImmutableIndex()
 
 class AppRepository(
     private val context: Context,
@@ -208,43 +252,13 @@ class AppRepository(
         return type == UserManager.USER_TYPE_PROFILE_MANAGED
     }
 
-    private fun buildEntries(list: List<InstalledApp>, renames: Map<String, String>): List<AppEntry> {
-        val collator = Collator.getInstance().apply { strength = Collator.PRIMARY }
-        val index = sectionIndex()
-        return list
-            .map { app ->
-                val label = renames[app.key] ?: app.label
-                val bucket = index.getBucketIndex(label.trim())
-                // Digits, symbols and letters the index has no section for all go under "#", first.
-                val section = index.getBucket(bucket)?.takeIf { it.labelType == AlphabeticIndex.Bucket.LabelType.NORMAL }?.label
-                val entry = AppEntry(
-                    app.key, label, app.label, app.info.componentName, app.info.user, app.isWork, app.isManagedProfile,
-                    section ?: "#",
-                )
-                entry to (if (section == null) -1 else bucket)
-            }
-            // Index order first, so each section is one run: the collator alone splits some (Czech "ch" sorts
-            // after H, katakana ties with hiragana). Then by name within the section.
-            .sortedWith(compareBy<Pair<AppEntry, Int>> { it.second }.thenBy(collator) { it.first.label })
-            .map { it.first }
-    }
-
-    /**
-     * The sections of the user's languages, then (as the system's own index does) other common alphabets so
-     * their names aren't all lumped under "#": A–Z, Å/Ä/Ö after Z in Swedish, pinyin A–Z for Chinese, kana rows
-     * for Japanese, initial consonants for Korean.
-     */
-    private fun sectionIndex(): AlphabeticIndex.ImmutableIndex<Any> {
-        val locales = LocaleList.getDefault()
-        return AlphabeticIndex<Any>(Locale.getDefault()).apply {
-            // The default cap of 99 labels would thin out every alphabet, A–Z included.
-            setMaxLabelCount(300)
-            for (i in 0 until locales.size()) addLabels(locales[i])
-            addLabels(Locale.ENGLISH, Locale.JAPANESE, Locale.KOREAN)
-            // Ukrainian and Serbian together cover Cyrillic, as in the Contacts index.
-            for (tag in listOf("th", "ar", "he", "el", "uk", "sr")) addLabels(Locale.forLanguageTag(tag))
-        }.buildImmutableIndex()
-    }
+    private fun buildEntries(list: List<InstalledApp>, renames: Map<String, String>): List<AppEntry> =
+        sortIntoSections(list, { renames[it.key] ?: it.label }).map { (app, section) ->
+            AppEntry(
+                app.key, renames[app.key] ?: app.label, app.label, app.info.componentName, app.info.user, app.isWork,
+                app.isManagedProfile, section,
+            )
+        }
 
     /**
      * Keeps favorites, hidden flags and renames when an app's launcher activity is replaced: icon pickers

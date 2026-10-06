@@ -64,6 +64,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
@@ -252,7 +254,7 @@ private fun rememberNextEvent(enabled: Boolean, now: Long): CalendarEvent? {
     return event?.takeIf { it.allDay || it.end > now }
 }
 
-private class Battery(val level: Int, val charging: Boolean, val fullInMs: Long)
+internal class Battery(val level: Int, val charging: Boolean, val fullInMs: Long)
 
 /** Battery level and charging state from the sticky ACTION_BATTERY_CHANGED broadcast, or null when [enabled] is off. */
 @Composable
@@ -288,23 +290,23 @@ private fun rememberBattery(enabled: Boolean): Battery? {
 }
 
 /** Chip text and what TalkBack says. */
-private fun batteryText(b: Battery): Pair<String, String> = when {
+internal fun batteryText(b: Battery): Pair<String, String> = when {
     b.charging && b.level >= 100 -> "Charged" to "Battery charged"
     b.charging && b.fullInMs > 0 -> "${b.level}%  ·  full in ${duration(b.fullInMs)}" to
-        "Charging, ${b.level} percent, full in ${spokenDuration(b.fullInMs)}"
+        "Charging, ${b.level} percent, full in ${spokenDuration(roundedUp(b.fullInMs))}"
     b.charging -> "${b.level}%  ·  charging" to "Charging, ${b.level} percent"
     else -> "${b.level}% battery" to "Battery low, ${b.level} percent"
 }
 
-private fun clockPattern(locale: Locale, is24h: Boolean, withDay: Boolean) =
+internal fun clockPattern(locale: Locale, is24h: Boolean, withDay: Boolean) =
     DateFormat.getBestDateTimePattern(locale, (if (withDay) "EEE" else "") + if (is24h) "Hmm" else "hmma")
 
 /** Chip text and what TalkBack says. */
-private fun alarmText(trigger: Long, now: Long, is24h: Boolean, locale: Locale): Pair<String, String> {
+internal fun alarmText(trigger: Long, now: Long, is24h: Boolean, locale: Locale): Pair<String, String> {
     val left = trigger - now
     return if (left in 0 until 24 * 60 * 60_000L) {
         val time = SimpleDateFormat(clockPattern(locale, is24h, withDay = false), locale).format(Date(trigger))
-        "$time  ·  in ${duration(left)}" to "$time, in ${spokenDuration(left)}"
+        "$time  ·  in ${duration(left)}" to "$time, in ${spokenDuration(roundedUp(left))}"
     } else {
         val time = SimpleDateFormat(clockPattern(locale, is24h, withDay = true), locale).format(Date(trigger))
         time to time
@@ -312,24 +314,31 @@ private fun alarmText(trigger: Long, now: Long, is24h: Boolean, locale: Locale):
 }
 
 /** Title, the when-part (never truncated), and the when-part as spoken. */
-private fun eventText(e: CalendarEvent, now: Long, is24h: Boolean, locale: Locale): Triple<String, String, String> {
+internal fun eventText(e: CalendarEvent, now: Long, is24h: Boolean, locale: Locale): Triple<String, String, String> {
     if (e.allDay) return Triple(e.title, "today", "today")
-    fun at(time: Long) = SimpleDateFormat(clockPattern(locale, is24h, withDay = !DateUtils.isToday(time)), locale).format(Date(time))
+    // Today means [now]'s day, not the system clock's (DateUtils.isToday), so it follows LocalNow.
+    fun at(time: Long) = SimpleDateFormat(clockPattern(locale, is24h, withDay = !sameDay(time, now)), locale).format(Date(time))
     return when {
         e.begin <= now -> Triple(e.title, "until ${at(e.end)}", "until ${at(e.end)}")
-        e.begin - now < 60 * 60_000L -> Triple(e.title, "in ${duration(e.begin - now)}", "in ${spokenDuration(e.begin - now)}")
+        e.begin - now < 60 * 60_000L -> Triple(e.title, "in ${duration(e.begin - now)}", "in ${spokenDuration(roundedUp(e.begin - now))}")
         else -> Triple(e.title, at(e.begin), at(e.begin))
     }
 }
 
 /** "25 min", "3h 10m". Rounds up so a countdown never shows "0 min" while time remains. */
-private fun duration(ms: Long): String {
-    val minutes = (abs(ms) + 59_999) / 60_000
+internal fun duration(ms: Long): String {
+    val minutes = roundedUp(ms) / 60_000
     return if (minutes < 60) "$minutes min" else "${minutes / 60}h ${minutes % 60}m"
 }
 
+/**
+ * [ms] rounded up to whole minutes, the amount [duration] shows. Chips pass it to [spokenDuration] too: TIME_TICK
+ * lands just after the minute, so flooring would have TalkBack say one minute less than the chip.
+ */
+private fun roundedUp(ms: Long) = (abs(ms) + 59_999) / 60_000 * 60_000
+
 /** "3 hours 10 minutes", "45 seconds": the same amount as TalkBack should say it. */
-private fun spokenDuration(ms: Long): String {
+internal fun spokenDuration(ms: Long): String {
     val total = abs(ms) / 1_000
     val hours = total / 3_600
     val minutes = total % 3_600 / 60
@@ -340,4 +349,10 @@ private fun spokenDuration(ms: Long): String {
         if (minutes > 0) add(unit(minutes, "minute"))
         if (hours == 0L && minutes == 0L) add(unit(seconds, "second"))
     }.joinToString(" ")
+}
+
+/** Whether [a] and [b] fall on the same day in the device's time zone. */
+private fun sameDay(a: Long, b: Long): Boolean {
+    val zone = ZoneId.systemDefault()
+    return Instant.ofEpochMilli(a).atZone(zone).toLocalDate() == Instant.ofEpochMilli(b).atZone(zone).toLocalDate()
 }

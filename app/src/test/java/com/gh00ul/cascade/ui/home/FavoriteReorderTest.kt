@@ -168,6 +168,26 @@ class FavoriteReorderTest {
         assertSettles()
     }
 
+    /** A drag cut short by the system (a call, the screen going off): the rows go back, and nothing is saved. */
+    @Test fun aCancelledDragSavesNothing() {
+        show()
+        val phone = row(FakeApps.phone)
+        val pitch = pitch()
+        hold(phone)
+        phone.performTouchInput {
+            repeat(24) { moveBy(Offset(0f, pitch * 2.2f / 24)) }
+            cancel()
+        }
+        compose.waitForIdle()
+        assertTrue("Nothing saved", saved.isEmpty())
+        assertEquals(FakeApps.favorites.map { it.label }, labels)
+        assertTrue("Nothing launched", launched.isEmpty())
+        assertSettles()
+        // Each row is back in its own slot.
+        val tops = FakeApps.favorites.map { row(it).getBoundsInRoot().top }
+        assertEquals(tops.sortedBy { it.value }, tops)
+    }
+
     @Test fun aTapStillOpensTheApp() {
         show()
         row(FakeApps.camera).performTouchInput {

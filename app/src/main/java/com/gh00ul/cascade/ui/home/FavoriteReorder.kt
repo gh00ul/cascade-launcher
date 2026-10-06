@@ -172,6 +172,20 @@ internal class FavoriteReorder(
         }
     }
 
+    /** Ends a drag the system cut short: every row glides back to where the layout has it, and nothing is saved. */
+    fun cancel() {
+        if (held == null) return
+        val back = keys
+        order = back
+        scope.launch {
+            coroutineScope {
+                for (k in back) launch { tops[k]?.animateTo(slotTop(back, k), Motion.Reorder) }
+                launch { lift.animateTo(0f, Motion.Reorder) }
+            }
+            clear()
+        }
+    }
+
     /** Lets go of a row that wasn't dragged: it sinks back, and nothing moved. */
     fun putDown() {
         if (held == null) return
@@ -315,11 +329,15 @@ internal fun Modifier.liftToReorder(
             menu(place.coordinates?.takeIf { it.isAttached }?.boundsInRoot())
             var travel = 0f
             var dragging = false
+            var cancelled = false
             try {
                 while (true) {
                     val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
                     // Read before it's consumed: a consumed change reports no movement.
                     val dy = change.positionChange().y
+                    // The system cancelling the touch (a call, the screen going off) arrives as a release that's already
+                    // consumed; a finger lifting, as one nobody has taken yet.
+                    if (!change.pressed && change.isConsumed) cancelled = true
                     // Everything from here is the move's: the row's tap and the list's scroll see it taken.
                     change.consume()
                     if (!change.pressed) break
@@ -331,8 +349,13 @@ internal fun Modifier.liftToReorder(
                     if (dragging) state.drag(dy)
                 }
             } finally {
-                // Let go without dragging: the menu stays open, and the row sinks back under it.
-                if (dragging) state.drop() else state.putDown()
+                // Let go without dragging: the menu stays open, and the row sinks back under it. A drag the system cut
+                // short saves nothing.
+                when {
+                    cancelled && dragging -> state.cancel()
+                    dragging -> state.drop()
+                    else -> state.putDown()
+                }
             }
         }
     }

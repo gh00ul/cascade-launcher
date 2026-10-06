@@ -31,11 +31,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -54,6 +57,7 @@ import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.notifications.LastPlayed
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.common.ExtraIcons
+import com.gh00ul.cascade.ui.theme.GlassEdgeWidth
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 
 /**
@@ -143,6 +147,14 @@ fun ResumeRow(
                     endX = if (rtl) 0f else size.width,
                 )
                 drawRoundRect(brush, cornerRadius = CornerRadius(20.dp.toPx()))
+                val edge = GlassEdgeWidth.toPx()
+                drawRoundRect(
+                    style.glassEdge,
+                    topLeft = Offset(edge / 2, edge / 2),
+                    size = Size(size.width - edge, size.height - edge),
+                    cornerRadius = CornerRadius(20.dp.toPx() - edge / 2),
+                    style = Stroke(edge),
+                )
             }
             .clip(ResumeShape)
             .combinedClickable(

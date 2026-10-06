@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onPlaced
@@ -57,12 +58,18 @@ import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -74,6 +81,7 @@ import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.AppIcon
+import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
 import kotlinx.coroutines.CoroutineStart
@@ -113,6 +121,8 @@ fun AppRow(
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
     onToggleExpand: (() -> Unit)? = null,
+    /** A favorite on home, whose long press [liftToReorder] watches for: the row leaves it alone, but TalkBack keeps it. */
+    longPressInParent: Boolean = false,
 ) {
     val style = LocalLauncherStyle.current
     val bounds = remember { BoundsHolder() }
@@ -122,6 +132,13 @@ fun AppRow(
     val canExpand = hasNotifications && onToggleExpand != null
     val showExpanded = expanded && hasNotifications
     val press = rememberPressIndication()
+    // Favorite labels follow the icon size; Settings locks that size while icons are hidden.
+    val labelStyle = when {
+        !large -> style.app
+        showIcon -> style.favoriteFor(iconSize)
+        else -> style.favorite
+    }
+    val capMiddle = with(LocalDensity.current) { (labelStyle.fontSize.toPx() * CapMiddle).roundToInt() }
 
     Column(modifier.fillMaxWidth()) {
         Row(
@@ -140,15 +157,23 @@ fun AppRow(
                     hapticFeedbackEnabled = false,
                     onLongClickLabel = "App options",
                     onClick = { onClick(bounds.rect) },
-                    onLongClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongClick()
+                    onLongClick = if (longPressInParent) null else {
+                        {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        }
                     },
                 )
                 // After the clickable: the ripple fills the row's shape (and the search tint) while only the content
                 // shrinks; drawn only, so the launch still reveals from the row's real bounds.
                 .pressScale(press)
                 .semantics {
+                    if (longPressInParent) {
+                        onLongClick("App options") {
+                            onLongClick()
+                            true
+                        }
+                    }
                     // The badge dot is visual only.
                     if (hasNotifications) stateDescription = notificationCount(notifications.size)
                     if (canExpand) {
@@ -164,7 +189,9 @@ fun AppRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (showIcon) {
-                Box {
+                // Centered on the name's capitals rather than on the row, so a preview hangs below the name and every
+                // favorite's name falls on the same rhythm, with a preview or without.
+                Box(Modifier.alignBy { it.measuredHeight / 2 + capMiddle }) {
                     AppIcon(icon, iconSize)
                     if (showDot) {
                         Box(
@@ -179,21 +206,18 @@ fun AppRow(
                 }
                 Spacer(Modifier.width(16.dp))
             }
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f).alignBy(FirstBaseline)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         app.label,
-                        // Favorite labels follow the icon size; Settings locks that size while icons are hidden.
-                        style = when {
-                            !large -> style.app
-                            showIcon -> style.favoriteFor(iconSize)
-                            else -> style.favorite
-                        },
+                        style = labelStyle,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f, fill = false).alignByBaseline(),
                     )
-                    if (app.isManagedProfile) Text("  work", style = style.small.copy(color = style.content.copy(alpha = 0.55f)))
+                    if (app.isManagedProfile) {
+                        Text("  work", style = style.small.copy(color = style.content.copy(alpha = 0.55f)), modifier = Modifier.alignByBaseline())
+                    }
                     if (!showIcon && showDot) {
                         Spacer(Modifier.width(10.dp))
                         Box(Modifier.size(8.dp).background(style.accent, CircleShape))
@@ -201,7 +225,12 @@ fun AppRow(
                 }
                 val latest = notifications.firstOrNull()
                 if (showPreview && latest != null && !showExpanded) {
-                    NotificationPreview(latest, more = notifications.size - 1, onClick = { onNotificationClick(latest) })
+                    NotificationPreview(
+                        latest,
+                        more = notifications.size - 1,
+                        onClick = { onNotificationClick(latest) },
+                        onMore = onToggleExpand.takeIf { canExpand },
+                    )
                 }
             }
         }
@@ -216,26 +245,64 @@ fun AppRow(
                 // The label's x: the row's 8dp padding, then the icon and its 16dp gap.
                 textStart = if (showIcon) iconSize + 24.dp else 8.dp,
                 onOpen = onNotificationClick,
+                onHide = onToggleExpand,
             )
         }
     }
 }
 
+/**
+ * The latest notification under a favorite: who it's from a step stronger than what it says, so a glance picks out
+ * the sender. Tapping it opens it. With more behind it, "+N" shows how many; when the row can open them all
+ * ([onMore]), "+N" is a button that does.
+ */
 @Composable
-private fun NotificationPreview(notification: AppNotification, more: Int, onClick: () -> Unit) {
+private fun NotificationPreview(notification: AppNotification, more: Int, onClick: () -> Unit, onMore: (() -> Unit)?) {
     val style = LocalLauncherStyle.current
-    val text = listOf(notification.title, notification.text).filter { it.isNotBlank() }.joinToString(": ")
-    Row(
-        Modifier
-            .padding(top = 2.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text, style = style.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        if (more > 0) Text("  +$more", style = style.small.copy(color = style.accent))
+    val text = remember(notification.title, notification.text, style) { previewText(notification.title, notification.text, style) }
+    Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier
+                .weight(1f, fill = false)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text, style = style.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            if (more > 0 && onMore == null) Text("  +$more", style = style.small.copy(color = style.accent))
+        }
+        if (more > 0 && onMore != null) MoreButton(more, onMore)
     }
 }
+
+/** "+N" as a small pill in the accent: the notifications behind the latest, opened in place. */
+@Composable
+private fun MoreButton(more: Int, onClick: () -> Unit) {
+    val style = LocalLauncherStyle.current
+    Text(
+        "+$more",
+        style = style.small.copy(color = style.accent, fontWeight = FontWeight.SemiBold),
+        maxLines = 1,
+        modifier = Modifier
+            .padding(start = 6.dp)
+            .clip(CircleShape)
+            .background(style.accent.copy(alpha = 0.18f))
+            .clickable(onClickLabel = "Show all notifications", role = Role.Button, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 1.dp),
+    )
+}
+
+/** A preview line: the sender (or title) at full strength and semibold, then the message at the small style's. */
+internal fun previewText(title: String, text: String, style: LauncherStyle): AnnotatedString = buildAnnotatedString {
+    val who = title.trim()
+    val what = text.trim()
+    if (who.isNotEmpty()) withStyle(SpanStyle(color = style.content, fontWeight = FontWeight.SemiBold)) { append(who) }
+    if (who.isNotEmpty() && what.isNotEmpty()) append("  ")
+    append(what)
+}
+
+/** From a name's baseline up to the middle of its capitals, as a share of its size: Roboto's capitals are 0.71em. */
+internal const val CapMiddle = 0.355f
 
 /** Spoken state for a row's notification badge. */
 internal fun notificationCount(n: Int) = if (n == 1) "1 notification" else "$n notifications"
@@ -248,19 +315,33 @@ private val NotificationInset = 8.dp
  * [textStart], the x of the row's label.
  */
 @Composable
-internal fun ExpandedNotifications(notifications: List<AppNotification>, textStart: Dp, onOpen: (AppNotification) -> Unit) {
+internal fun ExpandedNotifications(
+    notifications: List<AppNotification>,
+    textStart: Dp,
+    onOpen: (AppNotification) -> Unit,
+    onHide: (() -> Unit)? = null,
+) {
     val style = LocalLauncherStyle.current
     Column(Modifier.fillMaxWidth().padding(start = (textStart - NotificationInset).coerceAtLeast(0.dp), end = 8.dp, bottom = 6.dp)) {
         for (n in notifications.take(8)) {
             key(n.key) { NotificationItem(n, onOpen) }
         }
-        if (notifications.count { it.clearable } > 1) {
-            // The same inset as the notifications above, so "Clear all" lines up with them.
-            TextButton(
-                onClick = { NotificationStore.dismissAll(notifications) },
-                contentPadding = PaddingValues(horizontal = NotificationInset, vertical = 8.dp),
-            ) {
-                Text("Clear all", style = style.small.copy(color = style.accent, fontWeight = FontWeight.Medium))
+        val clearAll = notifications.count { it.clearable } > 1
+        if (clearAll || onHide != null) {
+            // The same inset as the notifications above, so the buttons line up with them.
+            val buttonStyle = style.small.copy(color = style.accent, fontWeight = FontWeight.Medium)
+            Row {
+                if (clearAll) {
+                    TextButton(
+                        onClick = { NotificationStore.dismissAll(notifications) },
+                        contentPadding = PaddingValues(horizontal = NotificationInset, vertical = 8.dp),
+                    ) { Text("Clear all", style = buttonStyle) }
+                }
+                if (onHide != null) {
+                    TextButton(onClick = onHide, contentPadding = PaddingValues(horizontal = NotificationInset, vertical = 8.dp)) {
+                        Text("Show less", style = buttonStyle)
+                    }
+                }
             }
         }
     }

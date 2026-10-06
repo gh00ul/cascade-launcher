@@ -2,7 +2,11 @@ package com.gh00ul.cascade.screenshots
 
 import android.content.Intent
 import android.os.BatteryManager
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.performTouchInput
 import com.gh00ul.cascade.data.ClockStyle
 import com.gh00ul.cascade.data.IconSize
 import com.gh00ul.cascade.data.LauncherSettings
@@ -109,6 +113,26 @@ class HomeScreenshots : ScreenshotTest() {
     }
 
     /** A swipe on the Messages favorite: all three notifications inline, with "Clear all". */
+    /**
+     * Mail held until it lifted, then dragged up most of a row: it rides above the rest on its pill, a little larger,
+     * and Messages has slid down into its place. The finger is still down.
+     */
+    @Test fun reorder() = snap(
+        "Home_Reorder",
+        afterContent = {
+            val mail = onAllNodesWithText(FakeApps.mail.label).onFirst()
+            mail.performTouchInput {
+                // The finger held for the variant before is still down: lift it, or down() is refused.
+                if (currentPosition() != null) up()
+                down(center)
+            }
+            mainClock.advanceTimeBy(1_000)
+            mail.performTouchInput { repeat(12) { moveBy(Offset(0f, -height * 0.07f)) } }
+        },
+    ) {
+        HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp(), onReorderFavorites = {})
+    }
+
     @Test fun notificationsExpanded() = snap("Home_NotificationsExpanded") {
         HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp(), expandedKey = "fav:${FakeApps.messages.key}")
     }

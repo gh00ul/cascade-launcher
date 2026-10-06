@@ -53,6 +53,7 @@ import com.gh00ul.cascade.ui.home.AllAppsHeader
 import com.gh00ul.cascade.ui.home.AlphabetWave
 import com.gh00ul.cascade.ui.home.FolderPopup
 import com.gh00ul.cascade.ui.home.HomePage
+import com.gh00ul.cascade.ui.home.HomeStripAlpha
 import com.gh00ul.cascade.ui.home.ListAppRow
 import com.gh00ul.cascade.ui.home.OpenFolder
 import com.gh00ul.cascade.ui.home.SearchOverlay
@@ -203,6 +204,10 @@ internal fun HomeScreen(
     items: List<HomeItem>? = null,
     /** For tests that scroll it, or read where it came to rest. */
     listState: LazyListState = rememberLazyListState(initialFirstVisibleItemIndex = firstItem),
+    /** For tests that tap, long-press or move favorites; moving them is off unless [onReorderFavorites] is given. */
+    onLaunch: (AppEntry) -> Unit = {},
+    onAppLongPress: (AppEntry) -> Unit = {},
+    onReorderFavorites: ((List<String>) -> Unit)? = null,
 ) {
     val style = LocalLauncherStyle.current
     val density = LocalDensity.current
@@ -252,8 +257,8 @@ internal fun HomeScreen(
                     icons = iconsState,
                     notifications = notificationsState,
                     settings = settings,
-                    onLaunch = { _, _ -> },
-                    onAppLongPress = {},
+                    onLaunch = { app, _ -> onLaunch(app) },
+                    onAppLongPress = onAppLongPress,
                     onOpenNotification = { _, _ -> },
                     onEmptyLongPress = {},
                     onEmptyDoubleTap = {},
@@ -267,6 +272,7 @@ internal fun HomeScreen(
                     resume = resume,
                     widgets = widgets,
                     onOpenFolder = { folder, bounds -> openFolder = OpenFolder(folder.id, bounds) },
+                    onReorderFavorites = onReorderFavorites,
                     onboarding = onboarding,
                 )
             }
@@ -304,6 +310,7 @@ internal fun HomeScreen(
                     letters = letters,
                     onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
                     modifier = Modifier.fillMaxHeight(),
+                    restAlpha = { HomeStripAlpha + (1f - HomeStripAlpha) * progress() },
                 )
             }
         }

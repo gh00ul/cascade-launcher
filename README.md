@@ -17,12 +17,18 @@ and Android won't update an app across a key change.
   Scroll down and the full A–Z app list continues below. A flick up from home lands on the top of the list,
   search pill first, and a flick down from there takes you home; let go halfway and it settles on whichever is
   nearer, so home is never left half covered. Inside the list, scrolling is free as usual.
+- **Move favorites on home.** Hold a favorite until it lifts, then drag it up or down; the others slide out
+  of its way and the new order is saved when you let go. Let go without dragging and its menu opens.
 - **Alphabet wave.** Slide your thumb along the letters on the right edge. The letters near your finger
-  swell and bulge out, and the list jumps to that letter. You get a haptic tick on each letter.
+  swell and bulge out, and the list jumps to that letter. You get a haptic tick on each letter. On home the
+  strip stays quiet, so the clock and favorites come first; it brightens as the list comes up or as you touch it.
 - **Notifications in the list.** Apps with notifications get a dot. Favorites also show the latest message
-  underneath; tap it to open that notification.
+  underneath, sender first; tap it to open that notification, or tap **+2** to see the rest.
 - **Swipe an app to see its notifications.** Swipe a row to the right to expand all of that app's
-  notifications in place. Tap one to open it, swipe it sideways to dismiss it, or clear them all.
+  notifications in place. Tap one to open it, swipe it sideways to dismiss it, clear them all, or tap
+  *Show less*.
+- **Glass.** Chips, cards, the widget stack and the player share one translucent look, with a hairline edge
+  that catches the light, and soft washes behind the clock and favorites keep them readable on any wallpaper.
 - **Music in the row.** The playing app's favorite row turns into the player, with album art, title,
   play/pause, previous/next and a seek bar you can drag. Its colors come from the album art and stay readable
   in both text modes. Swipe the row left to skip to the next track. If the app isn't a favorite, a temporary

@@ -71,6 +71,7 @@ import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
+import com.gh00ul.cascade.ui.theme.glass
 import com.gh00ul.cascade.util.CalendarEvent
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.nextCalendarEvent
@@ -187,7 +188,7 @@ fun ClockHeader(settings: LauncherSettings, modifier: Modifier = Modifier) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(top = 12.dp),
+                modifier = Modifier.padding(top = 14.dp),
             ) {
                 AnimatedVisibility(timers.isNotEmpty(), enter = ChipIn, exit = ChipOut) {
                     shownTimers?.let { TimerChips(it) }
@@ -304,7 +305,7 @@ private fun InfoChip(
     Row(
         Modifier
             .clip(CircleShape)
-            .background(style.scrim.copy(alpha = 0.30f))
+            .glass(style, CircleShape, fill = 0.28f)
             .then(if (clickLabel != null) Modifier.clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onClick) else Modifier)
             .semantics { contentDescription = description }
             // Inside the pill's clip and background, so they follow the width. Off for timer chips: their text changes

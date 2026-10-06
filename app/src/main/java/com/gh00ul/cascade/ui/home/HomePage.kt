@@ -53,6 +53,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -76,6 +77,7 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.ui.common.rememberEntry
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
+import com.gh00ul.cascade.ui.theme.glass
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.sendFromLauncher
 import java.text.SimpleDateFormat
@@ -114,6 +116,10 @@ fun HomePage(
     widgets: @Composable () -> Unit = {},
     onOpenFolder: (HomeFolder, Rect?) -> Unit = { _, _ -> },
     onFolderLongPress: (HomeFolder) -> Unit = {},
+    /** Saves the favorites in a new order (their keys), after one is dragged on home; null and they stay put. */
+    onReorderFavorites: ((List<String>) -> Unit)? = null,
+    /** Home settling in, 0 to 1, read while placing: the favorites rise into place one after another. */
+    entrance: () -> Float = { 1f },
     onboarding: @Composable () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -154,7 +160,7 @@ fun HomePage(
             .pointerInput(doubleTapOn) {
                 detectTapGestures(onDoubleTap = { _: Offset -> doubleTap() }.takeIf { doubleTapOn }, onLongPress = { longPress() })
             }
-            .padding(start = 20.dp, end = 44.dp, top = 28.dp, bottom = bottomInset + 28.dp),
+            .padding(start = 20.dp, end = 44.dp, top = 36.dp, bottom = bottomInset + 28.dp),
     ) {
         ClockHeader(settings, Modifier.padding(horizontal = 8.dp))
         Spacer(Modifier.height(20.dp))
@@ -225,49 +231,58 @@ fun HomePage(
                 )
             }
         }
-        for (item in favorites) {
-            key(item.key) {
-                when (item) {
-                    is HomeFolder -> FolderRow(
-                        folder = item,
-                        icons = icons,
-                        notifications = notifications,
-                        showIcon = settings.showIcons,
-                        showPreview = settings.showNotificationPreviews,
-                        iconSize = settings.iconSize.homeDp.dp,
-                        onClick = { onOpenFolder(item, it) },
-                        onLongClick = { onFolderLongPress(item) },
-                        onNotificationClick = onOpenNotification,
-                    )
-                    is HomeApp -> {
-                        val app = item.app
-                        val hosting = media != null && app.key == hostKey
-                        val lastHosted = remember { Latest<NowPlayingState>() }.also { if (hosting) it.value = media }
-                        AnimatedContent(
-                            targetState = hosting,
-                            transitionSpec = { Motion.swap() },
-                            label = "favorite",
-                        ) { hosted ->
-                            val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null
-                            if (hostedState != null) {
-                                Player(hostedState, app, "fav:${app.key}", expandedKey == "fav:${app.key}")
-                            } else {
-                                val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
-                                val appNotifications by rememberEntry(notifications, app.notificationKey)
-                                AppRow(
-                                    app = app,
-                                    icon = icon,
-                                    notifications = appNotifications.orEmpty(),
-                                    showIcon = settings.showIcons,
-                                    showPreview = settings.showNotificationPreviews,
-                                    large = true,
-                                    iconSize = settings.iconSize.homeDp.dp,
-                                    onClick = { onLaunch(app, it) },
-                                    onLongClick = { onAppLongPress(app) },
-                                    onNotificationClick = { onOpenNotification(app, it) },
-                                    expanded = expandedKey == "fav:${app.key}",
-                                    onToggleExpand = { onToggleExpand("fav:${app.key}") },
-                                )
+        // Hold a favorite until it lifts, then drag it to move it; let go without dragging for its menu.
+        val reorder = rememberFavoriteReorder(onReorderFavorites)
+        ReorderableColumn(reorder, entrance = entrance) {
+            for (item in favorites) {
+                key(item.key) {
+                    when (item) {
+                        is HomeFolder -> FolderRow(
+                            folder = item,
+                            icons = icons,
+                            notifications = notifications,
+                            showIcon = settings.showIcons,
+                            showPreview = settings.showNotificationPreviews,
+                            iconSize = settings.iconSize.homeDp.dp,
+                            onClick = { onOpenFolder(item, it) },
+                            onLongClick = { onFolderLongPress(item) },
+                            onNotificationClick = onOpenNotification,
+                            modifier = Modifier.layoutId(item.key).liftToReorder(reorder, item.key, enabled = true) { onFolderLongPress(item) },
+                            longPressInParent = reorder.enabled,
+                        )
+                        is HomeApp -> {
+                            val app = item.app
+                            val hosting = media != null && app.key == hostKey
+                            val lastHosted = remember { Latest<NowPlayingState>() }.also { if (hosting) it.value = media }
+                            // The player keeps its own long press: it can't be moved while it plays in the row.
+                            AnimatedContent(
+                                targetState = hosting,
+                                transitionSpec = { Motion.swap() },
+                                label = "favorite",
+                                modifier = Modifier.layoutId(item.key).liftToReorder(reorder, item.key, enabled = !hosting) { onAppLongPress(app) },
+                            ) { hosted ->
+                                val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null
+                                if (hostedState != null) {
+                                    Player(hostedState, app, "fav:${app.key}", expandedKey == "fav:${app.key}")
+                                } else {
+                                    val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
+                                    val appNotifications by rememberEntry(notifications, app.notificationKey)
+                                    AppRow(
+                                        app = app,
+                                        icon = icon,
+                                        notifications = appNotifications.orEmpty(),
+                                        showIcon = settings.showIcons,
+                                        showPreview = settings.showNotificationPreviews,
+                                        large = true,
+                                        iconSize = settings.iconSize.homeDp.dp,
+                                        onClick = { onLaunch(app, it) },
+                                        onLongClick = { onAppLongPress(app) },
+                                        onNotificationClick = { onOpenNotification(app, it) },
+                                        expanded = expandedKey == "fav:${app.key}",
+                                        onToggleExpand = { onToggleExpand("fav:${app.key}") },
+                                        longPressInParent = reorder.enabled,
+                                    )
+                                }
                             }
                         }
                     }
@@ -280,6 +295,9 @@ fun HomePage(
 /** Cards on the home page share the player's corners. */
 private val HomeCardShape = RoundedCornerShape(20.dp)
 
+/** How much of the scrim a card's glass holds: enough that its text reads on any wallpaper. */
+internal const val CardFill = 0.5f
+
 /**
  * The home page's card: title and body on the same see-through scrim and corners as the player, then [content]
  * (the buttons, or a progress bar). The onboarding prompts and the update card are all this card.
@@ -289,10 +307,10 @@ internal fun HomeCard(title: String, body: String, content: @Composable ColumnSc
     val style = LocalLauncherStyle.current
     Surface(
         shape = HomeCardShape,
-        color = style.scrim.copy(alpha = 0.55f),
+        color = Color.Transparent,
         contentColor = style.content,
         // As wide as the widget stack at most, so on a tablet the cards line up and don't stretch across the screen.
-        modifier = Modifier.widthIn(max = StackMaxWidth).fillMaxWidth(),
+        modifier = Modifier.widthIn(max = StackMaxWidth).fillMaxWidth().glass(style, HomeCardShape, fill = CardFill),
     ) {
         Column(Modifier.padding(start = 20.dp, end = 12.dp, top = 18.dp, bottom = 8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
@@ -337,9 +355,9 @@ fun AllAppsHeader(iconSize: Dp, showIcons: Boolean, onSearch: () -> Unit, onSett
         Surface(
             onClick = onSearch,
             shape = CircleShape,
-            color = style.content.copy(alpha = 0.12f),
+            color = Color.Transparent,
             contentColor = style.content,
-            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp).glass(style, CircleShape, fill = 0.28f),
         ) {
             Row(Modifier.padding(start = searchPillStart(showIcons), end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 SearchGlyph(showIcons, iconSize)

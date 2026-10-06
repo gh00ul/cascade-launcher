@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -63,10 +64,11 @@ private val Handover = tween<Float>(Motion.QUICK)
 
 /**
  * The letter strip on the end edge. Dragging along it makes the letters near your finger swell and bulge
- * out in a wave, and jumps the app list to whichever letter you're on.
+ * out in a wave, and jumps the app list to whichever letter you're on. [restAlpha] fades the strip while it rests
+ * (read while drawing its layer, so it can follow a scroll); under the finger it's always at full strength.
  */
 @Composable
-fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Modifier = Modifier) {
+fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Modifier = Modifier, restAlpha: () -> Float = { 1f }) {
     // Read through a state: the gesture below outlives recompositions, and Settings can turn vibration off meanwhile.
     val haptics by rememberUpdatedState(LocalHapticFeedback.current)
     val style = LocalLauncherStyle.current
@@ -98,6 +100,11 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
     Spacer(
         modifier
             .width(36.dp)
+            // Its own layer, so a resting fade that follows the scroll changes the layer's alpha, not the letters.
+            .graphicsLayer {
+                val rest = restAlpha()
+                alpha = rest + (1f - rest) * wave.coerceIn(0f, 1f)
+            }
             .semantics {
                 val last = (letters.size - 1).coerceAtLeast(0)
                 val current = a11yIndex.coerceIn(0, last)

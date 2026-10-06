@@ -30,10 +30,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +48,7 @@ import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
+import kotlin.math.roundToInt
 
 /** Rows' press ripple shape, as AppRow's. */
 private val FolderRowShape = RoundedCornerShape(16.dp)
@@ -128,6 +132,8 @@ internal fun FolderRow(
     onLongClick: () -> Unit,
     onNotificationClick: (AppEntry, AppNotification) -> Unit,
     modifier: Modifier = Modifier,
+    /** On home, where [liftToReorder] watches for the long press: the row leaves it alone, but TalkBack keeps it. */
+    longPressInParent: Boolean = false,
 ) {
     val style = LocalLauncherStyle.current
     val bounds = remember { RootBoundsHolder() }
@@ -138,6 +144,8 @@ internal fun FolderRow(
     val previewIcons by remember(shownKeys, icons) { derivedStateOf { shownKeys.map { icons.value[it] } } }
     val news by remember(folder.apps, notifications) { derivedStateOf { folderNotifications(folder.apps, notifications.value) } }
     val showDot = news?.badge == true
+    val labelStyle = if (showIcon) style.favoriteFor(iconSize) else style.favorite
+    val capMiddle = with(LocalDensity.current) { (labelStyle.fontSize.toPx() * CapMiddle).roundToInt() }
 
     Row(
         modifier
@@ -151,18 +159,29 @@ internal fun FolderRow(
                 onClickLabel = "Open folder",
                 onLongClickLabel = "Folder options",
                 onClick = { onClick(bounds.rect) },
-                onLongClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLongClick()
+                onLongClick = if (longPressInParent) null else {
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLongClick()
+                    }
                 },
             )
             .pressScale(press)
-            .semantics { news?.let { stateDescription = notificationCount(it.count) } }
+            .semantics {
+                if (longPressInParent) {
+                    onLongClick("Folder options") {
+                        onLongClick()
+                        true
+                    }
+                }
+                news?.let { stateDescription = notificationCount(it.count) }
+            }
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (showIcon) {
-            Box {
+            // As in an app's row: centered on the name's capitals, with what's inside hanging below the name.
+            Box(Modifier.alignBy { it.measuredHeight / 2 + capMiddle }) {
                 HomeFolderIcon(previewIcons, iconSize)
                 if (showDot) {
                     Box(
@@ -177,11 +196,11 @@ internal fun FolderRow(
             }
             Spacer(Modifier.width(16.dp))
         }
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f).alignBy(FirstBaseline)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     folder.label,
-                    style = if (showIcon) style.favoriteFor(iconSize) else style.favorite,
+                    style = labelStyle,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
@@ -202,8 +221,10 @@ internal fun FolderRow(
                         .clickable { onNotificationClick(latest.app, n) },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // The app a step stronger than what it says, as under an app's own row.
+                    val preview = remember(latest.app.label, text, style) { previewText(latest.app.label, text, style) }
                     Text(
-                        if (text.isEmpty()) latest.app.label else "${latest.app.label}: $text",
+                        preview,
                         style = style.small,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

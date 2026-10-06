@@ -57,6 +57,7 @@ import com.gh00ul.cascade.data.HomeFolder
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.ui.common.rememberEntry
+import com.gh00ul.cascade.ui.theme.GlassEdgeWidth
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
 import kotlinx.coroutines.launch
@@ -246,7 +247,7 @@ private fun FolderCard(
         shape = PopupShape,
         color = lerp(style.scrim, style.content, CardLift),
         contentColor = style.content,
-        border = BorderStroke(1.dp, style.content.copy(alpha = 0.08f)),
+        border = BorderStroke(GlassEdgeWidth, style.glassEdge),
         // Taps between the rows stay on the card instead of closing it.
         modifier = Modifier.pointerInput(Unit) { detectTapGestures {} },
     ) {

@@ -43,6 +43,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.rememberUpdatedState
@@ -98,6 +100,7 @@ import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NowPlayingState
 import com.gh00ul.cascade.ui.common.AppIcon
 import com.gh00ul.cascade.ui.common.ExtraIcons
+import com.gh00ul.cascade.ui.theme.GlassEdgeWidth
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
@@ -244,7 +247,21 @@ fun MediaRow(
                         endX = if (rtl) 0f else size.width,
                     )
                     val corner = CornerRadius(20.dp.toPx())
-                    onDrawBehind { drawRoundRect(brush, cornerRadius = corner, alpha = washAlpha) }
+                    // The glass edge, inset by half its width so the round rect's stroke stays inside the card.
+                    val edge = GlassEdgeWidth.toPx()
+                    val edgeCorner = CornerRadius(20.dp.toPx() - edge / 2)
+                    val edgeStroke = Stroke(edge)
+                    onDrawBehind {
+                        drawRoundRect(brush, cornerRadius = corner, alpha = washAlpha)
+                        drawRoundRect(
+                            style.glassEdge,
+                            topLeft = Offset(edge / 2, edge / 2),
+                            size = Size(size.width - edge, size.height - edge),
+                            cornerRadius = edgeCorner,
+                            style = edgeStroke,
+                            alpha = washAlpha,
+                        )
+                    }
                 },
         ) {
             Row(
@@ -364,7 +381,7 @@ fun MediaRow(
             exit = Motion.CollapseUp,
         ) {
             // The title's x: 4dp padding, the art (iconSize + 8dp) and its 12dp gap; 8dp padding without art.
-            ExpandedNotifications(notifications, textStart = if (showArt) iconSize + 24.dp else 8.dp, onOpen = onNotificationClick)
+            ExpandedNotifications(notifications, textStart = if (showArt) iconSize + 24.dp else 8.dp, onOpen = onNotificationClick, onHide = onToggleExpand)
         }
     }
 }

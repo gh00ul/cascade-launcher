@@ -22,6 +22,7 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.gh00ul.cascade.ui.home.CardFill
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
@@ -68,6 +69,7 @@ import com.gh00ul.cascade.data.isStackWidget
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
+import com.gh00ul.cascade.ui.theme.glass
 import kotlinx.coroutines.flow.drop
 import kotlin.math.abs
 
@@ -117,9 +119,10 @@ fun WidgetStack(settings: LauncherSettings, modifier: Modifier = Modifier, onEdi
     Column(modifier.padding(top = 12.dp).widthIn(max = StackMaxWidth).fillMaxWidth()) {
         Surface(
             shape = StackShape,
-            color = style.scrim.copy(alpha = 0.55f),
+            color = Color.Transparent,
             contentColor = style.content,
             modifier = Modifier
+                .glass(style, StackShape, fill = CardFill)
                 .fillMaxWidth()
                 .height(StackHeight)
                 // Keeps the home page's own long press (its menu) and double tap off the stack.

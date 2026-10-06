@@ -102,6 +102,7 @@ import com.gh00ul.cascade.data.homeItems
 import com.gh00ul.cascade.data.newFolder
 import com.gh00ul.cascade.data.nextFolderId
 import com.gh00ul.cascade.data.renameFolder
+import com.gh00ul.cascade.data.reorderFavorites
 import com.gh00ul.cascade.data.SwipeDownAction
 import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.launcher
@@ -208,20 +209,25 @@ internal fun ListAppRow(
 
 /**
  * The tint over the wallpaper: light on the home page and heavier once the list covers it ([progress], read only while
- * drawing), with a soft wash behind the clock so it reads on bright skies. The wash fades as the list scrolls up.
- * [dim] (Settings' wallpaper dim) is layered onto the light tint, and the list's tint rises from there to its usual
- * level, or stays at the dim if that's heavier, so the two never stack.
+ * drawing), with soft washes behind the clock and behind the favorites so both read on bright or busy wallpapers. The
+ * washes fade as the list scrolls up. [dim] (Settings' wallpaper dim) is layered onto the light tint, and the list's
+ * tint rises from there to its usual level, or stays at the dim if that's heavier, so the two never stack.
  */
 internal fun Modifier.homeScrim(scrim: Color, dim: Float, progress: () -> Float) = drawWithCache {
-    val wash = Brush.verticalGradient(listOf(scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f)
+    val top = Brush.verticalGradient(listOf(scrim.copy(alpha = 0.22f), Color.Transparent), endY = size.height * 0.4f)
+    val bottom = Brush.verticalGradient(listOf(Color.Transparent, scrim.copy(alpha = 0.28f)), startY = size.height * 0.5f, endY = size.height)
     val rest = 0.12f + 0.88f * dim
     val covered = maxOf(0.7f, rest)
     onDrawBehind {
         val p = progress()
         drawRect(scrim, alpha = rest + (covered - rest) * p)
-        drawRect(wash, alpha = 1f - p)
+        drawRect(top, alpha = 1f - p)
+        drawRect(bottom, alpha = 1f - p)
     }
 }
+
+/** How strongly the alphabet strip shows over home, where it rests; it rises to full as the list comes up. */
+internal const val HomeStripAlpha = 0.5f
 
 /** LocalHapticFeedback with haptics turned off in Settings. */
 private object NoHaptics : HapticFeedback {
@@ -628,6 +634,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onEmptyLongPress = { homeMenuOpen = true },
                         onOpenFolder = { folder, bounds -> openFolder = OpenFolder(folder.id, bounds) },
                         onFolderLongPress = { folderSheet = it.id },
+                        onReorderFavorites = { order -> launcher.prefs.update { it.reorderFavorites(order) } },
+                        entrance = { settle.value },
                         onEmptyDoubleTap = emptyDoubleTap,
                         expandedKey = expandedKey,
                         onToggleExpand = toggleExpand,
@@ -768,6 +776,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
                         // Hidden from TalkBack under an open folder, like the list it scrolls.
                         modifier = Modifier.fillMaxHeight().then(if (openFolder != null) Modifier.clearAndSetSemantics {} else Modifier),
+                        // Quiet on home, where the clock and favorites come first; as strong as ever over the list.
+                        restAlpha = { HomeStripAlpha + (1f - HomeStripAlpha) * progress() },
                     )
                 }
             }

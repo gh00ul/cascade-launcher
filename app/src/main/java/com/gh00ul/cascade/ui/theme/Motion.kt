@@ -92,6 +92,10 @@ object Motion {
     val WaveFall: AnimationSpec<Float> = spring(1f, Spring.StiffnessMediumLow)
     /** Home settling in on a return, and a back gesture easing out once it commits. */
     val Settle: AnimationSpec<Float> = tween(SCREEN, easing = Decelerate)
+    /** A favorite held to move it, rising with a little give. */
+    val Lift: AnimationSpec<Float> = spring(0.6f, Spring.StiffnessMedium)
+    /** Favorites sliding out of the way of a moved one, and the moved one settling into its place: no bounce. */
+    val Reorder: AnimationSpec<Float> = spring(1f, Spring.StiffnessMediumLow)
     /**
      * The list coming to rest on home or on the A–Z list's top after a fling: critically damped, like [Size]. It
      * starts at the fling's speed and stiffens for a fast one, so its spring is made per fling (see HomeSnap.kt).

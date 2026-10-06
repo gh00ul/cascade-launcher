@@ -152,7 +152,9 @@ internal class FavoriteReorder(
     /** Lets go of a row that was dragged: it settles into its new place and the order is saved. */
     fun drop() {
         val key = held ?: return
-        val final = order ?: return
+        // Only rows still laid out: one gone mid-drag (its app uninstalled) would make the save refuse the whole order,
+        // which must be exactly the rows shown.
+        val final = order?.filter { it in heights } ?: return
         if (final != keys) commit()?.invoke(final)
         scope.launch {
             coroutineScope {

@@ -188,6 +188,24 @@ class FavoriteReorderTest {
         assertEquals(tops.sortedBy { it.value }, tops)
     }
 
+    /** A favorite gone mid-drag (uninstalled meanwhile): the move is still saved, without it. */
+    @Test fun aFavoriteGoneMidDragLeavesTheMoveToSave() {
+        show()
+        val phone = row(FakeApps.phone)
+        val pitch = pitch()
+        hold(phone)
+        phone.performTouchInput { repeat(24) { moveBy(Offset(0f, pitch * 2.2f / 24)) } }
+        compose.waitForIdle()
+        favorites = favorites.filter { it != FakeApps.camera }
+        compose.waitForIdle()
+        phone.performTouchInput { up() }
+        compose.waitForIdle()
+        // Saved as the shown rows are now: Settings refuses any order that isn't exactly them.
+        assertEquals(listOf(listOf(FakeApps.messages, FakeApps.mail, FakeApps.phone, FakeApps.photos, FakeApps.music).map { it.key }), saved)
+        assertEquals(listOf("Messages", "Mail", "Phone", "Photos", "Music"), labels)
+        assertSettles()
+    }
+
     @Test fun aTapStillOpensTheApp() {
         show()
         row(FakeApps.camera).performTouchInput {

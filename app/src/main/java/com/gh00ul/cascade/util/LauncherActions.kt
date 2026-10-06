@@ -3,6 +3,7 @@ package com.gh00ul.cascade.util
 import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.app.AlarmManager
+import android.app.PendingIntent
 import android.app.SearchManager
 import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
@@ -44,6 +45,18 @@ object LauncherActions {
             context.getSystemService(LauncherApps::class.java).startMainActivity(app.component, app.user, rect, options)
         } catch (e: Exception) {
             Toast.makeText(context, "Couldn't open ${app.label}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Opens what a notification's tap opens, or, when it has none or it no longer works (common on "Uploading…" and
+     * "Backing up" ones), the app that posted it, as a row does.
+     */
+    fun openNotified(context: Context, contentIntent: PendingIntent?, packageName: String) {
+        if (contentIntent?.sendFromLauncher(context) == true) return
+        val launch = context.packageManager.getLaunchIntentForPackage(packageName)
+        if (launch == null || !start(context, launch)) {
+            Toast.makeText(context, "Couldn't open the app", Toast.LENGTH_SHORT).show()
         }
     }
 

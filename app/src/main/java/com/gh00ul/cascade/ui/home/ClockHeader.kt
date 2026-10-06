@@ -387,7 +387,7 @@ private fun LiveChips(updates: List<LiveUpdate>, appIcon: (String) -> IconImage?
                     trailing = update.status.ifEmpty { null },
                     image = appIcon(update.packageName),
                     progress = update.percent?.let { it / 100f },
-                ) { update.contentIntent?.sendFromLauncher(context) }
+                ) { LauncherActions.openNotified(context, update.contentIntent, update.packageName) }
             }
         }
     }
@@ -425,7 +425,7 @@ private fun TimerChips(timers: List<LiveTimer>) {
                 clickLabel = "Open",
                 trailing = if (label != null) time else null,
                 animateSize = false,
-            ) { timer.contentIntent?.sendFromLauncher(context) }
+            ) { LauncherActions.openNotified(context, timer.contentIntent, timer.packageName) }
         }
     }
 }

@@ -55,6 +55,8 @@ private fun StatusBarNotification.toAppNotification(): AppNotification? {
     val n = notification
     if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0 || isOngoing) return null
     val extras = n.extras
+    // Media notifications become dismissible when paused; the in-row player already shows them.
+    if (extras.containsKey(Notification.EXTRA_MEDIA_SESSION) || n.category == Notification.CATEGORY_TRANSPORT) return null
     val title = (extras.getCharSequence(Notification.EXTRA_TITLE)
         ?: extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE))?.toString()?.trim().orEmpty()
     val text = (extras.getCharSequence(Notification.EXTRA_TEXT)

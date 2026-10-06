@@ -48,6 +48,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.key
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -118,7 +123,7 @@ internal fun mediaColors(seed: Int?, style: LauncherStyle, monochrome: Boolean):
     val track = style.content.copy(alpha = if (dark) 0.20f else 0.24f)
     val neutral = MediaColors(
         washStart = style.scrim.copy(alpha = if (dark) 0.34f else 0.22f),
-        washEnd = style.scrim.copy(alpha = if (dark) 0.14f else 0.10f),
+        washEnd = style.scrim.copy(alpha = if (dark) 0.26f else 0.20f),
         button = style.content,
         onButton = style.scrim,
         line = style.content,
@@ -133,7 +138,7 @@ internal fun mediaColors(seed: Int?, style: LauncherStyle, monochrome: Boolean):
     return if (dark) {
         MediaColors(
             washStart = tone(min(hct[1], 28f), 92f).copy(alpha = 0.60f),
-            washEnd = Color.White.copy(alpha = 0.20f),
+            washEnd = Color.White.copy(alpha = 0.36f),
             button = tone(accentChroma, 32f),
             onButton = tone(min(hct[1], 8f), 98f),
             line = tone(accentChroma, 32f),
@@ -142,7 +147,7 @@ internal fun mediaColors(seed: Int?, style: LauncherStyle, monochrome: Boolean):
     } else {
         MediaColors(
             washStart = tone(min(hct[1], 36f), 22f).copy(alpha = 0.45f),
-            washEnd = Color.Black.copy(alpha = 0.16f),
+            washEnd = Color.Black.copy(alpha = 0.30f),
             button = tone(accentChroma, 82f),
             onButton = tone(min(hct[1], 16f), 12f),
             line = tone(accentChroma, 82f),
@@ -195,7 +200,7 @@ fun MediaRow(
             skipDir = 0
         }
     }
-    var scrubMs by remember { mutableStateOf<Long?>(null) }
+    var scrubMs by remember(state.trackKey) { mutableStateOf<Long?>(null) }
     val next: () -> Unit = {
         skipDir = 1
         haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
@@ -206,10 +211,11 @@ fun MediaRow(
         haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
         state.previous()
     }
-    val toggle: () -> Unit = {
-        haptics.performHapticFeedback(if (state.isPaused) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
-        state.playPause()
+    val toggle: (Boolean) -> Unit = { play ->
+        haptics.performHapticFeedback(if (play) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
+        if (play) state.play() else state.pause()
     }
+    val longPress by rememberUpdatedState(onLongClick)
     val hasNotifications = notifications.isNotEmpty()
     val tier2 = !resting && (state.hasDuration || state.isLive || state.canSkipPrevious || state.canSkipNext)
     val restFraction = if (resting && state.hasDuration) {
@@ -221,6 +227,7 @@ fun MediaRow(
             Modifier
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
+                .pointerInput(Unit) { detectTapGestures(onLongPress = { longPress?.invoke() }) }
                 .drawBehind {
                     val brush = Brush.horizontalGradient(
                         listOf(washStart, washEnd),
@@ -255,13 +262,13 @@ fun MediaRow(
                             else -> "Paused"
                         }
                         customActions = buildList {
-                            if (state.canPlayPause) add(CustomAccessibilityAction(if (state.isPaused) "Play" else "Pause") { toggle(); true })
+                            if (state.canPlayPause) add(CustomAccessibilityAction(if (state.isPaused) "Play" else "Pause") { toggle(state.isPaused); true })
                             if (state.canSkipNext) add(CustomAccessibilityAction("Next track") { next(); true })
                             if (state.canSkipPrevious) add(CustomAccessibilityAction("Previous track") { previous(); true })
                             if (hasNotifications) {
                                 add(CustomAccessibilityAction(if (expanded) "Hide notifications" else "Show notifications") { onToggleExpand(); true })
                             }
-                            if (state.isPaused) add(CustomAccessibilityAction("Hide player") { onHide(); true })
+                            if (!state.isPlaying) add(CustomAccessibilityAction("Hide player") { onHide(); true })
                         }
                     }
                     .then(
@@ -287,6 +294,10 @@ fun MediaRow(
                     Spacer(Modifier.width(12.dp))
                 }
                 TrackText(state, appLabel, scrubMs, skipDir, rtl, Modifier.weight(1f))
+                if (!showArt && hasNotifications) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.size(8.dp).background(style.accent, CircleShape))
+                }
                 if (state.canPlayPause) {
                     Spacer(Modifier.width(8.dp))
                     PlayPauseButton(state, button, onButton, toggle)
@@ -316,7 +327,7 @@ fun MediaRow(
                     }
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         when {
-                            state.canSeek -> SeekBar(state, line, target.track) { scrubMs = it }
+                            state.canSeek -> key(state.trackKey) { SeekBar(state, line, target.track) { scrubMs = it } }
                             state.hasDuration -> ProgressLine(state, line, target.track)
                             state.isLive -> LiveLabel(line)
                         }
@@ -420,7 +431,7 @@ private fun MediaArt(art: ImageBitmap?, icon: IconImage?, hasNotifications: Bool
 }
 
 @Composable
-private fun PlayPauseButton(state: NowPlayingState, container: Color, content: Color, onToggle: () -> Unit) {
+private fun PlayPauseButton(state: NowPlayingState, container: Color, content: Color, onToggle: (play: Boolean) -> Unit) {
     var ring by remember { mutableStateOf(false) }
     LaunchedEffect(state.isBuffering) {
         ring = state.isBuffering
@@ -445,7 +456,7 @@ private fun PlayPauseButton(state: NowPlayingState, container: Color, content: C
             .background(container)
             .clickable(role = Role.Button) {
                 optimistic = !paused
-                onToggle()
+                onToggle(paused)
             }
             .semantics { contentDescription = if (paused) "Play" else "Pause" },
         contentAlignment = Alignment.Center,
@@ -481,6 +492,9 @@ private fun tickFor(durationMs: Long, widthPx: Int) = if (widthPx > 0) (duration
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SeekBar(state: NowPlayingState, line: Color, track: Color, onScrub: (Long?) -> Unit) {
+    // Leaving mid-drag skips onValueChangeFinished; make sure the readout still clears.
+    val currentOnScrub by rememberUpdatedState(onScrub)
+    DisposableEffect(Unit) { onDispose { currentOnScrub(null) } }
     var widthPx by remember { mutableIntStateOf(0) }
     val position by rememberPlaybackPosition(state, tickFor(state.durationMs, widthPx))
     var scrub by remember { mutableStateOf<Float?>(null) }

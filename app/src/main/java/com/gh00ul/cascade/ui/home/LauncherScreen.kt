@@ -152,6 +152,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     }
     var mediaResting by remember { mutableStateOf(false) }
     LaunchedEffect(media?.isPaused) { if (media?.isPaused == false) mediaResting = false }
+    // The temporary player's notification list belongs to one session; don't carry it over to the next.
+    LaunchedEffect(media?.sessionId) { if (expandedKey == "media") expandedKey = null }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         isDefault = LauncherActions.isDefaultLauncher(context)
@@ -356,7 +358,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             onOpenNotification = { openNotification(app, it) },
             onRename = { renameApp = app },
             onDismiss = { sheetApp = null },
-            onHidePlayer = if (media?.isPaused == true && app.packageName == media.packageName) NowPlaying::hide else null,
+            onHidePlayer = if (media != null && !media.isPlaying && app.packageName == media.packageName) NowPlaying::hide else null,
         )
     }
     renameApp?.let { app -> RenameDialog(app) { renameApp = null } }

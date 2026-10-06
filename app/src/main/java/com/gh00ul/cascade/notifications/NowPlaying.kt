@@ -60,7 +60,8 @@ data class NowPlayingState(
     }
 
     // A dead or misbehaving session throws from the system server; never let that crash the launcher.
-    fun playPause() = command { if (isPaused) controls.play() else controls.pause() }
+    fun play() = command { controls.play() }
+    fun pause() = command { controls.pause() }
     fun next() = command { controls.skipToNext() }
     fun previous() = command { controls.skipToPrevious() }
     fun seekTo(ms: Long) = command { controls.seekTo(if (hasDuration) ms.coerceIn(0, durationMs) else ms.coerceAtLeast(0)) }
@@ -89,10 +90,21 @@ object NowPlaying {
     /** Debug builds only: report Cascade's own fake session as if it came from this package. */
     internal var debugAlias: String? = null
 
+    private class Tracked(val controller: MediaController, val callback: MediaController.Callback)
+
+    /** Read once per controller per publish: each getter is a binder call, and metadata unparcels the art. */
+    private class Snapshot(
+        val token: MediaSession.Token,
+        val controller: MediaController,
+        val playback: PlaybackState?,
+        val metadata: MediaMetadata?,
+    )
+
     private val handler = Handler(Looper.getMainLooper())
     private var manager: MediaSessionManager? = null
     private var ownPackage: String? = null
-    private val callbacks = LinkedHashMap<MediaController, MediaController.Callback>()
+    /** Keyed by token: getActiveSessions hands out new MediaController objects for the same session every time. */
+    private val sessions = LinkedHashMap<MediaSession.Token, Tracked>()
     private val pausedSince = HashMap<MediaSession.Token, Long>()
     private val hidden = HashSet<MediaSession.Token>()
     private var shown: MediaSession.Token? = null
@@ -100,20 +112,22 @@ object NowPlaying {
     private var art: ImageBitmap? = null
     private var artSeed: Int? = null
 
-    private val recheck = Runnable { publish() }
+    private val recheck = Runnable { publish(force = true) }
     private var clearPending = false
     private val clear = Runnable {
         clearPending = false
         _state.value = null
     }
 
-    private val ACTIVE_STATES = setOf(
+    private val PLAYING_STATES = setOf(
         PlaybackState.STATE_PLAYING,
+        PlaybackState.STATE_FAST_FORWARDING,
+        PlaybackState.STATE_REWINDING,
+    )
+    private val ACTIVE_STATES = PLAYING_STATES + setOf(
         PlaybackState.STATE_PAUSED,
         PlaybackState.STATE_BUFFERING,
         PlaybackState.STATE_CONNECTING,
-        PlaybackState.STATE_FAST_FORWARDING,
-        PlaybackState.STATE_REWINDING,
         PlaybackState.STATE_SKIPPING_TO_NEXT,
         PlaybackState.STATE_SKIPPING_TO_PREVIOUS,
         PlaybackState.STATE_SKIPPING_TO_QUEUE_ITEM,
@@ -122,14 +136,14 @@ object NowPlaying {
     private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { track(it.orEmpty()) }
 
     internal fun start(context: Context) {
-        val sessions = context.getSystemService(MediaSessionManager::class.java) ?: return
+        val sessionManager = context.getSystemService(MediaSessionManager::class.java) ?: return
         val listener = ComponentName(context, NotificationListener::class.java)
         ownPackage = context.packageName
         try {
             manager?.removeOnActiveSessionsChangedListener(sessionsListener)
-            sessions.addOnActiveSessionsChangedListener(sessionsListener, listener, handler)
-            manager = sessions
-            track(sessions.getActiveSessions(listener))
+            sessionManager.addOnActiveSessionsChangedListener(sessionsListener, listener, handler)
+            manager = sessionManager
+            track(sessionManager.getActiveSessions(listener))
         } catch (e: SecurityException) {
             // Notification access was revoked between connecting and now.
         }
@@ -142,70 +156,92 @@ object NowPlaying {
         pausedSince.clear()
         hidden.clear()
         shown = null
+        publish(force = true, immediate = true)
     }
 
-    /** Re-check the 30-minute rule; Handler delays don't advance in deep sleep. Call on the main thread. */
-    fun refresh() = publish()
+    /** Re-check everything (Handler delays don't advance in deep sleep). Call on the main thread when home shows. */
+    fun refresh() = publish(force = true, immediate = true)
 
-    /** Hide the shown (paused) session until it plays again. */
+    /** Hide the shown (not playing) session until it plays again. */
     fun hide() {
         shown?.let { hidden += it }
-        publish()
+        publish(force = true, immediate = true)
     }
 
     private fun track(list: List<MediaController>) {
-        val keep = list.toSet()
-        callbacks.keys.filter { it !in keep }.forEach { controller -> callbacks.remove(controller)?.let { controller.unregisterCallback(it) } }
-        for (controller in list) {
-            if (controller in callbacks) continue
-            val callback = object : MediaController.Callback() {
-                override fun onPlaybackStateChanged(state: PlaybackState?) = publish()
-                override fun onMetadataChanged(metadata: MediaMetadata?) = publish()
-                override fun onSessionDestroyed() {
-                    callbacks.remove(controller)?.let { controller.unregisterCallback(it) }
-                    publish()
-                }
+        val incoming = LinkedHashMap<MediaSession.Token, MediaController>()
+        for (controller in list) incoming.putIfAbsent(controller.sessionToken, controller)
+        for ((token, tracked) in sessions.entries.toList()) {
+            if (token !in incoming) {
+                tracked.controller.unregisterCallback(tracked.callback)
+                sessions.remove(token)
             }
-            controller.registerCallback(callback, handler)
-            callbacks[controller] = callback
         }
-        // Keep MediaSessionManager's priority order.
-        val ordered = list.filter { it in callbacks }.associateWith { callbacks.getValue(it) }
-        callbacks.clear()
-        callbacks.putAll(ordered)
+        // Rebuild in MediaSessionManager's priority order, keeping existing registrations.
+        val ordered = LinkedHashMap<MediaSession.Token, Tracked>()
+        for ((token, controller) in incoming) {
+            ordered[token] = sessions[token] ?: register(token, controller)
+        }
+        sessions.clear()
+        sessions.putAll(ordered)
         publish()
     }
 
-    private fun publish() {
+    private fun register(token: MediaSession.Token, controller: MediaController): Tracked {
+        val callback = object : MediaController.Callback() {
+            override fun onPlaybackStateChanged(state: PlaybackState?) = publish()
+            override fun onMetadataChanged(metadata: MediaMetadata?) = publish()
+            override fun onSessionDestroyed() {
+                sessions.remove(token)?.let { it.controller.unregisterCallback(it.callback) }
+                publish()
+            }
+        }
+        controller.registerCallback(callback, handler)
+        return Tracked(controller, callback)
+    }
+
+    /**
+     * Recomputes the shown session. Skipped while nothing observes the state (launcher stopped or screen off);
+     * [refresh] on resume catches up. [immediate] removes the player without the between-tracks grace.
+     */
+    private fun publish(force: Boolean = false, immediate: Boolean = false) {
+        if (!force && _state.subscriptionCount.value == 0) return
         handler.removeCallbacks(recheck)
         val now = SystemClock.elapsedRealtime()
-        val tokens = callbacks.keys.mapTo(HashSet()) { it.sessionToken }
-        pausedSince.keys.retainAll(tokens)
-        hidden.retainAll(tokens)
+        pausedSince.keys.retainAll(sessions.keys)
+        hidden.retainAll(sessions.keys)
         var wake = Long.MAX_VALUE
-        val eligible = callbacks.keys.filter { c ->
-            val s = c.playbackState?.state ?: return@filter false
-            if (c.metadata == null || s !in ACTIVE_STATES) return@filter false
-            val token = c.sessionToken
-            if (s != PlaybackState.STATE_PAUSED) {
+        val eligible = sessions.mapNotNull { (token, tracked) ->
+            val playback = tracked.controller.playbackState
+            val metadata = tracked.controller.metadata
+            val s = playback?.state ?: return@mapNotNull null
+            if (metadata == null || s !in ACTIVE_STATES) return@mapNotNull null
+            if (s in PLAYING_STATES) {
                 pausedSince -= token
                 hidden -= token
-                return@filter true
+                return@mapNotNull Snapshot(token, tracked.controller, playback, metadata)
             }
-            if (token in hidden) return@filter false
+            // Paused, or stuck buffering: retire after 30 minutes, and allow hiding.
+            if (token in hidden) return@mapNotNull null
             val left = pausedSince.getOrPut(token) { now } + STALE_PAUSE_MS - now
-            if (left > 0) wake = minOf(wake, left)
-            left > 0
+            if (left <= 0) return@mapNotNull null
+            wake = minOf(wake, left)
+            Snapshot(token, tracked.controller, playback, metadata)
         }
         if (wake != Long.MAX_VALUE) handler.postDelayed(recheck, wake + 1_000)
-        val chosen = eligible.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-            ?: eligible.firstOrNull { it.playbackState?.state != PlaybackState.STATE_PAUSED }
+        val chosen = eligible.firstOrNull { it.playback?.state in PLAYING_STATES }
+            ?: eligible.firstOrNull { it.playback?.state != PlaybackState.STATE_PAUSED }
             ?: eligible.firstOrNull()
-        shown = chosen?.sessionToken
+        shown = chosen?.token
         val next = chosen?.let(::toState)
         val prev = _state.value
         if (next == null) {
-            if (prev != null && !clearPending) {
+            if (prev == null) return
+            if (immediate) {
+                handler.removeCallbacks(clear)
+                clearPending = false
+                _state.value = null
+            } else if (!clearPending) {
                 clearPending = true
                 handler.postDelayed(clear, REMOVE_GRACE_MS)
             }
@@ -218,8 +254,9 @@ object NowPlaying {
         _state.value = next
     }
 
-    private fun toState(controller: MediaController): NowPlayingState? {
-        val metadata = controller.metadata ?: return null
+    private fun toState(snapshot: Snapshot): NowPlayingState? {
+        val controller = snapshot.controller
+        val metadata = snapshot.metadata ?: return null
         val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
             ?: metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
             ?: return null
@@ -240,17 +277,17 @@ object NowPlaying {
             art = thumb?.asImageBitmap()
             artSeed = thumb?.let { runCatching { seedColor(it) }.getOrNull() }
         }
-        val playback = controller.playbackState
+        val playback = snapshot.playback
         val actions = playback?.actions ?: 0L
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
         val status = when (playback?.state) {
-            PlaybackState.STATE_PLAYING, PlaybackState.STATE_FAST_FORWARDING, PlaybackState.STATE_REWINDING -> PlaybackStatus.PLAYING
+            in PLAYING_STATES -> PlaybackStatus.PLAYING
             PlaybackState.STATE_PAUSED -> PlaybackStatus.PAUSED
             else -> PlaybackStatus.BUFFERING
         }
         val now = SystemClock.elapsedRealtime()
         return NowPlayingState(
-            sessionId = controller.sessionToken.hashCode(),
+            sessionId = snapshot.token.hashCode(),
             packageName = pkg,
             trackKey = trackKey,
             title = title,

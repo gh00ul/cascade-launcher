@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
@@ -271,9 +272,8 @@ internal fun Modifier.rowSwipe(onSwipeRight: (() -> Unit)?, onSwipeLeft: (() -> 
     val scope = rememberCoroutineScope()
     val right by rememberUpdatedState(onSwipeRight)
     val left by rememberUpdatedState(onSwipeLeft)
-    val hasRight = onSwipeRight != null
-    val hasLeft = onSwipeLeft != null
-    return pointerInput(hasRight, hasLeft) {
+    // Keyed on Unit and reading the latest actions, so a callback appearing mid-drag doesn't restart the gesture.
+    return pointerInput(Unit) {
         var crossed = false
         detectHorizontalDragGestures(
             onDragStart = { crossed = false },
@@ -284,6 +284,8 @@ internal fun Modifier.rowSwipe(onSwipeRight: (() -> Unit)?, onSwipeLeft: (() -> 
             onDragCancel = { scope.launch { dragX.animateTo(0f) } },
             onHorizontalDrag = { change, amount ->
                 change.consume()
+                val hasRight = right != null
+                val hasLeft = left != null
                 val active = if (dragX.value + amount > 0f) hasRight else hasLeft
                 // Rows without a left action keep the old right-only behaviour.
                 val min = if (hasLeft) -threshold * 1.5f else 0f
@@ -296,5 +298,5 @@ internal fun Modifier.rowSwipe(onSwipeRight: (() -> Unit)?, onSwipeLeft: (() -> 
                 }
             },
         )
-    }.offset { IntOffset(dragX.value.roundToInt(), 0) }
+    }.graphicsLayer { translationX = dragX.value }
 }

@@ -109,7 +109,8 @@ fun HomePage(
             resting = mediaResting,
             expanded = expandedKey == expandKey,
             onOpen = onOpenMedia,
-            onLongClick = app?.let { { onAppLongPress(it) } },
+            // Sessions without a launchable app have no options sheet; long-press hides them instead.
+            onLongClick = app?.let { { onAppLongPress(it) } } ?: onHideMedia.takeIf { !state.isPlaying },
             onToggleExpand = { onToggleExpand(expandKey) },
             onNotificationClick = { n -> app?.let { onOpenNotification(it, n) } },
             onHide = onHideMedia,
@@ -132,7 +133,11 @@ fun HomePage(
         // The playing app's favorite row becomes the player; if it isn't a favorite, a temporary row sits on top.
         val hostKey = media?.let { m -> favorites.firstOrNull { it.packageName == m.packageName && !it.isWork }?.key }
         val floating = media?.takeIf { hostKey == null }
+        // Targets are small keys, not the state itself: AnimatedContent remembers every target it has seen.
         val lastFloating = remember { Latest<NowPlayingState>() }.also { if (floating != null) it.value = floating }
+        val lastFloatingApp = remember { Latest<AppEntry>() }.also {
+            if (floating != null) it.value = mediaApp?.takeIf { app -> app.packageName == floating.packageName }
+        }
         AnimatedVisibility(
             visible = floating != null,
             enter = expandVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Bottom) +
@@ -140,14 +145,23 @@ fun HomePage(
             exit = shrinkVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow), shrinkTowards = Alignment.Bottom) +
                 fadeOut(tween(90)),
         ) {
-            val shown = lastFloating.value ?: return@AnimatedVisibility
+            val sessionId = lastFloating.value?.sessionId ?: return@AnimatedVisibility
             AnimatedContent(
-                targetState = shown,
+                targetState = sessionId,
                 transitionSpec = { (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using SizeTransform(clip = true) },
                 label = "floatingPlayer",
-                contentKey = { it.sessionId },
-            ) { state ->
-                Player(state, mediaApp?.takeIf { it.packageName == state.packageName }, "media")
+            ) { id ->
+                val held = remember { Latest<NowPlayingState>() }
+                val heldApp = remember { Latest<AppEntry>() }
+                if (floating?.sessionId == id) {
+                    held.value = floating
+                    heldApp.value = mediaApp?.takeIf { it.packageName == floating.packageName }
+                } else if (held.value == null && lastFloating.value?.sessionId == id) {
+                    held.value = lastFloating.value
+                    heldApp.value = lastFloatingApp.value
+                }
+                val state = held.value ?: return@AnimatedContent
+                Player(state, heldApp.value, "media")
             }
         }
 
@@ -160,18 +174,19 @@ fun HomePage(
         }
         for (app in favorites) {
             key(app.key) {
+                val hosting = media != null && app.key == hostKey
+                val lastHosted = remember { Latest<NowPlayingState>() }.also { if (hosting) it.value = media }
                 AnimatedContent(
-                    targetState = media?.takeIf { app.key == hostKey },
+                    targetState = hosting,
                     transitionSpec = {
                         (fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90))) using
                             SizeTransform(clip = true) { _, _ -> spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow) }
                     },
                     label = "favorite",
-                    // Morph only when the player appears or leaves, never on every playback update.
-                    contentKey = { it != null },
                 ) { hosted ->
-                    if (hosted != null) {
-                        Player(hosted, app, "fav:${app.key}")
+                    val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null
+                    if (hostedState != null) {
+                        Player(hostedState, app, "fav:${app.key}")
                     } else {
                         AppRow(
                             app = app,

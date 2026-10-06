@@ -105,6 +105,27 @@ class AppRepositoryTest {
         assertEquals(order.map(::key).toSet(), repo.icons.value.keys)
     }
 
+    /** Every icon drawn again (monochrome turned on): each keeps showing its old icon until its new one is ready. */
+    @Test fun redrawingEveryIconNeverBlanksOne() {
+        val labels = (0 until 60).map { "App%02d".format(it) }
+        FakeLauncherApps.install(context, *labels.toTypedArray())
+        val repo = repository()
+        scheduler.advanceUntilIdle()
+        val all = labels.map(::key).toSet()
+        assertEquals(all, repo.icons.value.keys)
+
+        val published = Collections.synchronizedList(mutableListOf<Set<String>>())
+        val watcher = CoroutineScope(Dispatchers.Unconfined).launch {
+            repo.icons.drop(1).collect { published.add(it.keys.toSet()) }
+        }
+        repo.refresh(clearIcons = true)
+        scheduler.advanceUntilIdle()
+        watcher.cancel()
+
+        assertTrue(published.isNotEmpty())
+        assertTrue("A publish missing icons: ${published.map { all.size - it.size }}", published.all { it == all })
+    }
+
     @Test fun anUninstalledAppsIconIsGoneFromTheNextPublish() {
         FakeLauncherApps.install(context, "Alpha", "Bravo", "Charlie")
         val repo = repository()

@@ -486,7 +486,16 @@ class AppRepository(
                 // A newer refresh may have invalidated this icon while it rendered: never put a stale one back.
                 icon == null || ifCurrent(gen) { iconCache[app.key] = icon }
             },
-            publish = { published.await() != null && ifCurrent(gen) { _icons.value = HashMap(iconCache) } },
+            // Over the icons showing, so one dropped to be drawn again (monochrome turned on, an app updated) keeps its
+            // old look until its new one is ready rather than going blank; only installed apps' stay.
+            publish = {
+                published.await() != null && ifCurrent(gen) {
+                    _icons.value = HashMap(_icons.value).apply {
+                        keys.retainAll(live.keys)
+                        putAll(iconCache)
+                    }
+                }
+            },
         )
         if (!complete || published.await() == null) return
         ifCurrent(gen) {

@@ -66,6 +66,12 @@ fun searchApps(apps: List<AppEntry>, query: String, exclude: Set<String> = empty
         .map { it.first }
 }
 
+/** How well [label] matches [query], on [searchApps]' scale: 0 when it doesn't (for contact names, ranked alike). */
+internal fun matchScore(label: String, query: String): Int {
+    val q = query.trim().normalizedForSearch()
+    return if (q.isEmpty()) 0 else score(SearchKey(label.normalizedForSearch()), q)
+}
+
 private fun score(key: SearchKey, q: String): Int {
     val label = key.text
     if (label.startsWith(q)) return 100

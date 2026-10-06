@@ -207,7 +207,8 @@ class WeatherTest {
         try {
             assertEquals(
                 "https://api.open-meteo.com/v1/forecast?latitude=47.6062&longitude=-122.3321&current=temperature_2m,weather_code,is_day" +
-                    "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1&temperature_unit=fahrenheit",
+                    "&hourly=temperature_2m,weather_code,precipitation_probability,is_day" +
+                    "&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=5&temperature_unit=fahrenheit",
                 forecastUrl(seattle, fahrenheit = true),
             )
             assertTrue(forecastUrl(zurich, fahrenheit = false).endsWith("&temperature_unit=celsius"))

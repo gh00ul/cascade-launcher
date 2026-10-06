@@ -1,5 +1,19 @@
 package com.gh00ul.cascade.settings
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.lazy.items
+import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.IconImage
+import com.gh00ul.cascade.data.searchApps
+import com.gh00ul.cascade.ui.common.AppIcon
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -30,7 +44,6 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -79,7 +92,6 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
 /*
@@ -131,6 +143,13 @@ internal fun Modifier.highlight(key: String?): Modifier {
 /** Below this height (a phone in landscape) the bar and a pinned preview would leave no room for the settings. */
 private const val PIN_MIN_HEIGHT_DP = 600
 
+/** Rows wider than this read badly; on a tablet or in landscape the page keeps them to it, centered. */
+private const val PAGE_MAX_WIDTH_DP = 640
+
+/** The extra margin on each side that keeps a page's content within [PAGE_MAX_WIDTH_DP]. */
+@Composable
+internal fun wideMargin(): Dp = ((LocalConfiguration.current.screenWidthDp - PAGE_MAX_WIDTH_DP) / 2).coerceAtLeast(0).dp
+
 /**
  * A settings page: a large title that collapses as the page scrolls, [pinned] content that stays put under it (the
  * home preview) on screens tall enough for it and scrolls with the page otherwise, then [content] in a scrolling
@@ -153,6 +172,7 @@ internal fun SettingsPage(
     ) { padding ->
         val direction = LocalLayoutDirection.current
         val pin = LocalConfiguration.current.screenHeightDp >= PIN_MIN_HEIGHT_DP
+        val margin = wideMargin()
         // Side insets too: a 3-button nav bar sits at the side in landscape. The bottom one is scrolled past instead,
         // so rows can pass behind a gesture bar.
         Column(
@@ -162,8 +182,9 @@ internal fun SettingsPage(
                 end = padding.calculateEndPadding(direction),
             ),
         ) {
-            if (pin) pinned?.invoke()
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            if (pin) Box(Modifier.padding(horizontal = margin)) { pinned?.invoke() }
+            // Full width, so the page scrolls from its margins too; the content within keeps to the page width.
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = margin)) {
                 if (!pin) pinned?.invoke()
                 content()
                 Spacer(Modifier.height(padding.calculateBottomPadding() + 24.dp))
@@ -189,13 +210,14 @@ internal fun SettingsListPage(
         topBar = { PageBar(title, onBack, actions, scrollBehavior) },
     ) { padding ->
         val direction = LocalLayoutDirection.current
+        val margin = wideMargin()
         LazyColumn(
             state = state,
             // The keyboard's height is in the bottom padding while it's up, so the end of the list stays reachable.
             contentPadding = PaddingValues(
-                start = padding.calculateStartPadding(direction) + 16.dp,
+                start = padding.calculateStartPadding(direction) + 16.dp + margin,
                 top = padding.calculateTopPadding(),
-                end = padding.calculateEndPadding(direction) + 16.dp,
+                end = padding.calculateEndPadding(direction) + 16.dp + margin,
                 bottom = padding.calculateBottomPadding() + 24.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -530,4 +552,44 @@ internal object SettingsIcons {
     private fun icon(name: String, path: String) = ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
         .addPath(addPathNodes(path), fill = SolidColor(Color.Black))
         .build()
+}
+
+/** Pick one app from [apps], with a search field: for gestures that open an app. */
+@Composable
+internal fun AppPickerDialog(title: String, apps: List<AppEntry>, icons: Map<String, IconImage>, onPick: (AppEntry) -> Unit, onDismiss: () -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val shown = remember(apps, query) { if (query.isBlank()) apps else searchApps(apps, query) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    placeholder = { Text("Search apps") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LazyColumn(Modifier.heightIn(max = 360.dp).padding(top = 8.dp)) {
+                    items(shown, key = { it.key }) { app ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onPick(app) }
+                                .padding(horizontal = 4.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AppIcon(icons[app.key], 32.dp)
+                            Spacer(Modifier.width(14.dp))
+                            Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

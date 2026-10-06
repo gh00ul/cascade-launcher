@@ -1,5 +1,9 @@
 package com.gh00ul.cascade.settings
 
+import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.IconImage
+import android.Manifest
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -41,11 +45,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.DoubleTapAction
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.data.SettingsBackup
 import com.gh00ul.cascade.data.SwipeDownAction
+import com.gh00ul.cascade.data.hasContactsAccess
 import com.gh00ul.cascade.data.renderTo
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.update.Updater
@@ -58,14 +66,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Which gesture's app is being picked. */
+private enum class GestureApp { SWIPE_DOWN, DOUBLE_TAP }
+
 /** What swipes and taps on empty home space do, and whether touches vibrate. */
 @Composable
-internal fun GesturesPage(settings: LauncherSettings, nav: SettingsNav) {
+internal fun GesturesPage(settings: LauncherSettings, apps: List<AppEntry>, icons: Map<String, IconImage>, nav: SettingsNav) {
     val context = LocalContext.current
     val prefs = context.launcher.prefs
     val setup = rememberSetupState()
     var explainLock by rememberSaveable { mutableStateOf(false) }
+    var picking by rememberSaveable { mutableStateOf<GestureApp?>(null) }
     val lockNeedsService = settings.doubleTapAction == DoubleTapAction.LOCK_SCREEN && !setup.lockEnabled
+    val byKey = remember(apps) { apps.associateBy { it.key } }
+    // The chosen app's name, or a prompt while none is chosen (or it's gone).
+    fun appSummary(key: String?) = key?.let { byKey[it]?.label } ?: "Choose an app"
 
     SettingsPage(title = SettingsScreen.GESTURES.title, onBack = nav.back) {
         RadioGroup(
@@ -78,10 +93,16 @@ internal fun GesturesPage(settings: LauncherSettings, nav: SettingsNav) {
                     SwipeDownAction.NOTIFICATIONS -> "Open notifications"
                     SwipeDownAction.QUICK_SETTINGS -> "Open quick settings"
                     SwipeDownAction.SEARCH -> "Search apps"
+                    SwipeDownAction.OPEN_APP -> "Open an app"
                     SwipeDownAction.NOTHING -> "Nothing"
                 }
             },
-        ) { a -> prefs.update { it.copy(swipeDownAction = a) } }
+            summary = { a -> if (a == SwipeDownAction.OPEN_APP) appSummary(settings.swipeDownApp) else null },
+        ) { a ->
+            // Picking the app sets the choice; tapping it again changes the app.
+            if (a == SwipeDownAction.OPEN_APP) picking = GestureApp.SWIPE_DOWN
+            else prefs.update { it.copy(swipeDownAction = a) }
+        }
 
         RadioGroup(
             title = "Double-tap empty space",
@@ -95,16 +116,24 @@ internal fun GesturesPage(settings: LauncherSettings, nav: SettingsNav) {
                     DoubleTapAction.LOCK_SCREEN -> "Lock the screen"
                     DoubleTapAction.NOTIFICATIONS -> "Open notifications"
                     DoubleTapAction.SEARCH -> "Search apps"
+                    DoubleTapAction.OPEN_APP -> "Open an app"
                 }
             },
             summary = { a ->
-                if (a != DoubleTapAction.LOCK_SCREEN) null
-                else if (setup.lockEnabled) "Turns the screen off, like the power button"
-                else "Needs Cascade's lock service, turned on once"
+                when {
+                    a == DoubleTapAction.OPEN_APP -> appSummary(settings.doubleTapApp)
+                    a != DoubleTapAction.LOCK_SCREEN -> null
+                    setup.lockEnabled -> "Turns the screen off, like the power button"
+                    else -> "Needs Cascade's lock service, turned on once"
+                }
             },
         ) { a ->
-            prefs.update { it.copy(doubleTapAction = a) }
-            if (a == DoubleTapAction.LOCK_SCREEN && !setup.lockEnabled) explainLock = true
+            if (a == DoubleTapAction.OPEN_APP) {
+                picking = GestureApp.DOUBLE_TAP
+            } else {
+                prefs.update { it.copy(doubleTapAction = a) }
+                if (a == DoubleTapAction.LOCK_SCREEN && !setup.lockEnabled) explainLock = true
+            }
         }
         AnimatedVisibility(lockNeedsService) {
             SettingsGroup {
@@ -122,6 +151,24 @@ internal fun GesturesPage(settings: LauncherSettings, nav: SettingsNav) {
                 prefs.update { it.copy(haptics = on) }
             }
         }
+    }
+
+    picking?.let { gesture ->
+        AppPickerDialog(
+            title = if (gesture == GestureApp.SWIPE_DOWN) "Swipe down opens" else "Double-tap opens",
+            apps = apps,
+            icons = icons,
+            onPick = { app ->
+                prefs.update {
+                    when (gesture) {
+                        GestureApp.SWIPE_DOWN -> it.copy(swipeDownAction = SwipeDownAction.OPEN_APP, swipeDownApp = app.key)
+                        GestureApp.DOUBLE_TAP -> it.copy(doubleTapAction = DoubleTapAction.OPEN_APP, doubleTapApp = app.key)
+                    }
+                }
+                picking = null
+            },
+            onDismiss = { picking = null },
+        )
     }
 
     if (explainLock) {
@@ -147,10 +194,29 @@ internal fun GesturesPage(settings: LauncherSettings, nav: SettingsNav) {
     }
 }
 
-/** How search on home behaves. */
+/** How search on home behaves, and what it finds besides apps. */
 @Composable
 internal fun SearchPage(settings: LauncherSettings, nav: SettingsNav) {
-    val prefs = LocalContext.current.launcher.prefs
+    val context = LocalContext.current
+    val prefs = context.launcher.prefs
+    var contactsAllowed by remember { mutableStateOf(hasContactsAccess(context)) }
+    // Sent to App info to allow access: turn contacts on once it's allowed there.
+    var awaitingAppInfo by remember { mutableStateOf(false) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        contactsAllowed = hasContactsAccess(context)
+        if (contactsAllowed && awaitingAppInfo) prefs.update { it.copy(searchContacts = true) }
+        awaitingAppInfo = false
+    }
+    // After "Don't allow" twice, Android stops asking and the request fails at once; send the user to App info then.
+    var contactsBlocked by remember { mutableStateOf(false) }
+    val contactsRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        contactsAllowed = granted
+        val activity = context as? Activity
+        contactsBlocked = !granted && activity != null &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.READ_CONTACTS)
+        prefs.update { it.copy(searchContacts = granted) }
+    }
+
     SettingsPage(title = SettingsScreen.SEARCH.title, onBack = nav.back) {
         SettingsGroup {
             SwitchRow("Search the web", "Offers a web search for what you type; Go searches the web when no app matches", settings.searchWeb, key = "searchWeb") { on ->
@@ -161,6 +227,30 @@ internal fun SearchPage(settings: LauncherSettings, nav: SettingsNav) {
             }
             SwitchRow("Open single match", "Opens the app as soon as it's the only one matching what you type", settings.autoLaunchSingleMatch, key = "autoLaunch") { on ->
                 prefs.update { it.copy(autoLaunchSingleMatch = on) }
+            }
+        }
+        SettingsGroup("Beyond apps") {
+            SwitchRow("Calculator", "Answers sums like 24 × 7 or 20% of 85 as you type. Tap the answer or press Go to copy it.", settings.searchCalculator, key = "calculator") { on ->
+                prefs.update { it.copy(searchCalculator = on) }
+            }
+            SwitchRow(
+                "Contacts",
+                when {
+                    contactsBlocked && !contactsAllowed -> "Contacts access is blocked. Tap to allow it in App info."
+                    settings.searchContacts && !contactsAllowed -> "Contacts access is off. Allow it in App info."
+                    else -> "Finds people as you type, with buttons to text or call them. Read only while search is open."
+                },
+                settings.searchContacts && contactsAllowed,
+                key = "contacts",
+            ) { on ->
+                when {
+                    on && !hasContactsAccess(context) && contactsBlocked -> {
+                        awaitingAppInfo = true
+                        LauncherActions.openOwnAppInfo(context)
+                    }
+                    on && !hasContactsAccess(context) -> contactsRequest.launch(Manifest.permission.READ_CONTACTS)
+                    else -> prefs.update { it.copy(searchContacts = on) }
+                }
             }
         }
         PageText("Search opens from the search bar above the app list, or by swiping down on home if you set it in Gestures.")

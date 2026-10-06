@@ -9,10 +9,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Swiping down on the home page while it's at the top. */
-enum class SwipeDownAction { NOTIFICATIONS, QUICK_SETTINGS, SEARCH, NOTHING }
+enum class SwipeDownAction { NOTIFICATIONS, QUICK_SETTINGS, SEARCH, OPEN_APP, NOTHING }
 
-/** Double-tapping empty space on the home page. LOCK_SCREEN needs Cascade's accessibility service (Android 9+). */
-enum class DoubleTapAction { NOTHING, LOCK_SCREEN, NOTIFICATIONS, SEARCH }
+/**
+ * Double-tapping empty space on the home page. LOCK_SCREEN needs Cascade's accessibility service (Android 9+);
+ * OPEN_APP opens [LauncherSettings.doubleTapApp].
+ */
+enum class DoubleTapAction { NOTHING, LOCK_SCREEN, NOTIFICATIONS, SEARCH, OPEN_APP }
 
 /** The clock and the times on its chips: follow the system setting, or force 12- or 24-hour. */
 enum class TimeFormat { SYSTEM, H12, H24 }
@@ -110,6 +113,10 @@ data class LauncherSettings(
     val searchCalculator: Boolean = true,
     /** Search finds contacts too, to call or text; needs READ_CONTACTS. */
     val searchContacts: Boolean = false,
+    /** The app (by key) swiping down opens, with [SwipeDownAction.OPEN_APP]. */
+    val swipeDownApp: String? = null,
+    /** The app (by key) a double-tap opens, with [DoubleTapAction.OPEN_APP]. */
+    val doubleTapApp: String? = null,
 )
 
 class Prefs(context: Context) {
@@ -174,6 +181,8 @@ class Prefs(context: Context) {
         widgetStack = sp.getString(WIDGET_STACK, null)?.let(::parseList)?.take(MAX_STACK_WIDGETS) ?: emptyList(),
         searchCalculator = sp.getBoolean(SEARCH_CALCULATOR, true),
         searchContacts = sp.getBoolean(SEARCH_CONTACTS, false),
+        swipeDownApp = sp.getString(SWIPE_DOWN_APP, null),
+        doubleTapApp = sp.getString(DOUBLE_TAP_APP, null),
     )
 
     private fun write(s: LauncherSettings) {
@@ -214,6 +223,8 @@ class Prefs(context: Context) {
             .putString(WIDGET_STACK, JSONArray(s.widgetStack).toString())
             .putBoolean(SEARCH_CALCULATOR, s.searchCalculator)
             .putBoolean(SEARCH_CONTACTS, s.searchContacts)
+            .putString(SWIPE_DOWN_APP, s.swipeDownApp)
+            .putString(DOUBLE_TAP_APP, s.doubleTapApp)
             .apply()
     }
 
@@ -254,6 +265,8 @@ class Prefs(context: Context) {
         const val WIDGET_STACK = "widget_stack"
         const val SEARCH_CALCULATOR = "search_calculator"
         const val SEARCH_CONTACTS = "search_contacts"
+        const val SWIPE_DOWN_APP = "swipe_down_app"
+        const val DOUBLE_TAP_APP = "double_tap_app"
     }
 }
 

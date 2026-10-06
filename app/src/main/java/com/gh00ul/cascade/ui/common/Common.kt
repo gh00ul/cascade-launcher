@@ -108,6 +108,10 @@ object ExtraIcons {
             "3.01L14.5,12l4.5,6H5l3.5,-4.5z",
     )
 
+    val Widgets = icon(
+        "Widgets",
+        "M13,13v8h8v-8h-8zM3,21h8v-8L3,13v8zM3,3v8h8L11,3L3,3zM16.66,1.69L11,7.34 16.66,13l5.66,-5.66 -5.66,-5.65z",
+    )
     val Play = icon("Play", "M8,5v14l11,-7z")
     val Pause = icon("Pause", "M6,19h4V5H6v14zM14,5v14h4V5h-4z")
     val SkipNext = icon("SkipNext", "M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z")

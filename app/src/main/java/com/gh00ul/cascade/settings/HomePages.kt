@@ -1,8 +1,10 @@
 package com.gh00ul.cascade.settings
 
+import android.content.pm.ApplicationInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -14,12 +16,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -47,14 +53,36 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.HomeApp
+import com.gh00ul.cascade.data.HomeFolder
+import com.gh00ul.cascade.data.HomeItem
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.LauncherSettings
+import com.gh00ul.cascade.data.addToFolder
+import com.gh00ul.cascade.data.defaultFolderName
+import com.gh00ul.cascade.data.dissolveFolder
+import com.gh00ul.cascade.data.folderLabel
+import com.gh00ul.cascade.data.homeAppKeys
+import com.gh00ul.cascade.data.homeFolders
+import com.gh00ul.cascade.data.homeItems
+import com.gh00ul.cascade.data.isFolderKey
+import com.gh00ul.cascade.data.newFolder
+import com.gh00ul.cascade.data.nextFolderId
+import com.gh00ul.cascade.data.removeFavorite
+import com.gh00ul.cascade.data.removeFromFolder
+import com.gh00ul.cascade.data.renameFolder
+import com.gh00ul.cascade.data.reorderFavorites
+import com.gh00ul.cascade.data.reorderFolder
 import com.gh00ul.cascade.data.searchApps
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.ui.common.AppIcon
+import com.gh00ul.cascade.ui.home.FolderGlyphs
+import com.gh00ul.cascade.ui.home.FolderIcon
+import com.gh00ul.cascade.ui.home.FolderNameDialog
 
 /** What's on the home page: which apps, and what their rows show. */
 @Composable
@@ -69,7 +97,10 @@ internal fun HomeScreenPage(
     val installed = remember(apps) { apps.mapTo(HashSet()) { it.key } }
     val hiddenCount = if (apps.isEmpty()) settings.hidden.size else settings.hidden.count { it in installed }
     val renamedCount = if (apps.isEmpty()) settings.renames.size else settings.renames.keys.count { it in installed }
-    val favoriteCount = if (apps.isEmpty()) settings.favorites.size else favorites.size
+    // Folders count as rows of their own; before the first load, the stored keys stand in.
+    val homeRows = remember(apps, settings.favorites, settings.folders) { homeItems(settings, apps.associateBy { it.key }) }
+    val folderCount = if (apps.isEmpty()) settings.favorites.count(::isFolderKey) else homeRows.count { it is HomeFolder }
+    val favoriteCount = if (apps.isEmpty()) settings.favorites.size else homeRows.size
 
     SettingsPage(
         title = SettingsScreen.HOME.title,
@@ -79,7 +110,7 @@ internal fun HomeScreenPage(
         SettingsGroup("Apps") {
             SettingRow(
                 title = "Favorites",
-                summary = if (favoriteCount == 0) "None yet. Add the apps you use most." else "${count(favoriteCount, "app", "apps")} · add, remove or reorder",
+                summary = if (favoriteCount == 0) "None yet. Add the apps you use most." else favoritesSummary(favoriteCount - folderCount, folderCount),
                 onClick = { nav.go(SettingsScreen.FAVORITES) },
             )
             SettingRow(
@@ -119,59 +150,79 @@ internal fun HomeScreenPage(
 }
 
 private const val FAVORITE = "fav:"
+private const val MEMBER = "app:"
 
 /**
- * Favorites in home order. Drag a row by its handle to move it; TalkBack users get Move up and Move down actions.
- * The new order is saved when the row is dropped.
+ * Drag-to-reorder by a row's handle in a lazy list: while a row is dragged the list shows [order], a copy reordered as
+ * it goes, and the new order is handed to the page's save when the row is dropped. Rows' list keys are [prefix] plus
+ * the item's key.
  */
-@Composable
-internal fun FavoritesPage(
-    settings: LauncherSettings,
-    apps: List<AppEntry>,
-    favorites: List<AppEntry>,
-    icons: Map<String, IconImage>,
-    nav: SettingsNav,
-) {
-    val prefs = LocalContext.current.launcher.prefs
-    val listState = rememberLazyListState()
-    // While a row is dragged the list shows this copy, reordered as it goes; the stored order changes on drop.
-    val order = remember { mutableStateListOf<AppEntry>() }
-    var dragging by remember { mutableStateOf<String?>(null) }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    val shown = if (dragging != null) order else favorites
+private class Reorder<T>(private val prefix: String, private val keyOf: (T) -> String) {
+    val order = mutableStateListOf<T>()
+    var dragging by mutableStateOf<String?>(null)
+        private set
+    var offset by mutableFloatStateOf(0f)
+        private set
 
-    // Writes [newOrder] over the installed favorites' places in the stored list, so favorites of apps that are missing
-    // for now (disabled, on an unmounted SD card, still restoring) keep theirs.
-    fun save(newOrder: List<AppEntry>) = prefs.update { s ->
-        val keys = newOrder.mapTo(HashSet()) { it.key }
-        if (s.favorites.count { it in keys } != newOrder.size) return@update s
-        val next = newOrder.iterator()
-        s.copy(favorites = s.favorites.map { key -> if (key in keys) next.next().key else key })
+    fun shown(items: List<T>): List<T> = if (dragging != null) order else items
+
+    fun start(items: List<T>, key: String) {
+        order.clear()
+        order.addAll(items)
+        offset = 0f
+        dragging = key
     }
 
-    fun move(from: Int, to: Int) {
-        if (to !in favorites.indices) return
-        save(favorites.toMutableList().also { it.add(to, it.removeAt(from)) })
-    }
-
-    fun drag(dy: Float) {
+    fun drag(dy: Float, listState: LazyListState) {
         val key = dragging ?: return
-        dragOffset += dy
+        offset += dy
         val items = listState.layoutInfo.visibleItemsInfo
-        val current = items.firstOrNull { it.key == FAVORITE + key } ?: return
-        val center = current.offset + dragOffset + current.size / 2f
+        val current = items.firstOrNull { it.key == prefix + key } ?: return
+        val center = current.offset + offset + current.size / 2f
         val target = items.firstOrNull { info ->
-            info.key != current.key && (info.key as? String)?.startsWith(FAVORITE) == true &&
+            info.key != current.key && (info.key as? String)?.startsWith(prefix) == true &&
                 center >= info.offset && center < info.offset + info.size
         } ?: return
-        val from = order.indexOfFirst { FAVORITE + it.key == current.key }
-        val to = order.indexOfFirst { FAVORITE + it.key == target.key }
+        val from = order.indexOfFirst { prefix + keyOf(it) == current.key }
+        val to = order.indexOfFirst { prefix + keyOf(it) == target.key }
         if (from < 0 || to < 0) return
         order.add(to, order.removeAt(from))
         // The row now lays out in the target's place: at its top moving up, ending at its bottom moving down (rows
         // differ in height when a long name wraps). Shift the offset so the row stays under the finger.
         val newOffset = if (to > from) target.offset + target.size - current.size else target.offset
-        dragOffset += current.offset - newOffset
+        offset += current.offset - newOffset
+    }
+
+    fun end(save: (List<T>) -> Unit) {
+        if (dragging != null) save(order.toList())
+        dragging = null
+        offset = 0f
+    }
+}
+
+/**
+ * Favorites in home order, apps and folders alike. Drag a row by its handle to move it; TalkBack users get Move up
+ * and Move down actions. The new order is saved when the row is dropped. Tapping a folder opens it; removing one puts
+ * its apps back here in its place.
+ */
+@Composable
+internal fun FavoritesPage(
+    settings: LauncherSettings,
+    apps: List<AppEntry>,
+    favorites: List<HomeItem>,
+    icons: Map<String, IconImage>,
+    nav: SettingsNav,
+) {
+    val prefs = LocalContext.current.launcher.prefs
+    val listState = rememberLazyListState()
+    val reorder = remember { Reorder<HomeItem>(FAVORITE) { it.key } }
+    val shown = reorder.shown(favorites)
+    var naming by rememberSaveable { mutableStateOf(false) }
+
+    fun move(from: Int, to: Int) {
+        if (to !in favorites.indices) return
+        val order = favorites.toMutableList().also { it.add(to, it.removeAt(from)) }
+        prefs.update { it.reorderFavorites(order.map(HomeItem::key)) }
     }
 
     SettingsListPage(
@@ -185,49 +236,225 @@ internal fun FavoritesPage(
         if (shown.isEmpty()) {
             item(key = "empty") { ListText("No favorites yet. They sit at the bottom of your home screen, under the clock, where your thumb is.") }
         } else {
-            item(key = "hint") { ListText("Drag the handle to reorder. The top one sits highest on the home screen.") }
+            item(key = "hint") {
+                ListText(
+                    if (shown.any { it is HomeFolder }) "Drag the handle to reorder. The top one sits highest on the home screen. Tap a folder to change what's in it."
+                    else "Drag the handle to reorder. The top one sits highest on the home screen.",
+                )
+            }
         }
-        itemsIndexed(shown, key = { _, app -> FAVORITE + app.key }) { index, app ->
-            val isDragged = dragging == app.key
-            FavoriteRow(
-                app = app,
-                icon = icons[app.key],
+        itemsIndexed(shown, key = { _, item -> FAVORITE + item.key }) { index, item ->
+            val isDragged = reorder.dragging == item.key
+            ReorderRow(
+                key = item.key,
+                leading = {
+                    when (item) {
+                        is HomeApp -> AppIcon(icons[item.key], 40.dp)
+                        is HomeFolder -> SettingsFolderIcon(item.apps.take(4).map { icons[it.key] }, 40.dp)
+                    }
+                },
+                title = when (item) {
+                    is HomeApp -> item.app.label
+                    is HomeFolder -> item.label
+                },
+                summary = (item as? HomeFolder)?.let { count(it.apps.size, "app", "apps") },
+                onClick = (item as? HomeFolder)?.let { folder -> { nav.openFolder(folder.id) } },
+                onClickLabel = "Edit folder",
+                removeLabel = when (item) {
+                    is HomeApp -> "Remove ${item.app.label}"
+                    is HomeFolder -> "Remove folder ${item.label}, keeping its apps"
+                },
                 shapeIndex = index,
                 count = shown.size,
                 dragged = isDragged,
-                dragOffset = { if (isDragged) dragOffset else 0f },
-                onRemove = { prefs.update { it.copy(favorites = it.favorites - app.key) } },
+                dragOffset = { if (isDragged) reorder.offset else 0f },
+                onRemove = { prefs.update { it.removeFavorite(item.key) } },
                 onMoveUp = { move(index, index - 1) }.takeIf { index > 0 },
                 onMoveDown = { move(index, index + 1) }.takeIf { index < shown.lastIndex },
-                onDragStart = {
-                    order.clear()
-                    order.addAll(favorites)
-                    dragOffset = 0f
-                    dragging = app.key
-                },
-                onDrag = ::drag,
-                onDragEnd = {
-                    if (dragging != null) save(order.toList())
-                    dragging = null
-                    dragOffset = 0f
-                },
+                onDragStart = { reorder.start(favorites, item.key) },
+                onDrag = { reorder.drag(it, listState) },
+                onDragEnd = { reorder.end { order -> prefs.update { it.reorderFavorites(order.map(HomeItem::key)) } } },
             )
         }
         item(key = "add") {
+            Column(Modifier.padding(top = 12.dp).clip(GroupShape), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                SettingRow(title = "Add a favorite", icon = Icons.Filled.Add, onClick = { nav.go(SettingsScreen.ADD_FAVORITE) })
+                SettingRow(title = "New folder", icon = FolderGlyphs.NewFolder, onClick = { naming = true })
+            }
+        }
+    }
+    if (naming) {
+        val taken = settings.folders.values.map { it.name }
+        FolderNameDialog(
+            title = "New folder",
+            initial = remember(taken) { defaultFolderName(ApplicationInfo.CATEGORY_UNDEFINED, taken) },
+            confirmLabel = "Create",
+            onConfirm = { name ->
+                var created: String? = null
+                prefs.update { s -> nextFolderId(s.folders).let { id -> created = id; s.newFolder(id, name, emptyList()) } }
+                created?.let(nav.openFolder)
+            },
+            onDismiss = { naming = false },
+        )
+    }
+}
+
+/**
+ * One folder: its name, then its apps in order, each with a handle to drag and a button to take it out (back among
+ * the favorites, after the folder). "Add apps" picks more; "Remove folder" ends it and keeps its apps on home.
+ */
+@Composable
+internal fun FolderPage(settings: LauncherSettings, apps: List<AppEntry>, icons: Map<String, IconImage>, nav: SettingsNav) {
+    val prefs = LocalContext.current.launcher.prefs
+    val id = nav.folder
+    val folder = id?.let { settings.folders[it] }
+    // Removed here or elsewhere (or opened for a folder that's gone): nothing left to edit.
+    LaunchedEffect(folder == null) { if (folder == null) nav.back() }
+    if (id == null || folder == null) return
+    val listState = rememberLazyListState()
+    val byKey = remember(apps) { apps.associateBy { it.key } }
+    val members = remember(folder.apps, byKey) { folder.apps.mapNotNull { byKey[it] } }
+    val reorder = remember { Reorder<AppEntry>(MEMBER) { it.key } }
+    val shown = reorder.shown(members)
+    var renaming by rememberSaveable { mutableStateOf(false) }
+
+    fun move(from: Int, to: Int) {
+        if (to !in members.indices) return
+        val order = members.toMutableList().also { it.add(to, it.removeAt(from)) }
+        prefs.update { it.reorderFolder(id, order.map(AppEntry::key)) }
+    }
+
+    SettingsListPage(
+        title = folderLabel(folder.name),
+        onBack = nav.back,
+        state = listState,
+        actions = {
+            IconButton(onClick = { nav.go(SettingsScreen.ADD_TO_FOLDER) }) { Icon(Icons.Filled.Add, contentDescription = "Add apps") }
+        },
+    ) {
+        item(key = "name") {
             SettingRow(
-                title = "Add a favorite",
-                icon = Icons.Filled.Add,
-                onClick = { nav.go(SettingsScreen.ADD_FAVORITE) },
-                modifier = Modifier.padding(top = 12.dp).clip(GroupShape),
+                title = "Name",
+                summary = folderLabel(folder.name),
+                icon = Icons.Filled.Edit,
+                onClick = { renaming = true },
+                onClickLabel = "Rename",
+                modifier = Modifier.padding(top = 8.dp).clip(GroupShape),
             )
+        }
+        item(key = "hint") {
+            ListText(
+                if (shown.isEmpty()) "Nothing in it yet. Add some apps; until then it stays off the home screen."
+                else "Drag the handle to reorder. An app you take out goes back to your favorites, after the folder.",
+            )
+        }
+        itemsIndexed(shown, key = { _, app -> MEMBER + app.key }) { index, app ->
+            val isDragged = reorder.dragging == app.key
+            ReorderRow(
+                key = app.key,
+                leading = { AppIcon(icons[app.key], 40.dp) },
+                title = app.label,
+                summary = null,
+                onClick = null,
+                removeLabel = "Take ${app.label} out of the folder",
+                shapeIndex = index,
+                count = shown.size,
+                dragged = isDragged,
+                dragOffset = { if (isDragged) reorder.offset else 0f },
+                onRemove = { prefs.update { it.removeFromFolder(app.key, keepEmptyFolder = true) } },
+                onMoveUp = { move(index, index - 1) }.takeIf { index > 0 },
+                onMoveDown = { move(index, index + 1) }.takeIf { index < shown.lastIndex },
+                onDragStart = { reorder.start(members, app.key) },
+                onDrag = { reorder.drag(it, listState) },
+                onDragEnd = { reorder.end { order -> prefs.update { it.reorderFolder(id, order.map(AppEntry::key)) } } },
+            )
+        }
+        item(key = "actions") {
+            Column(Modifier.padding(top = 12.dp).clip(GroupShape), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                SettingRow(title = "Add apps", icon = Icons.Filled.Add, onClick = { nav.go(SettingsScreen.ADD_TO_FOLDER) })
+                SettingRow(
+                    title = "Remove folder",
+                    summary = "Its apps go back to your favorites",
+                    icon = FolderGlyphs.FolderMinus,
+                    onClick = { prefs.update { it.dissolveFolder(id) } },
+                )
+            }
+        }
+    }
+    if (renaming) {
+        FolderNameDialog(
+            title = "Rename folder",
+            initial = folder.name,
+            confirmLabel = "Save",
+            onConfirm = { name -> prefs.update { it.renameFolder(id, name) } },
+            onDismiss = { renaming = false },
+        )
+    }
+}
+
+/**
+ * Every app, with a search field, to fill a folder: a tap puts the app in (moving it from the favorites or another
+ * folder) or takes it back out. The page stays open, so several can go in at once; each says where it is now.
+ */
+@Composable
+internal fun AddToFolderPage(settings: LauncherSettings, apps: List<AppEntry>, icons: Map<String, IconImage>, nav: SettingsNav) {
+    val prefs = LocalContext.current.launcher.prefs
+    val id = nav.folder
+    val folder = id?.let { settings.folders[it] }
+    LaunchedEffect(folder == null) { if (folder == null) nav.back() }
+    if (id == null || folder == null) return
+    var query by rememberSaveable { mutableStateOf("") }
+    val candidates = remember(apps, query) { if (query.isBlank()) apps else searchApps(apps, query) }
+    val members = folder.apps.toHashSet()
+    // Where each app is now: on home by itself, or in another folder.
+    val places = remember(settings.favorites, settings.folders, id) {
+        buildMap {
+            settings.homeFolders().forEach { (fid, f) -> if (fid != id) f.apps.forEach { put(it, "In ${folderLabel(f.name)}") } }
+            settings.favorites.forEach { if (!isFolderKey(it)) put(it, "A favorite") }
+        }
+    }
+    SettingsListPage(title = "Add to ${folderLabel(folder.name)}", onBack = nav.back) {
+        item(key = "search") { AppSearchField(query) { query = it } }
+        if (candidates.isEmpty()) {
+            item(key = "none") { ListText("No apps match “${query.trim()}”.") }
+        }
+        itemsIndexed(candidates, key = { _, app -> app.key }) { index, app ->
+            val inFolder = app.key in members
+            AppListRow(
+                app,
+                icons[app.key],
+                index,
+                candidates.size,
+                summary = if (inFolder) "In this folder" else places[app.key],
+                onClick = {
+                    prefs.update { if (inFolder) it.removeFromFolder(app.key, keepEmptyFolder = true) else it.addToFolder(app.key, id) }
+                },
+            ) {
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    if (inFolder) Icon(Icons.Filled.Check, contentDescription = "In the folder", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
         }
     }
 }
 
+/** A folder's icon on a settings row: its apps' icons on the page's raised tone. */
 @Composable
-private fun LazyItemScope.FavoriteRow(
-    app: AppEntry,
-    icon: IconImage?,
+private fun SettingsFolderIcon(icons: List<IconImage?>, size: Dp) =
+    FolderIcon(icons, size, MaterialTheme.colorScheme.surfaceContainerHighest)
+
+/**
+ * A row of a reorderable list: [leading] (an icon), [title] and an optional [summary], a remove button, and the drag
+ * handle. Tapping it runs [onClick] when given.
+ */
+@Composable
+private fun LazyItemScope.ReorderRow(
+    key: String,
+    leading: @Composable () -> Unit,
+    title: String,
+    summary: String?,
+    onClick: (() -> Unit)?,
+    removeLabel: String,
     shapeIndex: Int,
     count: Int,
     dragged: Boolean,
@@ -238,8 +465,9 @@ private fun LazyItemScope.FavoriteRow(
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragEnd: () -> Unit,
+    onClickLabel: String? = null,
 ) {
-    // The drag handler below is keyed on the app and outlives recompositions, so it calls the latest callbacks: a
+    // The drag handler below is keyed on the row and outlives recompositions, so it calls the latest callbacks: a
     // drag after a reorder or a removal must start from the list as it is now.
     val start by rememberUpdatedState(onDragStart)
     val move by rememberUpdatedState(onDrag)
@@ -259,6 +487,7 @@ private fun LazyItemScope.FavoriteRow(
             .fillMaxWidth()
             .clip(groupItemShape(shapeIndex, count))
             .background(if (dragged) MaterialTheme.colorScheme.surfaceContainerHighest else RowColor)
+            .then(if (onClick != null) Modifier.clickable(onClickLabel = onClickLabel, onClick = onClick) else Modifier)
             // One item for TalkBack (icon and name), carrying the move actions; the Remove button stays its own.
             .semantics(mergeDescendants = true) {
                 customActions = listOfNotNull(
@@ -270,14 +499,19 @@ private fun LazyItemScope.FavoriteRow(
             .padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(icon, 40.dp)
+        leading()
         Spacer(Modifier.width(16.dp))
-        Text(app.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(vertical = 12.dp))
-        IconButton(onClick = onRemove) { Icon(Icons.Filled.Close, contentDescription = "Remove ${app.label}") }
+        Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (summary != null) {
+                Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        IconButton(onClick = onRemove) { Icon(Icons.Filled.Close, contentDescription = removeLabel) }
         Box(
             Modifier
                 .size(48.dp)
-                .pointerInput(app.key) {
+                .pointerInput(key) {
                     detectVerticalDragGestures(
                         onDragStart = { start() },
                         onDragEnd = { end() },
@@ -295,35 +529,46 @@ private fun LazyItemScope.FavoriteRow(
     }
 }
 
+/** The search field over a list of apps. */
+@Composable
+private fun AppSearchField(query: String, onQuery: (String) -> Unit) {
+    TextField(
+        value = query,
+        onValueChange = onQuery,
+        singleLine = true,
+        placeholder = { Text("Search apps") },
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        trailingIcon = if (query.isNotEmpty()) {
+            { IconButton(onClick = { onQuery("") }) { Icon(Icons.Filled.Close, contentDescription = "Clear") } }
+        } else null,
+        shape = CircleShape,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = RowColor,
+            unfocusedContainerColor = RowColor,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+        ),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+    )
+}
+
+/** "5 apps, 2 folders · add, remove or reorder": the favorites row's summary, each folder counted as one row. */
+internal fun favoritesSummary(apps: Int, folders: Int): String =
+    listOfNotNull(count(apps, "app", "apps").takeIf { apps > 0 || folders == 0 }, count(folders, "folder", "folders").takeIf { folders > 0 })
+        .joinToString(", ") + " · add, remove or reorder"
+
 /** Every app that isn't a favorite yet, with a search field; picking one adds it at the bottom and goes back. */
 @Composable
 internal fun AddFavoritePage(settings: LauncherSettings, apps: List<AppEntry>, icons: Map<String, IconImage>, nav: SettingsNav) {
     val prefs = LocalContext.current.launcher.prefs
     var query by rememberSaveable { mutableStateOf("") }
-    val candidates = remember(apps, settings.favorites, query) {
-        (if (query.isBlank()) apps else searchApps(apps, query)).filter { it.key !in settings.favorites }
+    // Apps in folders are on the home screen already: they move from their folder's page or long-press menu.
+    val candidates = remember(apps, settings.favorites, settings.folders, query) {
+        val onHome = settings.homeAppKeys().toHashSet()
+        (if (query.isBlank()) apps else searchApps(apps, query)).filter { it.key !in onHome }
     }
     SettingsListPage(title = SettingsScreen.ADD_FAVORITE.title, onBack = nav.back) {
-        item(key = "search") {
-            TextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                placeholder = { Text("Search apps") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = if (query.isNotEmpty()) {
-                    { IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Close, contentDescription = "Clear") } }
-                } else null,
-                shape = CircleShape,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = RowColor,
-                    unfocusedContainerColor = RowColor,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                ),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
-            )
-        }
+        item(key = "search") { AppSearchField(query) { query = it } }
         if (candidates.isEmpty()) {
             item(key = "none") { ListText(if (query.isBlank()) "Every app is already a favorite." else "No apps match “${query.trim()}”.") }
         }

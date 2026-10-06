@@ -25,7 +25,13 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -158,10 +164,20 @@ private val StatusBarHeight = 32.dp
 @Composable
 private fun PreviewStatusBar(style: LauncherStyle, format: TimeFormat) {
     val context = LocalContext.current
-    val now = LocalNow.current
-    val time = remember(format) {
+    val clock = LocalNow.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Ticks with the minute while Settings is visible, so it agrees with the clock below it.
+    val now by produceState(clock(), lifecycle, clock) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                value = clock()
+                delay(60_000 - value % 60_000)
+            }
+        }
+    }
+    val time = remember(format, now / 60_000) {
         val is24h = is24Hour(format, DateFormat.is24HourFormat(context))
-        SimpleDateFormat(if (is24h) "H:mm" else "h:mm", context.resources.configuration.locales[0]).format(Date(now()))
+        SimpleDateFormat(if (is24h) "H:mm" else "h:mm", context.resources.configuration.locales[0]).format(Date(now))
     }
     Row(
         Modifier.fillMaxWidth().height(StatusBarHeight).padding(horizontal = 24.dp),

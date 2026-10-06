@@ -26,6 +26,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gh00ul.cascade.data.homeItems
+import com.gh00ul.cascade.data.WidgetHost
 import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.ui.theme.LauncherTheme
 import com.gh00ul.cascade.ui.theme.Motion
@@ -36,6 +38,9 @@ enum class SettingsScreen(val title: String) {
     HOME("Home screen"),
     FAVORITES("Favorites"),
     ADD_FAVORITE("Add a favorite"),
+    /** One folder's name and apps; which folder is [SettingsNav.folder]. */
+    FOLDER("Folder"),
+    ADD_TO_FOLDER("Add apps"),
     HIDDEN("Hidden apps"),
     RENAMED("Renamed apps"),
     WIDGETS("Widgets"),
@@ -52,7 +57,8 @@ enum class SettingsScreen(val title: String) {
         get() = when (this) {
             MAIN -> null
             FAVORITES, HIDDEN, RENAMED, WIDGETS -> HOME
-            ADD_FAVORITE -> FAVORITES
+            ADD_FAVORITE, FOLDER -> FAVORITES
+            ADD_TO_FOLDER -> FOLDER
             else -> MAIN
         }
 }
@@ -64,27 +70,43 @@ class SettingsActivity : ComponentActivity() {
         val start = intent.getStringExtra(EXTRA_SCREEN)
             ?.let { name -> SettingsScreen.entries.firstOrNull { it.name == name } }
             ?: SettingsScreen.MAIN
-        setContent { LauncherTheme(dark = isSystemInDarkTheme()) { SettingsApp(start, onExit = ::finish) } }
+        val folder = intent.getStringExtra(EXTRA_FOLDER)
+        setContent { LauncherTheme(dark = isSystemInDarkTheme()) { SettingsApp(start, onExit = ::finish, startFolder = folder) } }
+    }
+
+    // An app widget's own setup screen reports here when it's added from Settings, so a cancelled setup removes it.
+    @Deprecated("Deprecated in ComponentActivity")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!WidgetHost.onActivityResult(this, requestCode, resultCode, data)) super.onActivityResult(requestCode, resultCode, data)
     }
 
     companion object {
         private const val EXTRA_SCREEN = "screen"
+        private const val EXTRA_FOLDER = "folder"
 
-        fun open(context: Context, screen: SettingsScreen = SettingsScreen.MAIN) {
+        /** Opens Settings on [screen]; the folder pages need the [folder]'s id. */
+        fun open(context: Context, screen: SettingsScreen = SettingsScreen.MAIN, folder: String? = null) {
             context.startActivity(
                 Intent(context, SettingsActivity::class.java)
                     .putExtra(EXTRA_SCREEN, screen.name)
+                    .putExtra(EXTRA_FOLDER, folder)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
             )
         }
     }
 }
 
-/** Moving between pages: [go] deeper, [back] up a level, or [open] a search result's page and highlight its row. */
+/**
+ * Moving between pages: [go] deeper, [back] up a level, or [open] a search result's page and highlight its row.
+ * [openFolder] goes to a folder's page; [folder] is the folder the folder pages show.
+ */
 internal class SettingsNav(
     val go: (SettingsScreen) -> Unit,
     val back: () -> Unit,
     val open: (SettingEntry) -> Unit,
+    val folder: String? = null,
+    val openFolder: (String) -> Unit = {},
 )
 
 private val StackSaver = listSaver<List<SettingsScreen>, String>(
@@ -97,7 +119,7 @@ private val StackSaver = listSaver<List<SettingsScreen>, String>(
  * page (from the home screen's menu), Back from that page leaves Settings.
  */
 @Composable
-internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
+internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit, startFolder: String? = null) {
     val launcher = LocalContext.current.launcher
     val settings by launcher.prefs.settings.collectAsStateWithLifecycle()
     val apps by launcher.repository.apps.collectAsStateWithLifecycle()
@@ -106,7 +128,11 @@ internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
         val byKey = apps.associateBy { it.key }
         settings.favorites.mapNotNull { byKey[it] }
     }
+    // Home's rows: apps and folders, for the favorites page.
+    val homeItems = remember(apps, settings.favorites, settings.folders) { homeItems(settings, apps.associateBy { it.key }) }
     var stack by rememberSaveable(stateSaver = StackSaver) { mutableStateOf(listOf(start)) }
+    // The folder the folder pages are about; one at a time, so it needn't be part of the stack.
+    var folder by rememberSaveable { mutableStateOf(startFolder) }
     var forward by remember { mutableStateOf(true) }
     // The row a search result points at, on its page; cleared by the next move.
     var highlight by remember { mutableStateOf<Pair<SettingsScreen, String>?>(null) }
@@ -132,6 +158,13 @@ internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
             // The page's own path from the top, so Back climbs through its parents rather than back into search.
             stack = generateSequence(entry.screen) { it.parent }.toList().reversed()
         },
+        folder = folder,
+        openFolder = { id ->
+            forward = true
+            highlight = null
+            folder = id
+            stack = stack + SettingsScreen.FOLDER
+        },
     )
     BackHandler(enabled = stack.size > 1, onBack = nav.back)
 
@@ -140,14 +173,16 @@ internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit) {
             when (screen) {
                 SettingsScreen.MAIN -> MainPage(settings, apps, favorites, icons, nav)
                 SettingsScreen.HOME -> HomeScreenPage(settings, apps, favorites, icons, nav)
-                SettingsScreen.FAVORITES -> FavoritesPage(settings, apps, favorites, icons, nav)
+                SettingsScreen.FAVORITES -> FavoritesPage(settings, apps, homeItems, icons, nav)
                 SettingsScreen.ADD_FAVORITE -> AddFavoritePage(settings, apps, icons, nav)
+                SettingsScreen.FOLDER -> FolderPage(settings, apps, icons, nav)
+                SettingsScreen.ADD_TO_FOLDER -> AddToFolderPage(settings, apps, icons, nav)
                 SettingsScreen.HIDDEN -> HiddenAppsPage(settings, apps, icons, nav)
                 SettingsScreen.RENAMED -> RenamedAppsPage(settings, apps, icons, nav)
                 SettingsScreen.WIDGETS -> WidgetsPage(settings, nav)
                 SettingsScreen.LOOK -> AppearancePage(settings, favorites, icons, nav)
                 SettingsScreen.CLOCK -> ClockPage(settings, favorites, icons, nav)
-                SettingsScreen.GESTURES -> GesturesPage(settings, nav)
+                SettingsScreen.GESTURES -> GesturesPage(settings, apps, icons, nav)
                 SettingsScreen.SEARCH -> SearchPage(settings, nav)
                 SettingsScreen.BACKUP -> BackupPage(nav)
                 SettingsScreen.ABOUT -> AboutPage(settings, nav)

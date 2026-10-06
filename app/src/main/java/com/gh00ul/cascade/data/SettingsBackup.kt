@@ -58,6 +58,8 @@ object SettingsBackup {
         .put("widgetStack", JSONArray(settings.widgetStack.filterNot { it.startsWith(WIDGET_APP_PREFIX) }))
         .put("searchCalculator", settings.searchCalculator)
         .put("searchContacts", settings.searchContacts)
+        .put("swipeDownApp", settings.swipeDownApp ?: JSONObject.NULL)
+        .put("doubleTapApp", settings.doubleTapApp ?: JSONObject.NULL)
         .toString(2)
 
     /** [current] with every field the backup carries replaced; null when [json] isn't a Cascade settings backup. */
@@ -116,14 +118,19 @@ object SettingsBackup {
             tempUnit = root.enum("tempUnit", TempUnit.entries) ?: current.tempUnit,
             resumePrompt = root.bool("resumePrompt") ?: current.resumePrompt,
             folders = (root.opt("folders") as? JSONObject)?.let { parseFolders(it.toString()) } ?: current.folders,
-            // The current app widgets stay (they're this install's); the backup's own widgets replace the rest.
+            // The current app widgets stay (they're this install's, bound and set up), and the backup's own widgets
+            // replace the rest, as many as fit: a configured widget is never pushed off the stack.
             widgetStack = root.strings("widgetStack")?.let { restored ->
-                (restored.filter { it == WIDGET_CALENDAR || it == WIDGET_WEATHER } + current.widgetStack.filter { it.startsWith(WIDGET_APP_PREFIX) })
-                    .distinct().take(MAX_STACK_WIDGETS)
+                val apps = current.widgetStack.filter { it.startsWith(WIDGET_APP_PREFIX) }
+                val builtIns = restored.filter { it == WIDGET_CALENDAR || it == WIDGET_WEATHER }.distinct()
+                builtIns.take((MAX_STACK_WIDGETS - apps.size).coerceAtLeast(0)) + apps
             } ?: current.widgetStack,
             searchCalculator = root.bool("searchCalculator") ?: current.searchCalculator,
             // Only with the permission still to ask for: restoring can't grant it.
             searchContacts = root.bool("searchContacts") ?: current.searchContacts,
+            // A JSON null is "no app", as for the weather place.
+            swipeDownApp = if (root.has("swipeDownApp")) root.opt("swipeDownApp") as? String else current.swipeDownApp,
+            doubleTapApp = if (root.has("doubleTapApp")) root.opt("doubleTapApp") as? String else current.doubleTapApp,
         )
     }
 
@@ -178,6 +185,8 @@ object SettingsBackup {
         LauncherSettings::widgetStack,
         LauncherSettings::searchCalculator,
         LauncherSettings::searchContacts,
+        LauncherSettings::swipeDownApp,
+        LauncherSettings::doubleTapApp,
     )
 
     /** "6 favorites (now 5)"; null when both are empty. The same count with other contents still reads "now". */

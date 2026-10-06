@@ -29,9 +29,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.gh00ul.cascade.data.LauncherSettings
+import com.gh00ul.cascade.data.TempUnit
 import com.gh00ul.cascade.data.Weather
 import com.gh00ul.cascade.data.WeatherKind
 import com.gh00ul.cascade.data.WeatherNow
+import com.gh00ul.cascade.data.WeatherPlace
 import com.gh00ul.cascade.data.usesFahrenheit
 import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
@@ -47,6 +49,7 @@ import kotlinx.coroutines.delay
  * It also asks for the readings: [Weather.refresh] on each start, then every 30 minutes while it stays visible. The
  * loop runs in repeatOnLifecycle(STARTED), so it's cancelled when home stops, and a refresh only goes to the network
  * when the reading is 30 minutes old (see BATTERY.md). It needs nothing from MainActivity, so Settings can show it too.
+ * While it's off, the weather widget runs the same loop instead (WeatherWidget), so there is only ever one.
  */
 @Composable
 fun WeatherReadout(settings: LauncherSettings, modifier: Modifier = Modifier) {
@@ -55,8 +58,8 @@ fun WeatherReadout(settings: LauncherSettings, modifier: Modifier = Modifier) {
     val latest by rememberUpdatedState(settings)
     val on = settings.showWeather && settings.weatherPlace != null
     // Restarted when what the reading is for changes, so a new place or unit is fetched at once, and turning weather
-    // off clears it.
-    LaunchedEffect(lifecycle, on, settings.weatherPlace, settings.tempUnit) {
+    // off clears it, unless the weather widget still wants it (Weather.wantedPlace).
+    LaunchedEffect(lifecycle, on, settings.weatherPlace, settings.tempUnit, Weather.wantedPlace(settings) != null) {
         if (!on) {
             Weather.refresh(context, latest)
             return@LaunchedEffect
@@ -110,14 +113,21 @@ fun WeatherReadout(settings: LauncherSettings, modifier: Modifier = Modifier) {
  * yet. [Weather.state] can still hold the previous place's or unit's reading for a moment; that one never shows.
  */
 @Composable
-fun rememberWeather(settings: LauncherSettings): WeatherNow? {
+fun rememberWeather(settings: LauncherSettings): WeatherNow? =
+    rememberWeatherAt(settings.weatherPlace?.takeIf { settings.showWeather }, settings.tempUnit)
+
+/**
+ * The reading for [place] in [unit], or null without a place or before one has come: [rememberWeather] without the
+ * readout's switch, for the weather widget, which needs only a place.
+ */
+@Composable
+internal fun rememberWeatherAt(place: WeatherPlace?, unit: TempUnit): WeatherNow? {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
-    val place = settings.weatherPlace?.takeIf { settings.showWeather }
     // After a process restart, the stored reading shows before any fetch.
     LaunchedEffect(place != null) { if (place != null) Weather.load(context) }
     val now by Weather.state.collectAsStateWithLifecycle()
-    val fahrenheit = usesFahrenheit(settings.tempUnit, locale)
+    val fahrenheit = usesFahrenheit(unit, locale)
     return now?.takeIf { place != null && it.place == place && it.fahrenheit == fahrenheit }
 }
 

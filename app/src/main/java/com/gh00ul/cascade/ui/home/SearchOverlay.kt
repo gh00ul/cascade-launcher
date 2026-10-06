@@ -1,5 +1,6 @@
 package com.gh00ul.cascade.ui.home
 
+import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,6 +72,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.paneTitle
@@ -82,7 +85,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.calculate
+import com.gh00ul.cascade.data.dialIntent
+import com.gh00ul.cascade.data.messageIntent
 import com.gh00ul.cascade.data.searchApps
+import com.gh00ul.cascade.data.viewIntent
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
 import com.gh00ul.cascade.util.LauncherActions
@@ -108,10 +115,11 @@ internal fun SearchGlyph(showIcons: Boolean, iconSize: Dp) {
     }
 }
 
-private val EnterTargetShape = RoundedCornerShape(16.dp)
+/** The rows' shape: their press ripple, and the tint on the row Go acts on. */
+internal val EnterTargetShape = RoundedCornerShape(16.dp)
 
 /** A soft tint on the row that Go opens, the same shape as the rows' press ripple. */
-private fun Modifier.enterTarget(content: Color) = background(content.copy(alpha = 0.08f), EnterTargetShape)
+internal fun Modifier.enterTarget(content: Color) = background(content.copy(alpha = 0.08f), EnterTargetShape)
 
 /** The pill drops in from a little above as search opens, and lifts away, shorter and quicker, as it closes. */
 private val PillEnter = slideInVertically(tween(Motion.SCREEN, easing = Motion.Decelerate)) { -it / 3 } +
@@ -162,6 +170,9 @@ private fun Modifier.staggered(delay: Int): Modifier {
  * Settings lets search find them). Enter opens the top hit, or searches the web with [searchWeb]; that row is tinted
  * while there's a query. With [autoLaunchSingleMatch], typing that leaves exactly one app opens it. On Android 13+ the
  * overlay shrinks with a predictive back gesture, and closes from there.
+ *
+ * With [searchCalculator], arithmetic gets its answer above the apps, and Enter copies it. With [searchContacts]
+ * (and READ_CONTACTS), up to four contacts follow the apps, looked up once typing pauses.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -176,6 +187,8 @@ fun AnimatedVisibilityScope.SearchOverlay(
     onLaunch: (AppEntry, Rect?) -> Unit,
     onLongPress: (AppEntry) -> Unit,
     onDismiss: () -> Unit,
+    searchCalculator: Boolean = true,
+    searchContacts: Boolean = false,
 ) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -183,18 +196,25 @@ fun AnimatedVisibilityScope.SearchOverlay(
     val focus = remember { FocusRequester() }
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query, apps, excluded) { searchApps(apps, query, excluded) }
+    val calculation = remember(query, searchCalculator) { if (searchCalculator) calculate(query) else null }
     // Whether the last edit made the query longer: only typing opens a lone match, never a deletion, Clear, or a
     // query kept from before.
     var grew by remember { mutableStateOf(false) }
     if (autoLaunchSingleMatch) {
         LaunchedEffect(query) {
-            if (grew && query.trim().length >= 2) results.singleOrNull()?.let { onLaunch(it, null) }
+            // Arithmetic is answered, never launched.
+            if (grew && calculation == null && query.trim().length >= 2) results.singleOrNull()?.let { onLaunch(it, null) }
         }
     }
     val style = LocalLauncherStyle.current
     val scope = rememberCoroutineScope()
     // False from the moment search starts to close, while it still fades out.
     val open = transition.targetState == EnterExitState.Visible
+    // Photos only where icons show, at their size.
+    val photoPx = if (showIcons) with(LocalDensity.current) { iconSize.roundToPx() } else 0
+    val contacts = rememberContactResults(query, enabled = searchContacts, open = open, photoPx = photoPx)
+    // Opening a contact, the dialer or a message closes search, as opening an app does.
+    val startContact = { intent: Intent, failure: String -> if (startFromSearch(context, intent, failure)) onDismiss() }
     // 0 at rest; follows a predictive back gesture. Read only in the overlay's layer.
     val backProgress = remember { Animatable(0f) }
     val stagger = remember { ResultsStagger() }
@@ -209,7 +229,10 @@ fun AnimatedVisibilityScope.SearchOverlay(
 
     fun submit() {
         val top = results.firstOrNull()
-        if (top != null) {
+        if (calculation != null) {
+            // An answer is what was asked for, even when an app matches too.
+            copyAnswer(context, calculation)
+        } else if (top != null) {
             onLaunch(top, null)
         } else if (searchWeb && query.isNotBlank()) {
             // Stays open when no app could take the search, so the query isn't lost.
@@ -324,6 +347,19 @@ fun AnimatedVisibilityScope.SearchOverlay(
                 }
             }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp)) {
+                if (calculation != null) {
+                    // Shows at once, as anything after the first results does: it changes with every keystroke.
+                    item(key = "calculation") {
+                        CalculationRow(
+                            calculation = calculation,
+                            showIcon = showIcons,
+                            iconSize = iconSize,
+                            onCopy = { copyAnswer(context, calculation) },
+                            // Go copies it.
+                            modifier = Modifier.enterTarget(style.content),
+                        )
+                    }
+                }
                 itemsIndexed(results, key = { _, app -> app.key }) { index, app ->
                     val delay = remember { stagger.delayFor(results, index) }
                     AppRow(
@@ -337,8 +373,20 @@ fun AnimatedVisibilityScope.SearchOverlay(
                         onClick = { onLaunch(app, it) },
                         onLongClick = { onLongPress(app) },
                         onNotificationClick = {},
-                        // Go opens the top hit; a blank query has no results, so this is only ever set with a query.
-                        modifier = Modifier.staggered(delay).then(if (index == 0) Modifier.enterTarget(style.content) else Modifier),
+                        // Go opens the top hit, unless there's an answer to copy; a blank query has no results, so this
+                        // is only ever set with a query.
+                        modifier = Modifier.staggered(delay).then(if (index == 0 && calculation == null) Modifier.enterTarget(style.content) else Modifier),
+                    )
+                }
+                // They come a moment after the apps, so they show at once rather than fading in late.
+                items(contacts, key = { "contact:${it.contact.id}" }) { result ->
+                    ContactRow(
+                        result = result,
+                        showIcon = showIcons,
+                        iconSize = iconSize,
+                        onOpen = { startContact(result.contact.viewIntent(), "Couldn't open ${result.contact.name}") },
+                        onMessage = { startContact(messageIntent(it), "No app can send a message") },
+                        onCall = { startContact(dialIntent(it), "No app can make a call") },
                     )
                 }
                 if (searchWeb && query.isNotBlank()) {
@@ -349,8 +397,8 @@ fun AnimatedVisibilityScope.SearchOverlay(
                             Modifier
                                 .staggered(delay)
                                 .fillMaxWidth()
-                                // With no app hits, Go searches the web.
-                                .then(if (results.isEmpty()) Modifier.enterTarget(style.content) else Modifier)
+                                // With no app hits (and no answer), Go searches the web.
+                                .then(if (results.isEmpty() && calculation == null) Modifier.enterTarget(style.content) else Modifier)
                                 .clip(EnterTargetShape)
                                 .clickable { if (LauncherActions.webSearch(context, query.trim())) onDismiss() }
                                 .padding(horizontal = 8.dp, vertical = 14.dp),

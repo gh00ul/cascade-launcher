@@ -15,7 +15,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeNotifications
+import com.gh00ul.cascade.data.HomeFolder
 import com.gh00ul.cascade.ui.home.AppActionsContent
+import com.gh00ul.cascade.ui.home.FolderActionsContent
+import com.gh00ul.cascade.ui.home.FolderChoice
 import com.gh00ul.cascade.ui.home.HomeMenuContent
 import com.gh00ul.cascade.util.AppShortcut
 import org.junit.Test
@@ -62,6 +65,49 @@ class SheetScreenshots : ScreenshotTest() {
 
     @Test fun homeMenu() = snap("Sheet_HomeMenu", Frame.Component, variants = dark, wallpaper = false) {
         Sheet { HomeMenuContent(onWallpaper = {}, onEditFavorites = {}, onSettings = {}) }
+    }
+
+    /** Long-press on Calendar, in the Work folder: it can leave it, or move to another folder (open here). */
+    @Test fun appActionsInFolder() {
+        val calendar = FakeApps.byLabel("Calendar")
+        val folders = listOf(
+            FolderChoice("2", "Utilities", listOf("Calculator", "Clock", "Files", "Recorder").map { icons[FakeApps.byLabel(it).key] }),
+            FolderChoice("3", "Travel", listOf("Maps", "Weather", "Translate").map { icons[FakeApps.byLabel(it).key] }),
+        )
+        snap("Sheet_AppActionsInFolder", Frame.Component, variants = dark, wallpaper = false) {
+            Sheet {
+                AppActionsContent(
+                    app = calendar,
+                    icon = icons[calendar.key],
+                    isFavorite = false,
+                    isHidden = false,
+                    notifications = emptyList(),
+                    shortcuts = emptyList(),
+                    canUninstall = false,
+                    showHidePlayer = false,
+                    onOpenNotification = {},
+                    onClearNotifications = {},
+                    onShortcut = {},
+                    onHidePlayer = {},
+                    onToggleFavorite = {},
+                    onRename = {},
+                    onToggleHidden = {},
+                    onAppInfo = {},
+                    onUninstall = {},
+                    folderName = "Work",
+                    folders = folders,
+                    foldersOpen = true,
+                )
+            }
+        }
+    }
+
+    /** Long-press on the Work folder: rename, edit its apps, or remove it (its apps stay on home). */
+    @Test fun actionsOfAFolder() {
+        val work = HomeFolder("1", "Work", listOf("Mail", "Calendar", "Docs", "Tasks", "Notes").map { FakeApps.byLabel(it) })
+        snap("Sheet_FolderActions", Frame.Component, variants = dark, wallpaper = false) {
+            Sheet { FolderActionsContent(work, work.apps.take(4).map { icons[it.key] }, onRename = {}, onEditApps = {}, onRemove = {}) }
+        }
     }
 }
 

@@ -201,7 +201,8 @@ class AppRepository(
         override fun onPackageRemoved(packageName: String, user: UserHandle) {
             val suffix = "#${userManager.getSerialNumberForUser(user)}"
             fun stale(key: String) = key.startsWith("$packageName/") && key.endsWith(suffix)
-            prefs.update { s -> s.copy(favorites = s.favorites.filterNot(::stale), hidden = s.hidden.filterNotTo(LinkedHashSet(), ::stale)) }
+            // Folders lose the app too; one left empty is hidden from home until the next edit drops it.
+            prefs.update { s -> s.withoutApps(::stale) }
             refresh(packageName, coalesce = true)
         }
         override fun onPackageAdded(packageName: String, user: UserHandle) = refresh(packageName, coalesce = true)
@@ -355,13 +356,16 @@ class AppRepository(
         }
 
     /**
-     * Keeps favorites, hidden flags and renames when an app's launcher activity is replaced: icon pickers
-     * (Telegram, Signal) swap activity-aliases, and updates can rename the activity. [old] is the previous list.
+     * Keeps favorites, folder places, hidden flags and renames when an app's launcher activity is replaced: icon
+     * pickers (Telegram, Signal) swap activity-aliases, and updates can rename the activity. [old] is the previous list.
      */
     private fun retargetMovedKeys(old: List<InstalledApp>?, new: List<InstalledApp>) {
         val settings = prefs.settings.value
         val live = new.mapTo(HashSet()) { it.key }
-        val stale = (settings.favorites + settings.hidden + settings.renames.keys).filterTo(HashSet()) { it !in live }
+        // Folder entries in the favorites aren't apps: never stale, never moved.
+        val gestureApps = listOfNotNull(settings.swipeDownApp, settings.doubleTapApp)
+        val stale = (settings.favorites + settings.folders.values.flatMap { it.apps } + settings.hidden + settings.renames.keys + gestureApps)
+            .filterTo(HashSet()) { it !in live && !isFolderKey(it) }
         if (stale.isEmpty()) return
         // The same app in the same profile: "pkg/cls#serial" -> "pkg#serial".
         fun owner(key: String) = key.substringBefore('/') + "#" + key.substringAfterLast('#')
@@ -384,17 +388,8 @@ class AppRepository(
             moves[key] = target.key
         }
         if (moves.isEmpty()) return
-        prefs.update { s ->
-            s.copy(
-                favorites = s.favorites.map { moves[it] ?: it }.distinct(),
-                hidden = s.hidden.mapTo(LinkedHashSet()) { moves[it] ?: it },
-                // A rename the new entry already has wins over the carried-over one.
-                renames = buildMap {
-                    s.renames.forEach { (k, v) -> if (k !in moves) put(k, v) }
-                    s.renames.forEach { (k, v) -> moves[k]?.let { if (it !in this) put(it, v) } }
-                },
-            )
-        }
+        // Apps in folders follow too. A rename the new entry already has wins over the carried-over one.
+        prefs.update { s -> s.withMovedApps(moves) }
     }
 
     /** First run: start the home screen with the default phone, messages, browser, camera and gallery apps. */
@@ -413,7 +408,13 @@ class AppRepository(
             .filter { it.packageName != "android" }
             .mapNotNull { launcherEntryFor(it, list)?.key }
             .distinct()
-        prefs.update { if (it.favoritesSeeded) it else it.copy(favorites = keys, favoritesSeeded = true) }
+        // Folders made before the first load (a restore) keep their places; the defaults don't repeat their apps.
+        prefs.update { s ->
+            if (s.favoritesSeeded) s else {
+                val inFolders = s.folders.values.flatMapTo(HashSet()) { it.apps }
+                s.copy(favorites = s.favorites.filter(::isFolderKey) + keys.filterNot { it in inFolders }, favoritesSeeded = true)
+            }
+        }
     }
 
     /**
@@ -447,8 +448,9 @@ class AppRepository(
     }
 
     /**
-     * Renders the icons [list] lacks: favorites first, so the home screen fills in before the long list does, then
-     * the rest in A–Z order with hidden apps last. Nothing is published before [published], the list itself.
+     * Renders the icons [list] lacks: the home screen's first (favorites and the apps in its folders, whose icons the
+     * folder rows show), so it fills in before the long list does, then the rest in A–Z order with hidden apps last.
+     * Nothing is published before [published], the list itself.
      */
     private suspend fun loadIcons(
         list: List<InstalledApp>,
@@ -465,11 +467,12 @@ class AppRepository(
         if (!ifCurrent(gen) { iconCache.keys.retainAll(live.keys) }) return
         // Every icon is size x size, so one drawn for an earlier screen density gets redrawn.
         fun stale(app: InstalledApp) = iconCache[app.key]?.bitmap?.width != size
+        val home = settings.homeAppKeys()
         val complete = renderInParallel(
-            first = settings.favorites.mapNotNull { live[it] }.filter(::stale),
+            first = home.mapNotNull { live[it] }.filter(::stale),
             rest = rest@{
                 val sorted = published.await() ?: return@rest emptyList()
-                val favorites = settings.favorites.toHashSet()
+                val favorites = home.toHashSet()
                 sorted.mapNotNull { entry -> live[entry.key]?.takeIf { it.key !in favorites && stale(it) } }
                     .sortedBy { it.key in settings.hidden }
             },

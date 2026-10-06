@@ -17,9 +17,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -37,14 +40,20 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.data.AppEntry
+import com.gh00ul.cascade.data.HomeApp
+import com.gh00ul.cascade.data.HomeFolder
+import com.gh00ul.cascade.data.HomeItem
 import com.gh00ul.cascade.data.IconImage
+import com.gh00ul.cascade.data.folderKey
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.notifications.NowPlayingState
 import com.gh00ul.cascade.ui.home.AllAppsHeader
 import com.gh00ul.cascade.ui.home.AlphabetWave
+import com.gh00ul.cascade.ui.home.FolderPopup
 import com.gh00ul.cascade.ui.home.HomePage
 import com.gh00ul.cascade.ui.home.ListAppRow
+import com.gh00ul.cascade.ui.home.OpenFolder
 import com.gh00ul.cascade.ui.home.SearchOverlay
 import com.gh00ul.cascade.ui.home.SectionHeader
 import com.gh00ul.cascade.ui.home.animateHomeAlpha
@@ -168,7 +177,8 @@ internal const val FIRST_APP_ROW = 2
  * The scrim and the list rows are LauncherScreen's own (`homeScrim`, `ListAppRow`), fed the same per-entry states.
  * Search comes and goes on the same transition as LauncherScreen's, which also fades the list and the strip; at rest
  * it draws as it always did. Insets are zero under Robolectric, so they are left out. Callbacks do nothing, except
- * [onSearchDismiss] (search's back and taps outside), for tests that close search the way a user would.
+ * [onSearchDismiss] (search's back and taps outside), for tests that close search the way a user would, and a tap on a
+ * folder, which pops it open as in LauncherScreen. [items] are the home rows, apps and folders; by default [favorites].
  */
 @Composable
 internal fun HomeScreen(
@@ -182,9 +192,12 @@ internal fun HomeScreen(
     mediaResting: Boolean = false,
     onboarding: @Composable () -> Unit = {},
     resume: @Composable () -> Unit = {},
+    /** Under the clock, as LauncherScreen fills HomePage's slot: the widget stack. */
+    widgets: @Composable () -> Unit = {},
     firstItem: Int = 0,
     searchOpen: Boolean = false,
     onSearchDismiss: () -> Unit = {},
+    items: List<HomeItem>? = null,
 ) {
     val style = LocalLauncherStyle.current
     val density = LocalDensity.current
@@ -203,6 +216,9 @@ internal fun HomeScreen(
     val letters = remember(letterRows) { letterRows.keys.toList() }
     val searchTransition = updateTransition(searchOpen, label = "search")
     val listAlpha = searchTransition.animateHomeAlpha()
+    val homeRows = items ?: remember(favorites) { favorites.map(::HomeApp) }
+    var openFolder by remember { mutableStateOf<OpenFolder?>(null) }
+    val shownFolder = openFolder?.let { open -> homeRows.firstOrNull { it.key == folderKey(open.id) } as? HomeFolder }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val homeHeight = maxHeight
@@ -229,8 +245,8 @@ internal fun HomeScreen(
                 HomePage(
                     minHeight = homeHeight,
                     bottomInset = 0.dp,
-                    favorites = favorites,
-                    showFavoritesHint = favorites.isEmpty() && (settings.favorites.isEmpty() || apps.isNotEmpty()),
+                    favorites = homeRows,
+                    showFavoritesHint = homeRows.isEmpty() && (settings.favorites.isEmpty() || apps.isNotEmpty()),
                     icons = iconsState,
                     notifications = notificationsState,
                     settings = settings,
@@ -247,6 +263,8 @@ internal fun HomeScreen(
                     onOpenMedia = {},
                     onHideMedia = {},
                     resume = resume,
+                    widgets = widgets,
+                    onOpenFolder = { folder, bounds -> openFolder = OpenFolder(folder.id, bounds) },
                     onboarding = onboarding,
                 )
             }
@@ -287,6 +305,20 @@ internal fun HomeScreen(
                 )
             }
         }
+
+        FolderPopup(
+            folder = shownFolder,
+            anchor = openFolder?.anchor,
+            icons = iconsState,
+            notifications = notificationsState,
+            showIcons = settings.showIcons,
+            homeIconSize = settings.iconSize.homeDp.dp,
+            iconSize = settings.iconSize.listDp.dp,
+            onLaunch = { _, _ -> },
+            onAppLongPress = {},
+            onOptions = {},
+            onDismiss = { openFolder = null },
+        )
 
         searchTransition.AnimatedVisibility(visible = { open -> open }, enter = Motion.LayerIn, exit = Motion.LayerOut) {
             SearchOverlay(

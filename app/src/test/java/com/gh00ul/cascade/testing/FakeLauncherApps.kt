@@ -32,14 +32,25 @@ object FakeLauncherApps {
         }
     }
 
+    /**
+     * Lists [label]'s app under the activity [className] instead of its usual `.Main`, as an icon picker's alias swap
+     * or an update that renames the activity leaves it.
+     */
+    fun installActivity(context: Context, label: String, className: String): LauncherActivityInfo {
+        val launcherApps = Shadow.extract<ShadowLauncherApps>(context.getSystemService(LauncherApps::class.java))
+        val user = Process.myUserHandle()
+        shadowOf(context.packageManager).setUnbadgedApplicationIcon(pkg(label), ColorDrawable(0xFF3F51B5.toInt()))
+        return activity(context, label, user, className).also { launcherApps.addActivity(user, it) }
+    }
+
     /** Uninstalls every app. ShadowLauncherApps can't remove one, so [install] the ones that stay again after. */
     fun uninstallAll() = ShadowLauncherApps.reset()
 
     /** Built the way LauncherApps builds them, through the hidden constructors. */
-    private fun activity(context: Context, label: String, user: UserHandle): LauncherActivityInfo {
+    private fun activity(context: Context, label: String, user: UserHandle, className: String = "${pkg(label)}.Main"): LauncherActivityInfo {
         val info = ActivityInfo().apply {
             packageName = pkg(label)
-            name = "${pkg(label)}.Main"
+            name = className
             nonLocalizedLabel = label
             applicationInfo = ApplicationInfo().apply {
                 packageName = pkg(label)

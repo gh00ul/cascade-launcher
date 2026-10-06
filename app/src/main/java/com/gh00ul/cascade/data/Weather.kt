@@ -11,14 +11,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** The weather at [place] when it was fetched, for the readout beside the date. */
+/** The weather at [place] when it was fetched: now for the readout beside the date, and the forecast for the widget. */
 data class WeatherNow(
     val temperature: Int,
     /** Today's high and low, when Open-Meteo has them. */
@@ -32,10 +36,30 @@ data class WeatherNow(
     /** When it was asked for, in epoch milliseconds. */
     val fetchedAt: Long,
     val place: WeatherPlace,
+    /** The hours from the one under way when it was fetched, at most [HOURS_KEPT]. */
+    val hours: List<HourForecast> = emptyList(),
+    /** The days from today at the place, as many as came. */
+    val days: List<DayForecast> = emptyList(),
 ) {
     val kind: WeatherKind get() = weatherKind(code)
     val description: String get() = weatherDescription(code, isDay)
 }
+
+/**
+ * One hour of the forecast, starting at [time] (epoch milliseconds): its temperature, WMO code, whether it's day, and
+ * the chance of precipitation in percent when Open-Meteo has one.
+ */
+data class HourForecast(val time: Long, val temperature: Int, val code: Int, val isDay: Boolean, val precipitation: Int?) {
+    val kind: WeatherKind get() = weatherKind(code)
+}
+
+/** One day of the forecast: its date at the place (an epoch day), its WMO code, and its high and low. */
+data class DayForecast(val day: Long, val code: Int, val high: Int, val low: Int) {
+    val kind: WeatherKind get() = weatherKind(code)
+}
+
+/** Hours of the forecast kept with a reading: enough for the widget's next hours while the reading lasts. */
+internal const val HOURS_KEPT = 12
 
 /** What the sky is doing, as coarse as one small icon can show. */
 enum class WeatherKind { CLEAR, PARTLY_CLOUDY, CLOUDY, FOG, DRIZZLE, RAIN, SNOW, THUNDER }
@@ -83,10 +107,13 @@ fun usesFahrenheit(unit: TempUnit, locale: Locale): Boolean = when (unit) {
 }
 
 /**
- * Current weather from Open-Meteo (free, no key) for the place picked in Settings. Nothing polls: home calls [refresh]
- * on each start and every 30 minutes while it stays visible, and a fetch only goes out when the reading is 30 minutes
- * old, one at a time, and not within 10 minutes of a failed one. The last reading is kept on disk, so after a process
- * restart it shows at once instead of waiting for the network.
+ * Current weather and the forecast from Open-Meteo (free, no key) for the place picked in Settings, in one request.
+ * Nothing polls: home calls [refresh] on each start and every 30 minutes while it stays visible, and a fetch only goes
+ * out when the reading is 30 minutes old, one at a time, and not within 10 minutes of a failed one. The last reading is
+ * kept on disk, so after a process restart it shows at once instead of waiting for the network.
+ *
+ * Weather is wanted ([wantedPlace]) while a place is picked and either the readout beside the date is on or the
+ * weather widget is in the stack: the widget needs only the place, so it works with the readout off.
  */
 object Weather {
     /** A reading this old is fetched again. */
@@ -113,19 +140,25 @@ object Weather {
     @Volatile private var loadQueued = false
 
     /**
-     * Brings [state] up to date for [settings]: fetches when weather is on, a place is picked, and the reading is
-     * missing, 30 minutes old, or for another place or unit, or when [force]d. With weather off or no place, clears it.
+     * Brings [state] up to date for [settings]: fetches when weather is wanted ([wantedPlace]) and the reading is
+     * missing, 30 minutes old, or for another place or unit, or when [force]d. With neither the readout nor the widget
+     * showing it, or no place, clears it.
      */
     fun refresh(context: Context, settings: LauncherSettings, force: Boolean = false) {
         val app = context.applicationContext
         val now = System.currentTimeMillis()
-        val place = settings.weatherPlace?.takeIf { settings.showWeather }
+        val place = wantedPlace(settings)
         // Off, and nothing fetched or loaded since it last was: there's nothing to clear, so starts cost nothing.
         if (place == null && !holding) return
         holding = place != null
         val fahrenheit = usesFahrenheit(settings.tempUnit, context.resources.configuration.locales[0])
-        queue.launch { storeFor(app).update(place, fahrenheit, now, force) }
+        val forecast = WIDGET_WEATHER in settings.widgetStack
+        queue.launch { storeFor(app).update(place, fahrenheit, now, force, needsForecast = forecast) }
     }
+
+    /** The place weather is fetched for: the picked one, while the readout beside the date or the weather widget shows. */
+    fun wantedPlace(settings: LauncherSettings): WeatherPlace? =
+        settings.weatherPlace?.takeIf { settings.showWeather || WIDGET_WEATHER in settings.widgetStack }
 
     /** Reads the stored reading into [state], once and off the main thread, so home has it before any fetch. */
     internal fun load(context: Context) {
@@ -204,14 +237,17 @@ internal class WeatherStore(
      * Clears the reading for a null [place] (weather off). Otherwise drops a reading for another place or unit, or
      * one hours old, and fetches when it's due or [force]d.
      */
-    fun update(place: WeatherPlace?, fahrenheit: Boolean, now: Long, force: Boolean) {
+    fun update(place: WeatherPlace?, fahrenheit: Boolean, now: Long, force: Boolean, needsForecast: Boolean = false) {
         load(now)
         val current = state.value
         val expired = current != null && now - current.fetchedAt !in 0 until Weather.KEEP_MS
         if (current != null && (current.place != place || current.fahrenheit != fahrenheit || expired)) forget()
         if (place == null) return
         val lastFailure = if (failedFor == place to fahrenheit) failedAt else 0L
-        if (!force && !fetchDue(now, state.value?.fetchedAt, lastFailure)) return
+        // With the weather widget on home, a reading without the hours (stored by a build before the forecast) is fetched
+        // again, or the widget would show only the current conditions until it's half an hour old.
+        val fresh = state.value?.takeIf { !needsForecast || it.hours.isNotEmpty() }
+        if (!force && !fetchDue(now, fresh?.fetchedAt, lastFailure)) return
         val fetched = try {
             parseForecast(download(forecastUrl(place, fahrenheit)), place, fahrenheit, now)
         } catch (_: Exception) {
@@ -244,12 +280,16 @@ internal class WeatherStore(
 internal fun fetchDue(now: Long, fetchedAt: Long?, failedAt: Long): Boolean =
     (fetchedAt == null || now - fetchedAt !in 0 until Weather.MAX_AGE_MS) && now - failedAt !in 0 until Weather.RETRY_MS
 
-/** Today's forecast for [place]. Coordinates use Locale.ROOT, so a German phone doesn't send "47,6062". */
+/**
+ * Now, the hours ahead and five days for [place], in one request; times come in the place's own time zone. Coordinates
+ * use Locale.ROOT, so a German phone doesn't send "47,6062".
+ */
 internal fun forecastUrl(place: WeatherPlace, fahrenheit: Boolean): String {
     val coordinates = String.format(Locale.ROOT, "latitude=%.4f&longitude=%.4f", place.latitude, place.longitude)
     val unit = if (fahrenheit) "fahrenheit" else "celsius"
     return "https://api.open-meteo.com/v1/forecast?$coordinates&current=temperature_2m,weather_code,is_day" +
-        "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1&temperature_unit=$unit"
+        "&hourly=temperature_2m,weather_code,precipitation_probability,is_day" +
+        "&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=5&temperature_unit=$unit"
 }
 
 internal fun searchUrl(name: String, language: String): String =
@@ -257,7 +297,8 @@ internal fun searchUrl(name: String, language: String): String =
 
 /**
  * The reading in an Open-Meteo forecast response, as fetched [now]. Null when the current temperature or weather code
- * is missing or the JSON is malformed; a missing high, low or day flag only leaves that part out (day by default).
+ * is missing or the JSON is malformed; a missing high, low or day flag only leaves that part out (day by default), and
+ * the forecast keeps only the hours and days that came whole.
  */
 internal fun parseForecast(json: String, place: WeatherPlace, fahrenheit: Boolean, now: Long): WeatherNow? = runCatching {
     val root = JSONObject(json)
@@ -274,8 +315,58 @@ internal fun parseForecast(json: String, place: WeatherPlace, fahrenheit: Boolea
         fahrenheit = fahrenheit,
         fetchedAt = now,
         place = place,
+        hours = root.optJSONObject("hourly")?.let { parseHours(it, root.optInt("utc_offset_seconds"), now) }.orEmpty(),
+        days = daily?.let(::parseDays).orEmpty(),
     )
 }.getOrNull()
+
+/**
+ * The hours in Open-Meteo's hourly block, from the one under way at [now] on, at most [HOURS_KEPT]. Times are the
+ * place's local ones, [offsetSeconds] from UTC. An hour without a time, temperature or code is skipped.
+ */
+private fun parseHours(hourly: JSONObject, offsetSeconds: Int, now: Long): List<HourForecast> {
+    val times = hourly.optJSONArray("time") ?: return emptyList()
+    val temperatures = hourly.optJSONArray("temperature_2m") ?: return emptyList()
+    val codes = hourly.optJSONArray("weather_code") ?: return emptyList()
+    val precipitation = hourly.optJSONArray("precipitation_probability")
+    val day = hourly.optJSONArray("is_day")
+    val offset = ZoneOffset.ofTotalSeconds(offsetSeconds)
+    val hours = mutableListOf<HourForecast>()
+    for (i in 0 until times.length()) {
+        val time = runCatching { LocalDateTime.parse(times.getString(i)).toEpochSecond(offset) * 1_000 }.getOrNull() ?: continue
+        if (time <= now - HOUR_MS) continue
+        val temperature = temperatures.numberAt(i) ?: continue
+        val code = codes.numberAt(i) ?: continue
+        hours += HourForecast(
+            time = time,
+            temperature = temperature.roundToInt(),
+            code = code.toInt(),
+            isDay = day?.numberAt(i)?.let { it != 0.0 } ?: true,
+            precipitation = precipitation?.numberAt(i)?.roundToInt(),
+        )
+        if (hours.size == HOURS_KEPT) break
+    }
+    return hours
+}
+
+/** The days in Open-Meteo's daily block; a day without a date, code, high or low is skipped. */
+private fun parseDays(daily: JSONObject): List<DayForecast> {
+    val dates = daily.optJSONArray("time") ?: return emptyList()
+    val codes = daily.optJSONArray("weather_code") ?: return emptyList()
+    val highs = daily.optJSONArray("temperature_2m_max") ?: return emptyList()
+    val lows = daily.optJSONArray("temperature_2m_min") ?: return emptyList()
+    return (0 until dates.length()).mapNotNull { i ->
+        val day = runCatching { LocalDate.parse(dates.getString(i)).toEpochDay() }.getOrNull() ?: return@mapNotNull null
+        DayForecast(
+            day = day,
+            code = codes.numberAt(i)?.toInt() ?: return@mapNotNull null,
+            high = highs.numberAt(i)?.roundToInt() ?: return@mapNotNull null,
+            low = lows.numberAt(i)?.roundToInt() ?: return@mapNotNull null,
+        )
+    }
+}
+
+private const val HOUR_MS = 60 * 60_000L
 
 /**
  * The places in an Open-Meteo geocoding response, named "Seattle, Washington, United States": the name, region and
@@ -304,9 +395,17 @@ internal fun weatherJson(now: WeatherNow): String = JSONObject()
     .put("fahrenheit", now.fahrenheit)
     .put("fetchedAt", now.fetchedAt)
     .put("place", JSONObject(placeJson(now.place)))
+    .put("hours", JSONArray(now.hours.map { h ->
+        JSONObject().put("time", h.time).put("temperature", h.temperature).put("code", h.code).put("isDay", h.isDay)
+            .apply { h.precipitation?.let { put("precipitation", it) } }
+    }))
+    .put("days", JSONArray(now.days.map { d -> JSONObject().put("day", d.day).put("code", d.code).put("high", d.high).put("low", d.low) }))
     .toString()
 
-/** The reading in [json] from [weatherJson], or null when it's malformed. */
+/**
+ * The reading in [json] from [weatherJson], or null when it's malformed. One stored before the forecast was fetched
+ * reads with none, and a malformed hour or day is left out.
+ */
 internal fun parseWeather(json: String): WeatherNow? = runCatching {
     val obj = JSONObject(json)
     WeatherNow(
@@ -318,14 +417,29 @@ internal fun parseWeather(json: String): WeatherNow? = runCatching {
         fahrenheit = obj.getBoolean("fahrenheit"),
         fetchedAt = obj.getLong("fetchedAt"),
         place = parsePlace(obj.getJSONObject("place").toString()) ?: return null,
+        hours = obj.optJSONArray("hours").objects().mapNotNull { h ->
+            runCatching {
+                val precipitation = if (h.has("precipitation")) h.getInt("precipitation") else null
+                HourForecast(h.getLong("time"), h.getInt("temperature"), h.getInt("code"), h.getBoolean("isDay"), precipitation)
+            }.getOrNull()
+        },
+        days = obj.optJSONArray("days").objects().mapNotNull { d ->
+            runCatching { DayForecast(d.getLong("day"), d.getInt("code"), d.getInt("high"), d.getInt("low")) }.getOrNull()
+        },
     )
 }.getOrNull()
+
+/** The objects in an array, skipping anything else; none for a missing array. */
+private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else List(length()) { optJSONObject(it) }.filterNotNull()
 
 /** [key] as a finite number, or null when it's missing, JSON null or not a number. */
 private fun JSONObject.number(key: String): Double? = optDouble(key).takeIf { it.isFinite() }
 
 /** The first number in the array at [key]: daily values come one per day. */
-private fun JSONObject.firstNumber(key: String): Double? = optJSONArray(key)?.optDouble(0)?.takeIf { it.isFinite() }
+private fun JSONObject.firstNumber(key: String): Double? = optJSONArray(key)?.numberAt(0)
+
+/** The number at [index], or null when it's missing, JSON null or not a number. */
+private fun JSONArray.numberAt(index: Int): Double? = optDouble(index).takeIf { it.isFinite() }
 
 /** [key] as trimmed text, or null when it's missing, JSON null or blank. optString would turn JSON null into "null". */
 private fun JSONObject.text(key: String): String? = if (isNull(key)) null else optString(key).trim().ifEmpty { null }

@@ -1,6 +1,8 @@
 package com.gh00ul.cascade.data
 
 import android.app.Application
+import android.content.pm.LauncherApps
+import android.os.Looper
 import android.os.Process
 import android.os.UserManager
 import com.gh00ul.cascade.testing.FakeLauncherApps
@@ -24,7 +26,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.shadows.ShadowLauncherApps
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -59,12 +64,16 @@ class AppRepositoryTest {
 
     private val serial get() = context.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
 
+    private val launcherApps get() = Shadow.extract<ShadowLauncherApps>(context.getSystemService(LauncherApps::class.java))
+
     /** The repository's key for the app [FakeLauncherApps] installs under [label]. */
     private fun key(label: String) = FakeLauncherApps.pkg(label).let { "$it/$it.Main#$serial" }
 
-    private fun repository(favorites: List<String> = emptyList()): AppRepository {
+    private lateinit var prefs: Prefs
+
+    private fun repository(favorites: List<String> = emptyList(), folders: Map<String, Folder> = emptyMap()): AppRepository {
         // Seeded already, so the first load keeps these favorites rather than picking the default apps.
-        val prefs = Prefs(context).apply { update { it.copy(favorites = favorites, favoritesSeeded = true) } }
+        prefs = Prefs(context).apply { update { it.copy(favorites = favorites, folders = folders, favoritesSeeded = true) } }
         return AppRepository(context, prefs, scope, loads)
     }
 
@@ -117,6 +126,55 @@ class AppRepositoryTest {
         assertEquals(setOf(key("Alpha"), key("Charlie")), repo.icons.value.keys)
         assertTrue(published.isNotEmpty())
         assertTrue("Bravo's icon published: $published", published.none { key("Bravo") in it })
+    }
+
+    /** Folder entries aren't apps: a load neither drops nor moves them, and the apps inside are drawn with the favorites. */
+    @Test fun aLoadKeepsFoldersAndDrawsTheirAppsWithTheFavorites() {
+        FakeLauncherApps.install(context, "Alpha", "Bravo", "Charlie", "Delta")
+        // One app in the folder is missing for now (its profile paused, say): it keeps its place.
+        val folders = mapOf("1" to Folder("Work", listOf(key("Delta"), key("Echo"))))
+        val repo = repository(favorites = listOf(key("Alpha"), folderKey("1")), folders = folders)
+        var firstIcons: Set<String>? = null
+        val watcher = CoroutineScope(Dispatchers.Unconfined).launch {
+            repo.icons.collect { if (it.isNotEmpty() && firstIcons == null) firstIcons = it.keys.toSet() }
+        }
+        scheduler.advanceUntilIdle()
+        watcher.cancel()
+
+        assertEquals(listOf(key("Alpha"), folderKey("1")), prefs.settings.value.favorites)
+        assertEquals(folders, prefs.settings.value.folders)
+        assertTrue("first icons: $firstIcons", firstIcons.orEmpty().containsAll(setOf(key("Alpha"), key("Delta"))))
+    }
+
+    @Test fun anUninstalledAppLeavesItsFolder() {
+        FakeLauncherApps.install(context, "Alpha", "Bravo", "Charlie")
+        repository(favorites = listOf(folderKey("1"), key("Alpha")), folders = mapOf("1" to Folder("F", listOf(key("Bravo"), key("Charlie")))))
+        scheduler.advanceUntilIdle()
+
+        launcherApps.notifyPackageRemoved(FakeLauncherApps.pkg("Bravo"))
+        shadowOf(Looper.getMainLooper()).idle()
+        scheduler.advanceUntilIdle()
+
+        assertEquals(listOf(folderKey("1"), key("Alpha")), prefs.settings.value.favorites)
+        assertEquals(listOf(key("Charlie")), prefs.settings.value.folders["1"]?.apps)
+    }
+
+    /** An icon picker swapped the app's launcher activity: its place in a folder follows, like a favorite's. */
+    @Test fun aMovedAppKeepsItsPlaceInItsFolder() {
+        FakeLauncherApps.install(context, "Alpha", "Bravo")
+        val repo = repository(favorites = listOf(folderKey("1")), folders = mapOf("1" to Folder("F", listOf(key("Bravo"), key("Alpha")))))
+        scheduler.advanceUntilIdle()
+
+        FakeLauncherApps.uninstallAll()
+        FakeLauncherApps.install(context, "Bravo")
+        val alias = FakeLauncherApps.installActivity(context, "Alpha", "${FakeLauncherApps.pkg("Alpha")}.Alias")
+        // The reload a package change starts.
+        repo.refresh(FakeLauncherApps.pkg("Alpha"))
+        scheduler.advanceUntilIdle()
+
+        val moved = "${alias.componentName.flattenToString()}#$serial"
+        assertEquals(listOf(key("Bravo"), moved), prefs.settings.value.folders["1"]?.apps)
+        assertEquals(listOf(folderKey("1")), prefs.settings.value.favorites)
     }
 
     @Test fun everyIconPublishHasAllTheFavorites() = runBlocking<Unit> {

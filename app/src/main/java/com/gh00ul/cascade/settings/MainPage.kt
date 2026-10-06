@@ -63,6 +63,7 @@ import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.data.SwipeDownAction
 import com.gh00ul.cascade.data.TextColor
 import com.gh00ul.cascade.data.WallpaperDim
+import com.gh00ul.cascade.data.homeItems
 import com.gh00ul.cascade.update.Updater
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.LockService
@@ -108,7 +109,12 @@ internal fun MainPage(
             SettingRow(
                 title = "Home screen",
                 summary = listOfNotNull(
-                    count(favorites.size.takeIf { apps.isNotEmpty() } ?: settings.favorites.size, "favorite", "favorites"),
+                    // Folders count as one each, as on home.
+                    count(
+                        if (apps.isEmpty()) settings.favorites.size else homeItems(settings, apps.associateBy { it.key }).size,
+                        "favorite",
+                        "favorites",
+                    ),
                     "$hiddenCount hidden".takeIf { hiddenCount > 0 },
                     "previews".takeIf { settings.showNotificationPreviews },
                 ).joinToString(" · "),
@@ -203,6 +209,7 @@ internal fun gesturesSummary(s: LauncherSettings): String {
         SwipeDownAction.NOTIFICATIONS -> "notifications"
         SwipeDownAction.QUICK_SETTINGS -> "quick settings"
         SwipeDownAction.SEARCH -> "search"
+        SwipeDownAction.OPEN_APP -> "an app"
         SwipeDownAction.NOTHING -> "nothing"
     }
     val tap = when (s.doubleTapAction) {
@@ -210,6 +217,7 @@ internal fun gesturesSummary(s: LauncherSettings): String {
         DoubleTapAction.LOCK_SCREEN -> "lock"
         DoubleTapAction.NOTIFICATIONS -> "notifications"
         DoubleTapAction.SEARCH -> "search"
+        DoubleTapAction.OPEN_APP -> "an app"
     }
     return listOfNotNull("Swipe down: $down", tap?.let { "double-tap: $it" }).joinToString(" · ")
 }
@@ -341,8 +349,8 @@ internal fun FindPage(nav: SettingsNav) {
     ) { padding ->
         androidx.compose.foundation.lazy.LazyColumn(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = padding.calculateStartPadding(LocalLayoutDirection.current) + 16.dp,
-                end = padding.calculateEndPadding(LocalLayoutDirection.current) + 16.dp,
+                start = padding.calculateStartPadding(LocalLayoutDirection.current) + 16.dp + wideMargin(),
+                end = padding.calculateEndPadding(LocalLayoutDirection.current) + 16.dp + wideMargin(),
                 top = padding.calculateTopPadding() + 8.dp,
                 bottom = padding.calculateBottomPadding() + 24.dp,
             ),

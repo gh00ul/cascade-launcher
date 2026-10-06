@@ -26,6 +26,14 @@ and Android won't update an app across a key change.
   in both text modes. Swipe the row left to skip to the next track. If the app isn't a favorite, a temporary
   player row appears above your favorites. A player that's paused when you come home folds down to one line,
   and it steps aside after 30 minutes paused, or when you choose "Hide player" from the long-press menu.
+- **Widget stack.** Up to four widgets in one card under the clock; swipe between them. Cascade's own Calendar
+  (today and the next two days) and Weather (now, the hours ahead and the next days) widgets, or any app's
+  widget. Long-press empty space → Widgets to add one, or long-press the stack to change it.
+- **Pop-up folders.** Long-press an app → Add to folder. A folder sits among your favorites with its apps' icons;
+  tap it and its apps pop up right there. Rename, reorder or remove folders from their long-press menu or in
+  Settings → Favorites.
+- **Calculator and contacts in search.** Type `24*7`, `20% of 85` or `(2+3)^2` and the answer shows first; tap to
+  copy it. Turn on contacts in Settings → Search to find people and call or text them from search.
 - **Resume with headphones.** With headphones (wired, USB or Bluetooth) connected and nothing playing, a
   "Resume Spotify" row (or whichever app played last) shows above your favorites, with the track it stopped on.
   Tap it to pick up where you left off; long-press for "Not now" until the next time headphones connect.
@@ -39,8 +47,9 @@ and Android won't update an app across a key change.
   only match.
 - **Gestures.**
   - Swipe down on the home page to open the notification shade (or quick settings, search, or nothing).
-  - Double-tap empty space to lock the screen, open notifications or search (off by default). Locking uses
-    an accessibility service you turn on once; it reads nothing on screen.
+  - Double-tap empty space to lock the screen, open notifications or search, or open an app you pick (off by
+    default). Swipe down can open an app too. Locking uses an accessibility service you turn on once; it reads
+    nothing on screen.
   - Press Home to jump back to the top.
   - Long-press empty space for wallpaper and settings.
 - **Clock.** Pick Classic, Bold or Stacked, and 12- or 24-hour time (or follow the phone). Tap the time to open

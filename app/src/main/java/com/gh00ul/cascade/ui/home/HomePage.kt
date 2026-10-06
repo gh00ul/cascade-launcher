@@ -1,5 +1,7 @@
 package com.gh00ul.cascade.ui.home
 
+import com.gh00ul.cascade.ui.home.widgets.StackMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.runtime.key
@@ -66,6 +68,9 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.DoubleTapAction
+import com.gh00ul.cascade.data.HomeApp
+import com.gh00ul.cascade.data.HomeFolder
+import com.gh00ul.cascade.data.HomeItem
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.notifications.AppNotification
 import com.gh00ul.cascade.ui.common.rememberEntry
@@ -79,13 +84,14 @@ import java.util.Date
 /**
  * The first screen: clock up top, favorites near the thumb. Fills the viewport, grows if favorites need more room.
  * [icons] and [notifications] are read entry by entry, inside each favorite, so a new icon map or a notification regroup
- * recomposes only the favorites whose own entry changed, not the page.
+ * recomposes only the favorites whose own entry changed, not the page. [favorites] are apps and folders in home order;
+ * a folder opens with [onOpenFolder] (its row's bounds in root coordinates) and long-presses to [onFolderLongPress].
  */
 @Composable
 fun HomePage(
     minHeight: Dp,
     bottomInset: Dp,
-    favorites: List<AppEntry>,
+    favorites: List<HomeItem>,
     showFavoritesHint: Boolean,
     icons: State<Map<String, IconImage>>,
     notifications: State<Map<String, List<AppNotification>>>,
@@ -106,6 +112,8 @@ fun HomePage(
     resume: @Composable () -> Unit = {},
     /** Under the clock and any card: the widget stack, when it has widgets. */
     widgets: @Composable () -> Unit = {},
+    onOpenFolder: (HomeFolder, Rect?) -> Unit = { _, _ -> },
+    onFolderLongPress: (HomeFolder) -> Unit = {},
     onboarding: @Composable () -> Unit,
 ) {
     val style = LocalLauncherStyle.current
@@ -156,8 +164,11 @@ fun HomePage(
         Spacer(Modifier.height(32.dp))
         resume()
 
-        // The playing app's favorite row becomes the player; if it isn't a favorite, a temporary row sits on top.
-        val hostKey = media?.let { m -> favorites.firstOrNull { it.packageName == m.packageName && !it.isWork }?.key }
+        // The playing app's favorite row becomes the player; if it isn't a favorite (or sits in a folder), a temporary
+        // row goes on top.
+        val hostKey = media?.let { m ->
+            favorites.firstOrNull { it is HomeApp && it.app.packageName == m.packageName && !it.app.isWork }?.key
+        }
         val floating = media?.takeIf { hostKey == null }
         // Every temporary player expands as "media": tie that to the session it was opened on, so the next one starts collapsed.
         val mediaExpandedFor = remember { Latest<Int>() }.also {
@@ -214,35 +225,51 @@ fun HomePage(
                 )
             }
         }
-        for (app in favorites) {
-            key(app.key) {
-                val hosting = media != null && app.key == hostKey
-                val lastHosted = remember { Latest<NowPlayingState>() }.also { if (hosting) it.value = media }
-                AnimatedContent(
-                    targetState = hosting,
-                    transitionSpec = { Motion.swap() },
-                    label = "favorite",
-                ) { hosted ->
-                    val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null
-                    if (hostedState != null) {
-                        Player(hostedState, app, "fav:${app.key}", expandedKey == "fav:${app.key}")
-                    } else {
-                        val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
-                        val appNotifications by rememberEntry(notifications, app.notificationKey)
-                        AppRow(
-                            app = app,
-                            icon = icon,
-                            notifications = appNotifications.orEmpty(),
-                            showIcon = settings.showIcons,
-                            showPreview = settings.showNotificationPreviews,
-                            large = true,
-                            iconSize = settings.iconSize.homeDp.dp,
-                            onClick = { onLaunch(app, it) },
-                            onLongClick = { onAppLongPress(app) },
-                            onNotificationClick = { onOpenNotification(app, it) },
-                            expanded = expandedKey == "fav:${app.key}",
-                            onToggleExpand = { onToggleExpand("fav:${app.key}") },
-                        )
+        for (item in favorites) {
+            key(item.key) {
+                when (item) {
+                    is HomeFolder -> FolderRow(
+                        folder = item,
+                        icons = icons,
+                        notifications = notifications,
+                        showIcon = settings.showIcons,
+                        showPreview = settings.showNotificationPreviews,
+                        iconSize = settings.iconSize.homeDp.dp,
+                        onClick = { onOpenFolder(item, it) },
+                        onLongClick = { onFolderLongPress(item) },
+                        onNotificationClick = onOpenNotification,
+                    )
+                    is HomeApp -> {
+                        val app = item.app
+                        val hosting = media != null && app.key == hostKey
+                        val lastHosted = remember { Latest<NowPlayingState>() }.also { if (hosting) it.value = media }
+                        AnimatedContent(
+                            targetState = hosting,
+                            transitionSpec = { Motion.swap() },
+                            label = "favorite",
+                        ) { hosted ->
+                            val hostedState = if (hosted) (media?.takeIf { app.key == hostKey } ?: lastHosted.value) else null
+                            if (hostedState != null) {
+                                Player(hostedState, app, "fav:${app.key}", expandedKey == "fav:${app.key}")
+                            } else {
+                                val icon by rememberEntry(icons, app.key, referentialEqualityPolicy())
+                                val appNotifications by rememberEntry(notifications, app.notificationKey)
+                                AppRow(
+                                    app = app,
+                                    icon = icon,
+                                    notifications = appNotifications.orEmpty(),
+                                    showIcon = settings.showIcons,
+                                    showPreview = settings.showNotificationPreviews,
+                                    large = true,
+                                    iconSize = settings.iconSize.homeDp.dp,
+                                    onClick = { onLaunch(app, it) },
+                                    onLongClick = { onAppLongPress(app) },
+                                    onNotificationClick = { onOpenNotification(app, it) },
+                                    expanded = expandedKey == "fav:${app.key}",
+                                    onToggleExpand = { onToggleExpand("fav:${app.key}") },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -264,7 +291,8 @@ internal fun HomeCard(title: String, body: String, content: @Composable ColumnSc
         shape = HomeCardShape,
         color = style.scrim.copy(alpha = 0.55f),
         contentColor = style.content,
-        modifier = Modifier.fillMaxWidth(),
+        // As wide as the widget stack at most, so on a tablet the cards line up and don't stretch across the screen.
+        modifier = Modifier.widthIn(max = StackMaxWidth).fillMaxWidth(),
     ) {
         Column(Modifier.padding(start = 20.dp, end = 12.dp, top = 18.dp, bottom = 8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)

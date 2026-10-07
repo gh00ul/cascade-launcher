@@ -27,6 +27,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.net.toUri
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.renderTo
 import com.gh00ul.cascade.notifications.NotificationListener
@@ -125,7 +126,7 @@ object LauncherActions {
     }
 
     fun openCalendar(context: Context) {
-        val now = Uri.parse("content://com.android.calendar/time/${System.currentTimeMillis()}")
+        val now = "content://com.android.calendar/time/${System.currentTimeMillis()}".toUri()
         if (!start(context, Intent(Intent.ACTION_VIEW, now))) {
             start(context, Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR))
         }
@@ -150,7 +151,7 @@ object LauncherActions {
     /** Returns false (after telling the user) when no app can search the web. */
     fun webSearch(context: Context, query: String): Boolean {
         val ok = start(context, Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, query)) ||
-            start(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))))
+            start(context, Intent(Intent.ACTION_VIEW, ("https://www.google.com/search?q=" + Uri.encode(query)).toUri()))
         if (!ok) Toast.makeText(context, "No app can search the web", Toast.LENGTH_SHORT).show()
         return ok
     }

@@ -1,5 +1,6 @@
 package com.gh00ul.cascade.data
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.provider.Settings
 
@@ -11,7 +12,10 @@ class SettingsPage(val title: String, val keywords: String, val actions: List<St
     fun intents(): List<Intent> = actions.map { Intent(it) }
 }
 
+// Actions newer than minSdk (Data usage, all apps' notifications) are only strings: on a phone too old to have that
+// page the intent resolves to nothing and the next action in the list opens instead.
 /** Pages people open often enough to search for, with what they might type instead of the title. */
+@SuppressLint("InlinedApi")
 val SettingsPages = listOf(
     SettingsPage("Wi-Fi", "wifi wireless network internet", listOf(Settings.ACTION_WIFI_SETTINGS)),
     SettingsPage("Bluetooth", "pair headphones earbuds speaker", listOf(Settings.ACTION_BLUETOOTH_SETTINGS)),

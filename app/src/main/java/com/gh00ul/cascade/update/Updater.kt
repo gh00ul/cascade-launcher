@@ -9,10 +9,11 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.content.pm.Signature
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.edit
 import androidx.core.content.pm.PackageInfoCompat
+import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -81,7 +82,7 @@ object Updater {
     }
 
     fun dismiss(context: Context, release: Release) {
-        prefs(context).edit().putString(DISMISSED, release.tag).apply()
+        prefs(context).edit { putString(DISMISSED, release.tag) }
         dismissedLoaded = true
         _dismissed.value = release.tag
     }
@@ -120,7 +121,7 @@ object Updater {
             _state.value = State.Checking
             val result = try {
                 val json = request(LATEST, "application/vnd.github+json").inputStream.bufferedReader().use { JSONObject(it.readText()) }
-                prefs.edit().putLong(LAST_CHECK, now).apply()
+                prefs.edit { putLong(LAST_CHECK, now) }
                 val tag = json.getString("tag_name")
                 val assets = json.getJSONArray("assets")
                 val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
@@ -130,7 +131,7 @@ object Updater {
                     ?: State.UpToDate(installed.versionName.orEmpty())
             } catch (_: FileNotFoundException) {
                 // 404: no release published yet. That's an answer too, so wait the full interval before asking again.
-                prefs.edit().putLong(LAST_CHECK, now).apply()
+                prefs.edit { putLong(LAST_CHECK, now) }
                 State.UpToDate(installedInfo(app).versionName.orEmpty())
             } catch (e: Exception) {
                 State.Failed("Couldn't check for updates (${e.javaClass.simpleName}).", null)
@@ -147,7 +148,7 @@ object Updater {
         if (busy) return
         if (!app.packageManager.canRequestPackageInstalls()) {
             _state.value = State.Failed("Allow Cascade to install apps, then tap Update again.", release)
-            val settings = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}"))
+            val settings = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${app.packageName}".toUri())
             runCatching { context.startActivity(settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             return
         }

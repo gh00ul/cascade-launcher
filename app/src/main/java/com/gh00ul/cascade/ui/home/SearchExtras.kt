@@ -386,6 +386,7 @@ internal class ShortcutResult(val shortcut: FoundShortcut, val icon: ImageBitmap
 @Composable
 internal fun rememberShortcutResults(query: String, enabled: Boolean, open: Boolean, apps: List<AppEntry>, iconPx: Int): List<ShortcutResult> {
     val context = LocalContext.current
+    val densityDpi = LocalConfiguration.current.densityDpi
     var all by remember { mutableStateOf<List<FoundShortcut>?>(null) }
     var results by remember { mutableStateOf(emptyList<ShortcutResult>()) }
     // Read and written on the main thread only: the IO work hands its icons back.
@@ -399,9 +400,8 @@ internal fun rememberShortcutResults(query: String, enabled: Boolean, open: Bool
         if (missing.isNotEmpty()) {
             icons += withContext(Dispatchers.IO) {
                 val launcherApps = context.getSystemService(LauncherApps::class.java)
-                val dpi = context.resources.displayMetrics.densityDpi
                 missing.associate { s ->
-                    s.id to runCatching { launcherApps.getShortcutIconDrawable(s.info, dpi)?.renderTo(iconPx)?.asImageBitmap() }.getOrNull()
+                    s.id to runCatching { launcherApps.getShortcutIconDrawable(s.info, densityDpi)?.renderTo(iconPx)?.asImageBitmap() }.getOrNull()
                 }
             }
         }

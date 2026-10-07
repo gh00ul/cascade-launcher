@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.MediaStore
+import androidx.core.net.toUri
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -159,11 +160,11 @@ fun commandIntents(command: Command, player: String? = null): List<Intent> = whe
     )
     // Turn-by-turn in Google Maps, else whatever map app shows the place.
     is Command.Directions -> listOf(
-        Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(command.place))),
-        Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(command.place))),
+        Intent(Intent.ACTION_VIEW, ("google.navigation:q=" + Uri.encode(command.place)).toUri()),
+        Intent(Intent.ACTION_VIEW, ("geo:0,0?q=" + Uri.encode(command.place)).toUri()),
     )
-    is Command.MapSearch -> listOf(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(command.query))))
-    is Command.SiteSearch -> listOf(Intent(Intent.ACTION_VIEW, Uri.parse(command.site.url.format(Uri.encode(command.query)))))
+    is Command.MapSearch -> listOf(Intent(Intent.ACTION_VIEW, ("geo:0,0?q=" + Uri.encode(command.query)).toUri()))
+    is Command.SiteSearch -> listOf(Intent(Intent.ACTION_VIEW, command.site.url.format(Uri.encode(command.query)).toUri()))
     is Command.Play -> {
         fun play() = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
             .putExtra(SearchManager.QUERY, command.query)

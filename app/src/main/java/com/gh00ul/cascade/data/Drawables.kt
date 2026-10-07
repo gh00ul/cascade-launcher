@@ -15,12 +15,13 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.createBitmap
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /** Draws the drawable centered in a square bitmap, keeping its aspect ratio. */
 fun Drawable.renderTo(size: Int, filter: ColorFilter? = null): Bitmap {
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val bitmap = createBitmap(size, size)
     val w = intrinsicWidth
     val h = intrinsicHeight
     val (dw, dh) = if (w > 0 && h > 0 && w != h) {
@@ -70,7 +71,7 @@ class IconImage(val bitmap: ImageBitmap, val isGlyph: Boolean, val badge: ImageB
 fun Drawable.renderMonochrome(size: Int): IconImage {
     if (Build.VERSION.SDK_INT >= 33 && this is AdaptiveIconDrawable) {
         monochrome?.mutate()?.let { glyph ->
-            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val bitmap = createBitmap(size, size)
             // Adaptive layers are 108dp with the visible icon in the middle 72dp.
             val bleed = size / 4
             glyph.setBounds(-bleed, -bleed, size + bleed, size + bleed)

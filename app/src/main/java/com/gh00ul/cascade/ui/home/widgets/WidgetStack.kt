@@ -1,5 +1,6 @@
 package com.gh00ul.cascade.ui.home.widgets
 
+import android.annotation.SuppressLint
 import android.os.Build
 import android.view.ViewGroup
 import androidx.annotation.VisibleForTesting
@@ -173,7 +174,10 @@ private object StackMemory {
 @VisibleForTesting
 internal fun resetWidgetStackMemory() = StackMemory.reset()
 
+// Lint's ConfigurationScreenWidthHeight: the activity's own Configuration already reports its window's size, which is all
+// this needs.
 /** A page's width when the stack is as wide as the home page lets it be, for binding an app widget at that size. */
+@SuppressLint("ConfigurationScreenWidthHeight")
 @Composable
 internal fun stackPageWidthDp(): Int =
     minOf(LocalConfiguration.current.screenWidthDp - HomeSidePadding.value.toInt(), StackMaxWidth.value.toInt()).coerceAtLeast(1)

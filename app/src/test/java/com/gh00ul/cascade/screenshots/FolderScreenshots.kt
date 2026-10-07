@@ -47,7 +47,7 @@ class FolderScreenshots : ScreenshotTest() {
     )
 
     @Composable
-    private fun home(settings: LauncherSettings) = HomeScreen(
+    private fun Home(settings: LauncherSettings) = HomeScreen(
         settings,
         apps,
         favorites,
@@ -56,9 +56,9 @@ class FolderScreenshots : ScreenshotTest() {
         items = homeItems(settings, apps.associateBy { it.key }),
     )
 
-    @Test fun folders() = snap("Home_Folders") { home(settings()) }
+    @Test fun folders() = snap("Home_Folders") { Home(settings()) }
 
-    @Test fun foldersWithoutIcons() = snap("Home_FoldersNoIcons") { home(settings(showIcons = false)) }
+    @Test fun foldersWithoutIcons() = snap("Home_FoldersNoIcons") { Home(settings(showIcons = false)) }
 
     /**
      * A tap on Work's icon (the row's middle is its notification preview, which opens the notification): its apps pop
@@ -66,11 +66,11 @@ class FolderScreenshots : ScreenshotTest() {
      */
     @Test fun folderOpen() = snap("Home_FolderOpen", afterContent = {
         onNodeWithText("Work").performTouchInput { click(Offset(width * 0.08f, height / 2f)) }
-    }) { home(settings()) }
+    }) { Home(settings()) }
 
     /** Utilities, with large icons: the card keeps the rows' look at the list's size. */
     @Test fun folderOpenLarge() = snap("Home_FolderOpenLarge", afterContent = { onNodeWithText("Utilities").performClick() }) {
-        home(settings(iconSize = IconSize.LARGE))
+        Home(settings(iconSize = IconSize.LARGE))
     }
 }
 

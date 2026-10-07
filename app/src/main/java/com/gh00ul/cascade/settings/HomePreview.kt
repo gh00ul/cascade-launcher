@@ -164,6 +164,7 @@ private val StatusBarHeight = 32.dp
 @Composable
 private fun PreviewStatusBar(style: LauncherStyle, format: TimeFormat) {
     val context = LocalContext.current
+    val locale = LocalConfiguration.current.locales[0]
     val clock = LocalNow.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Ticks with the minute while Settings is visible, so it agrees with the clock below it.
@@ -175,9 +176,9 @@ private fun PreviewStatusBar(style: LauncherStyle, format: TimeFormat) {
             }
         }
     }
-    val time = remember(format, now / 60_000) {
+    val time = remember(format, locale, now / 60_000) {
         val is24h = is24Hour(format, DateFormat.is24HourFormat(context))
-        SimpleDateFormat(if (is24h) "H:mm" else "h:mm", context.resources.configuration.locales[0]).format(Date(now))
+        SimpleDateFormat(if (is24h) "H:mm" else "h:mm", locale).format(Date(now))
     }
     Row(
         Modifier.fillMaxWidth().height(StatusBarHeight).padding(horizontal = 24.dp),
@@ -210,10 +211,11 @@ internal fun previewDarkText(textColor: TextColor): Boolean {
 internal fun rememberWallpaperBrush(): Brush {
     val context = LocalContext.current
     return remember(context) {
-        val colors = if (Build.VERSION.SDK_INT >= 27) {
+        val stops = if (Build.VERSION.SDK_INT >= 27) {
             runCatching { WallpaperManager.getInstance(context).getWallpaperColors(WallpaperManager.FLAG_SYSTEM) }.getOrNull()
-        } else null
-        val stops = listOfNotNull(colors?.primaryColor, colors?.secondaryColor, colors?.tertiaryColor).map { Color(it.toArgb()) }
+                ?.let { listOfNotNull(it.primaryColor, it.secondaryColor, it.tertiaryColor).map { color -> Color(color.toArgb()) } }
+                .orEmpty()
+        } else emptyList()
         when (stops.size) {
             0 -> Brush.linearGradient(DefaultWallpaper)
             1 -> Brush.linearGradient(listOf(stops[0], stops[0].copy(alpha = 1f).darker()))

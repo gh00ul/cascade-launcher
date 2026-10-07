@@ -13,6 +13,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.service.media.MediaBrowserService
 import android.view.KeyEvent
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,7 +46,7 @@ object LastPlayer {
         val now = LastPlayed(packageName, title, subtitle)
         if (_state.value == now) return
         _state.value = now
-        prefs?.edit()?.putString(KEY, json(now))?.apply()
+        prefs?.edit { putString(KEY, json(now)) }
     }
 
     /**

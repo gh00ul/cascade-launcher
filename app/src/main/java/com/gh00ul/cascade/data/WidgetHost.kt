@@ -1,6 +1,7 @@
 package com.gh00ul.cascade.data
 
 import java.lang.ref.WeakReference
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetHostView
@@ -21,6 +22,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+// Lint's StaticFieldLeak: the host holds only the application context, and the activity in [viewsOwner] (and the views
+// made for it) are let go in that activity's onDestroy, so no destroyed activity is kept.
 /**
  * Android app widgets in the widget stack. One AppWidgetHost for the process, under a fixed host id, so the ids it
  * hands out stay good across restarts; the stack keeps them as [WIDGET_APP_PREFIX] + id.
@@ -35,6 +38,7 @@ import kotlin.math.roundToInt
  * cancelled or failed step frees the id. Taking one out of the stack ([remove]) frees its id too. Every call is on the
  * main thread except pruning, which runs on the IO pool.
  */
+@SuppressLint("StaticFieldLeak")
 object WidgetHost {
     /** The id the system files Cascade's widgets under. Never change it: every placed widget would be orphaned. */
     private const val HOST_ID = 0x0CA5
@@ -336,6 +340,9 @@ internal class WidgetHostView(context: Context) : AppWidgetHostView(context) {
         return longPressed
     }
 
+    // Lint's ClickableViewAccessibility: this performs no click. It only keeps the rest of a long-pressed gesture from
+    // reaching the widget's own views; taps go to super, which calls performClick as usual.
+    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean = longPressed || super.onTouchEvent(event)
 
     override fun onDetachedFromWindow() {

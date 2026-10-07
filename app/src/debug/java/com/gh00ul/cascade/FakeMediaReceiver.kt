@@ -12,6 +12,7 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.SystemClock
+import androidx.core.graphics.createBitmap
 
 /**
  * Debug builds only. Fakes a playing media session so the home-screen music card can be tried without a
@@ -92,7 +93,7 @@ class FakeMediaReceiver : BroadcastReceiver() {
         fun art(seed: Int): Bitmap {
             val colors = listOf(0xFF7B5CFF.toInt() to 0xFFFF6B9A.toInt(), 0xFF00B4D8.toInt() to 0xFF0077B6.toInt(), 0xFFFFB703.toInt() to 0xFFFB8500.toInt())
             val (a, b) = colors[seed % colors.size]
-            val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+            val bitmap = createBitmap(256, 256)
             Canvas(bitmap).drawRect(0f, 0f, 256f, 256f, Paint().apply { shader = LinearGradient(0f, 0f, 256f, 256f, a, b, Shader.TileMode.CLAMP) })
             return bitmap
         }

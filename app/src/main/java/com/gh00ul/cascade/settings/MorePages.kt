@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -449,7 +450,7 @@ internal fun AboutPage(settings: LauncherSettings, nav: SettingsNav) {
                 icon = SettingsIcons.Code,
                 onClick = {
                     try {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_URL)))
+                        context.startActivity(Intent(Intent.ACTION_VIEW, SOURCE_URL.toUri()))
                     } catch (e: ActivityNotFoundException) {
                         Toast.makeText(context, "No browser to open it in", Toast.LENGTH_SHORT).show()
                     }

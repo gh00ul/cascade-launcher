@@ -11,8 +11,6 @@ import android.content.pm.LauncherActivityInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.Bitmap
-import android.graphics.drawable.BitmapDrawable
 import android.icu.text.AlphabeticIndex
 import android.icu.text.Collator
 import android.os.Build
@@ -27,6 +25,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.drawable.toDrawable
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -515,12 +515,12 @@ class AppRepository(
         if (mono.isGlyph) {
             // The UI tints glyphs, which would flatten a badge drawn into one to a blob: keep it as its own layer.
             val badge = badgeCache[app.info.user]?.takeIf { it.width == size } ?: run {
-                val blank = BitmapDrawable(context.resources, Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888))
+                val blank = createBitmap(size, size).toDrawable(context.resources)
                 pm.getUserBadgedIcon(blank, app.info.user).renderTo(size).toHardware().asImageBitmap().also { badgeCache[app.info.user] = it }
             }
             return@runCatching IconImage(mono.bitmap.toHardware(), isGlyph = true, badge = badge)
         }
-        val plain = BitmapDrawable(context.resources, mono.bitmap.asAndroidBitmap())
+        val plain = mono.bitmap.asAndroidBitmap().toDrawable(context.resources)
         IconImage(pm.getUserBadgedIcon(plain, app.info.user).renderTo(size).toHardware().asImageBitmap(), isGlyph = false)
     }.getOrNull()
 }

@@ -1,5 +1,6 @@
 package com.gh00ul.cascade.settings
 
+import android.annotation.SuppressLint
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.AlertDialog
@@ -146,7 +147,10 @@ private const val PIN_MIN_HEIGHT_DP = 600
 /** Rows wider than this read badly; on a tablet or in landscape the page keeps them to it, centered. */
 private const val PAGE_MAX_WIDTH_DP = 640
 
+// Lint's ConfigurationScreenWidthHeight: the activity's own Configuration already reports its window's size, split screen
+// included, which is all this needs.
 /** The extra margin on each side that keeps a page's content within [PAGE_MAX_WIDTH_DP]. */
+@SuppressLint("ConfigurationScreenWidthHeight")
 @Composable
 internal fun wideMargin(): Dp = ((LocalConfiguration.current.screenWidthDp - PAGE_MAX_WIDTH_DP) / 2).coerceAtLeast(0).dp
 
@@ -155,6 +159,7 @@ internal fun wideMargin(): Dp = ((LocalConfiguration.current.screenWidthDp - PAG
  * home preview) on screens tall enough for it and scrolls with the page otherwise, then [content] in a scrolling
  * column.
  */
+@SuppressLint("ConfigurationScreenWidthHeight") // see wideMargin
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SettingsPage(
@@ -245,7 +250,9 @@ private fun PageBar(
     )
 }
 
+// Lint's ModifierParameter: the title stays first so callers can pass it positionally, as every page does.
 /** A titled group of rows. The title is a heading, so TalkBack can jump group to group. */
+@SuppressLint("ModifierParameter")
 @Composable
 internal fun SettingsGroup(title: String? = null, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(modifier.padding(horizontal = 16.dp)) {
@@ -291,6 +298,7 @@ internal fun ListText(text: String) = PageText(text, indent = 20.dp)
 @Composable
 internal fun SettingRow(
     title: String,
+    modifier: Modifier = Modifier,
     summary: String? = null,
     key: String? = null,
     icon: ImageVector? = null,
@@ -298,7 +306,6 @@ internal fun SettingRow(
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
-    modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null,
     below: (@Composable ColumnScope.() -> Unit)? = null,
 ) {

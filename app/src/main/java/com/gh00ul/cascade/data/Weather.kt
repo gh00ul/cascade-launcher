@@ -3,6 +3,7 @@ package com.gh00ul.cascade.data
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.annotation.VisibleForTesting
+import androidx.core.content.edit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -230,7 +231,7 @@ internal class WeatherStore(
         loaded = true
         val stored = prefs.getString(NOW, null)?.let(::parseWeather)
         if (stored != null && now - stored.fetchedAt in 0 until Weather.KEEP_MS) state.compareAndSet(null, stored)
-        else if (prefs.contains(NOW)) prefs.edit().remove(NOW).apply()
+        else if (prefs.contains(NOW)) prefs.edit { remove(NOW) }
     }
 
     /**
@@ -260,12 +261,12 @@ internal class WeatherStore(
         }
         failedFor = null
         state.value = fetched
-        prefs.edit().putString(NOW, weatherJson(fetched)).apply()
+        prefs.edit { putString(NOW, weatherJson(fetched)) }
     }
 
     private fun forget() {
         state.value = null
-        if (prefs.contains(NOW)) prefs.edit().remove(NOW).apply()
+        if (prefs.contains(NOW)) prefs.edit { remove(NOW) }
     }
 
     private companion object {

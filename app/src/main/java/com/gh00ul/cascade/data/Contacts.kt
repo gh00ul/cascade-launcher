@@ -5,7 +5,6 @@ import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.CancellationSignal
@@ -15,6 +14,8 @@ import android.provider.ContactsContract.Contacts
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.scale
+import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -168,13 +169,13 @@ fun messageIntent(number: String) = Intent(Intent.ACTION_SENDTO, Uri.fromParts("
  * Blocking: call off the main thread.
  */
 fun loadContactPhoto(context: Context, uri: String, sizePx: Int): ImageBitmap? = runCatching {
-    val decoded = context.contentResolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it) } ?: return null
+    val decoded = context.contentResolver.openInputStream(uri.toUri())?.use { BitmapFactory.decodeStream(it) } ?: return null
     val short = minOf(decoded.width, decoded.height)
     val bitmap = if (short <= sizePx || sizePx <= 0) decoded else {
         val scale = sizePx.toFloat() / short
         val w = (decoded.width * scale).roundToInt().coerceAtLeast(1)
         val h = (decoded.height * scale).roundToInt().coerceAtLeast(1)
-        Bitmap.createScaledBitmap(decoded, w, h, true).also { if (it !== decoded) decoded.recycle() }
+        decoded.scale(w, h).also { if (it !== decoded) decoded.recycle() }
     }
     bitmap.toHardware().asImageBitmap()
 }.getOrNull()

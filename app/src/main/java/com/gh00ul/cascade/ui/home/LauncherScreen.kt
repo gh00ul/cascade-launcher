@@ -747,7 +747,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                             // The last row and track shown, so the row still has something to draw while it folds away.
                             val shown = remember { Latest<Pair<AppEntry, LastPlayed>>() }.also {
                                 val p = lastPlayed
-                                if (showResume && resumeApp != null && p != null) it.value = resumeApp to p
+                                if (showResume && p != null) it.value = resumeApp to p
                             }
                             AnimatedVisibility(showResume, enter = Motion.ExpandUp, exit = Motion.CollapseDown) {
                                 shown.value?.let { (app, played) ->

@@ -15,6 +15,7 @@ import android.os.SystemClock
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.scale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -428,11 +429,9 @@ object NowPlaying {
         val source = if (bitmap.config == Bitmap.Config.HARDWARE) bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: bitmap else bitmap
         val scale = 192f / max(source.width, source.height)
         if (scale >= 1f) return source
-        val thumb = Bitmap.createScaledBitmap(
-            source,
+        val thumb = source.scale(
             (source.width * scale).roundToInt().coerceAtLeast(1),
             (source.height * scale).roundToInt().coerceAtLeast(1),
-            true,
         )
         // A full-size software copy of hardware art was only a step to the thumbnail: free it now, not at some later
         // GC. createScaledBitmap can hand back its source, which is then the thumbnail.

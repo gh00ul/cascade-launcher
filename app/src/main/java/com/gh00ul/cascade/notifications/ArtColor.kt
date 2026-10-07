@@ -2,6 +2,7 @@ package com.gh00ul.cascade.notifications
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import androidx.core.graphics.scale
 
 /**
  * Representative colour of album art, or null when it's essentially grey. Buckets hues in 10° steps, picks the
@@ -9,7 +10,7 @@ import android.graphics.Color
  */
 internal fun seedColor(art: Bitmap): Int? {
     val source = if (art.config == Bitmap.Config.HARDWARE) art.copy(Bitmap.Config.ARGB_8888, false) ?: return null else art
-    val small = Bitmap.createScaledBitmap(source, 24, 24, true)
+    val small = source.scale(24, 24)
     val pixels = IntArray(576)
     try {
         small.getPixels(pixels, 0, 24, 0, 0, 24, 24)

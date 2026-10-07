@@ -173,11 +173,14 @@ Keep a backup of the key. If it's lost, existing installs can't be updated.
 | `EXPAND_STATUS_BAR` | Lets swipe-down open the notification shade. |
 | `REQUEST_DELETE_PACKAGES` | Powers "Uninstall" in the app menu. |
 | `SET_ALARM` | Lets a tap on the clock open the alarm list; clock apps require it. Cascade sets a timer or an alarm only when you run one from search. |
-| `READ_CALENDAR` (optional) | Shows the next event under the clock. Only requested when you turn that on. |
-| `INTERNET` | Only for self-update: asking GitHub for the latest release and downloading its APK. |
+| `READ_CALENDAR` (optional) | Shows the next event under the clock and in the Calendar widget. Only requested when you turn that on. |
+| `READ_CONTACTS` (optional) | Finds people in search. Only requested when you turn that on. |
+| `INTERNET` | Self-update (asking GitHub for the latest release and downloading its APK) and weather. |
 | `REQUEST_INSTALL_PACKAGES`, `UPDATE_PACKAGES_WITHOUT_USER_ACTION` | Installing those updates; the second lets Android skip the confirmation once Cascade installed itself. |
 
-The only network traffic is the update check and download, both with GitHub. Nothing else leaves the device.
+The only network traffic is the update check and download, both with GitHub, and weather from Open-Meteo: the place
+search while you pick a place (the name you type), then that place's forecast (its coordinates). No account, no key.
+Nothing else leaves the device.
 
 On Android 13+, if you install the APK from a browser or file manager (not `adb` or an app store), Android
 may block notification access as a "restricted setting". To allow it, go to *App info → ⋮ → Allow

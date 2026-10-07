@@ -22,6 +22,8 @@ and Android won't update an app across a key change.
 - **Alphabet wave.** Slide your thumb along the letters on the right edge. The letters near your finger
   swell and bulge out, and the list jumps to that letter. You get a haptic tick on each letter. On home the
   strip stays quiet, so the clock and favorites come first; it brightens as the list comes up or as you touch it.
+  Turn on Second letters (Settings > Gestures) and a held letter shows its apps' second letters beside it (Ma, Me,
+  Mu): slide toward the list and move up or down to jump straight to them, or slide back to pick letters again.
 - **Notifications in the list.** Apps with notifications get a dot. Favorites also show the latest message
   underneath, sender first; tap it to open that notification, or tap **+2** to see the rest.
 - **Swipe an app to see its notifications.** Swipe a row to the right to expand all of that app's

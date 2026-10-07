@@ -44,6 +44,7 @@ internal val SettingsIndex = listOf(
 
     SettingEntry("Swipe down", SettingsScreen.GESTURES, "swipeDown", "pull notifications quick settings shade gesture"),
     SettingEntry("Double-tap", SettingsScreen.GESTURES, "doubleTap", "double tap lock screen sleep turn off gesture"),
+    SettingEntry("Second letters", SettingsScreen.GESTURES, "secondLetters", "alphabet letter strip scroll index two letters fast scroll"),
     SettingEntry("Vibration", SettingsScreen.GESTURES, "haptics", "haptic haptics feedback vibrate touch"),
 
     SettingEntry("Search the web", SettingsScreen.SEARCH, "searchWeb", "internet google browser web"),

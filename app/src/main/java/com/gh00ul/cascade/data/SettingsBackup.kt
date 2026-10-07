@@ -65,6 +65,7 @@ object SettingsBackup {
         .put("searchShortcuts", settings.searchShortcuts)
         .put("musicGlow", settings.musicGlow)
         .put("copyLoginCodes", settings.copyLoginCodes)
+        .put("secondLetters", settings.secondLetters)
         .toString(2)
 
     /** [current] with every field the backup carries replaced; null when [json] isn't a Cascade settings backup. */
@@ -141,6 +142,7 @@ object SettingsBackup {
             searchShortcuts = root.bool("searchShortcuts") ?: current.searchShortcuts,
             musicGlow = root.bool("musicGlow") ?: current.musicGlow,
             copyLoginCodes = root.bool("copyLoginCodes") ?: current.copyLoginCodes,
+            secondLetters = root.bool("secondLetters") ?: current.secondLetters,
         )
     }
 
@@ -202,6 +204,7 @@ object SettingsBackup {
         LauncherSettings::searchShortcuts,
         LauncherSettings::musicGlow,
         LauncherSettings::copyLoginCodes,
+        LauncherSettings::secondLetters,
     )
 
     /** "6 favorites (now 5)"; null when both are empty. The same count with other contents still reads "now". */

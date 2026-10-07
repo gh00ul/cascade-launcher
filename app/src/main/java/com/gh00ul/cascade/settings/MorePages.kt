@@ -146,6 +146,15 @@ internal fun GesturesPage(settings: LauncherSettings, apps: List<AppEntry>, icon
             }
         }
 
+        SettingsGroup("Letter strip") {
+            SwitchRow(
+                "Second letters",
+                "Hold a letter, then slide toward the list to pick its second letter too: Ma, Me, Mu",
+                settings.secondLetters,
+                key = "secondLetters",
+            ) { on -> prefs.update { it.copy(secondLetters = on) } }
+        }
+
         SettingsGroup("Feedback") {
             SwitchRow("Vibration", "On long-press, swipes, the letter strip and the player's buttons", settings.haptics, key = "haptics") { on ->
                 prefs.update { it.copy(haptics = on) }

@@ -547,6 +547,11 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         buildMap { rows.forEachIndexed { i, row -> if (row is Row.Section && row.letter !in this) put(row.letter, i + FIRST_APP_ROW) } }
     }
     val letters = remember(letterRows) { letterRows.keys.toList() }
+    // The strip's second letters (Ma, Me, Mu), worked out only while the setting is on.
+    val prefixes = remember(rows, settings.secondLetters) {
+        if (!settings.secondLetters) emptyMap()
+        else letterPrefixes(rows.mapIndexedNotNull { i, row -> (row as? Row.App)?.let { PrefixSource(it.app.section, it.app.label, i + FIRST_APP_ROW) } })
+    }
     val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 } }
 
     val launch: (AppEntry, Rect?) -> Unit = { app, bounds -> LauncherActions.launch(context, app, view, bounds) }
@@ -857,6 +862,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                     AlphabetWave(
                         letters = letters,
                         onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
+                        prefixes = prefixes,
+                        onPrefix = { prefix -> scope.launch { listState.scrollToItem(prefix.row) } },
                         // Hidden from TalkBack under an open folder or menu, like the list it scrolls.
                         modifier = Modifier.fillMaxHeight().hiddenFromAccessibilityWhen(popupOpen),
                         // Quiet on home, where the clock and favorites come first; as strong as ever over the list.

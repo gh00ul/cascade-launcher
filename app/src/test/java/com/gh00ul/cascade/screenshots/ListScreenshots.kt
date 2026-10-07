@@ -61,4 +61,21 @@ class ListScreenshots : ScreenshotTest() {
     ) {
         HomeScreen(settings, apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)
     }
+
+    /**
+     * Second letters on: M held, then the finger slid toward the list. M's second letters stand in a column beside it
+     * (Ma, Me, Mu), the one level with the finger (Me) takes the accent, and the list has jumped to Messages.
+     */
+    @Test fun alphabetWaveSecondLetters() = snap(
+        "AlphabetWave_SecondLetters",
+        afterContent = {
+            onNodeWithContentDescription("Alphabet index").performTouchInput {
+                if (currentPosition() != null) up()
+                down(center + Offset(0f, 33.dp.toPx()))
+                repeat(12) { moveBy(Offset(-110.dp.toPx() / 12, 0f)) }
+            }
+        },
+    ) {
+        HomeScreen(settings.copy(secondLetters = true), apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)
+    }
 }

@@ -72,6 +72,7 @@ class PrefsTest {
             showWeather = true,
             weatherPlace = WeatherPlace("Zürich", 47.3769, 8.5417),
             tempUnit = TempUnit.FAHRENHEIT,
+            secondLetters = true,
         )
         Prefs(context).update { stored }
         assertEquals(stored, Prefs(context).settings.value)

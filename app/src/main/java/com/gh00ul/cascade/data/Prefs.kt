@@ -127,6 +127,8 @@ data class LauncherSettings(
     val musicGlow: Boolean = true,
     /** A login code arriving in a notification goes straight to the clipboard. */
     val copyLoginCodes: Boolean = true,
+    /** Holding a letter on the strip offers its apps' second letters too (Ma, Me, Mu), a slide toward the list away. */
+    val secondLetters: Boolean = false,
 )
 
 class Prefs(context: Context) {
@@ -202,6 +204,7 @@ class Prefs(context: Context) {
         searchShortcuts = sp.getBoolean(SEARCH_SHORTCUTS, true),
         musicGlow = sp.getBoolean(MUSIC_GLOW, true),
         copyLoginCodes = sp.getBoolean(COPY_LOGIN_CODES, true),
+        secondLetters = sp.getBoolean(SECOND_LETTERS, false),
     )
 
     private fun write(s: LauncherSettings) {
@@ -249,6 +252,7 @@ class Prefs(context: Context) {
             .putBoolean(SEARCH_SHORTCUTS, s.searchShortcuts)
             .putBoolean(MUSIC_GLOW, s.musicGlow)
             .putBoolean(COPY_LOGIN_CODES, s.copyLoginCodes)
+            .putBoolean(SECOND_LETTERS, s.secondLetters)
             .apply()
     }
 
@@ -296,6 +300,7 @@ class Prefs(context: Context) {
         const val SEARCH_SHORTCUTS = "search_shortcuts"
         const val MUSIC_GLOW = "music_glow"
         const val COPY_LOGIN_CODES = "copy_login_codes"
+        const val SECOND_LETTERS = "second_letters"
     }
 }
 

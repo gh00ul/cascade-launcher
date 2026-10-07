@@ -8,16 +8,20 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.translate
@@ -27,6 +31,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -39,7 +44,9 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import com.gh00ul.cascade.data.normalizedForSearch
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
 import kotlinx.coroutines.Job
@@ -62,13 +69,59 @@ private const val AccentGrowth = 0.03f
 /** The accent moving from one letter to the next. */
 private val Handover = tween<Float>(Motion.QUICK)
 
+/** The second letters' column: how far inward of the swollen letter it stands, and each one's height at most. */
+private val PrefixOffset = 72.dp
+private val PrefixSlot = 44.dp
+/**
+ * How far past the strip's inner edge the finger slides to pick second letters, and how far back it comes to return to
+ * the letters: apart, so a finger resting near the line doesn't flicker between the two.
+ */
+private val EnterPrefixes = 64.dp
+private val LeavePrefixes = 40.dp
+
+/** A second-letter step under a strip letter: "Ma", and the A–Z list row its first app is at. */
+@Immutable
+data class LetterPrefix(val text: String, val row: Int)
+
+/** An app row of the A–Z list as [letterPrefixes] reads it: its section, its name, and its row in the list. */
+internal class PrefixSource(val section: String, val label: String, val row: Int)
+
+/**
+ * Each section's second letters in list order, each with the row of its first app: "M" over Mail, Maps, Messages and
+ * Music gives Ma (at Mail), Me and Mu. Accents count as their plain letter. A name whose second character isn't a letter
+ * or digit offers none, nor does one whose first doesn't spell its section ("#", stroke-count sections).
+ */
+internal fun letterPrefixes(entries: List<PrefixSource>): Map<String, List<LetterPrefix>> {
+    val bySection = LinkedHashMap<String, MutableList<LetterPrefix>>()
+    for (entry in entries) {
+        val section = entry.section.normalizedForSearch()
+        val name = entry.label.trim().normalizedForSearch()
+        if (section.length != 1 || name.length < 2 || name[0] != section[0] || !name[1].isLetterOrDigit()) continue
+        val text = entry.section + name[1]
+        val prefixes = bySection.getOrPut(entry.section) { ArrayList() }
+        if (prefixes.none { it.text == text }) prefixes += LetterPrefix(text, entry.row)
+    }
+    return bySection
+}
+
 /**
  * The letter strip on the end edge. Dragging along it makes the letters near your finger swell and bulge
  * out in a wave, and jumps the app list to whichever letter you're on. [restAlpha] fades the strip while it rests
  * (read while drawing its layer, so it can follow a scroll); under the finger it's always at full strength.
+ *
+ * With [prefixes] (the Second letters setting), a held letter with more than one shows them in a column beside it (Ma,
+ * Me, Mu); sliding the finger toward the list picks among them by height, jumping the list to that one with [onPrefix],
+ * and sliding back returns to the letters.
  */
 @Composable
-fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Modifier = Modifier, restAlpha: () -> Float = { 1f }) {
+fun AlphabetWave(
+    letters: List<String>,
+    onLetter: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    restAlpha: () -> Float = { 1f },
+    prefixes: Map<String, List<LetterPrefix>> = emptyMap(),
+    onPrefix: (LetterPrefix) -> Unit = {},
+) {
     // Read through a state: the gesture below outlives recompositions, and Settings can turn vibration off meanwhile.
     val haptics by rememberUpdatedState(LocalHapticFeedback.current)
     val style = LocalLauncherStyle.current
@@ -76,6 +129,13 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
     val layouts = remember(letters, measurer, style) { letters.map { measurer.measure(it, style.letter) } }
     val currentLetters by rememberUpdatedState(letters)
     val currentOnLetter by rememberUpdatedState(onLetter)
+    val currentPrefixes by rememberUpdatedState(prefixes)
+    val currentOnPrefix by rememberUpdatedState(onPrefix)
+    val rtl by rememberUpdatedState(LocalLayoutDirection.current == LayoutDirection.Rtl)
+    val prefixStyle = remember(style) { style.letter.copy(fontSize = 20.sp) }
+    val prefixLayouts = remember(prefixes, measurer, prefixStyle) {
+        prefixes.mapValues { (_, list) -> list.map { measurer.measure(it.text, prefixStyle) } }
+    }
     val scope = rememberCoroutineScope()
 
     var touchY by remember { mutableFloatStateOf(Float.NaN) }
@@ -96,6 +156,14 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
     var handover by remember { mutableFloatStateOf(1f) }
     val accentFrom = remember(letters.size) { FloatArray(letters.size) }
     val currentAccentFrom by rememberUpdatedState(accentFrom)
+
+    // Second letters: whether the finger is picking among them, the one it's on (kept as the column fades out after
+    // release), and the column's top, which follows the finger until picking starts and then holds still under it.
+    var picking by remember { mutableStateOf(false) }
+    var picked by remember { mutableIntStateOf(-1) }
+    var columnTop by remember { mutableFloatStateOf(0f) }
+    val columnShown = selected >= 0 && (letters.getOrNull(selected)?.let { prefixes[it] }?.size ?: 0) >= 2
+    val column by animateFloatAsState(if (columnShown) 1f else 0f, tween(Motion.QUICK), label = "secondLetters")
 
     Spacer(
         modifier
@@ -153,16 +221,55 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
                         }
                     }
                 }
+                fun heldOptions(): List<LetterPrefix> = currentLetters.getOrNull(selected)?.let { currentPrefixes[it] }.orEmpty()
+                fun prefixSlot(count: Int) = min(PrefixSlot.toPx(), size.height.toFloat() / count)
+                fun placeColumn(y: Float, count: Int) {
+                    val height = prefixSlot(count) * count
+                    columnTop = (y - height / 2f).coerceIn(0f, (size.height - height).coerceAtLeast(0f))
+                }
+                fun pick(y: Float, options: List<LetterPrefix>) {
+                    if (options.isEmpty()) return
+                    val index = ((y - columnTop) / prefixSlot(options.size)).toInt().coerceIn(0, options.size - 1)
+                    if (index != picked) {
+                        picked = index
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        currentOnPrefix(options[index])
+                    }
+                }
+                fun move(x: Float, y: Float) {
+                    // How far past the strip's inner edge, toward the list, the finger is.
+                    val inward = if (rtl) x - size.width else -x
+                    if (!picking) {
+                        select(y)
+                        val options = heldOptions()
+                        if (options.size >= 2) placeColumn(y, options.size)
+                        if (options.size >= 2 && inward > EnterPrefixes.toPx()) {
+                            picking = true
+                            pick(y, options)
+                        }
+                    } else if (inward < LeavePrefixes.toPx()) {
+                        // Back on the letters: the list returns to the letter's top.
+                        picking = false
+                        picked = -1
+                        select(y)
+                        currentLetters.getOrNull(selected)?.let(currentOnLetter)
+                    } else {
+                        pick(y, heldOptions())
+                    }
+                }
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     down.consume()
-                    select(down.position.y)
+                    picking = false
+                    picked = -1
+                    move(down.position.x, down.position.y)
                     while (true) {
                         val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) break
                         change.consume()
-                        select(change.position.y)
+                        move(change.position.x, change.position.y)
                     }
+                    picking = false
                     selected = -1
                 }
             }
@@ -227,6 +334,40 @@ fun AlphabetWave(letters: List<String>, onLetter: (String) -> Unit, modifier: Mo
                     // The accented letter last, so if the rise's overshoot makes neighbours touch, it stays in front.
                     for (i in layouts.indices) if (i != accented) drawLetter(i)
                     if (accented >= 0 && accented < layouts.size) drawLetter(accented)
+
+                    // The held letter's second letters, in a column inward of it on a pill of the scrim.
+                    val options = if (column > 0f) letters.getOrNull(accented)?.let { prefixLayouts[it] } else null
+                    if (options != null && options.size >= 2) {
+                        val slotP = min(PrefixSlot.toPx(), size.height / options.size)
+                        var widest = 0
+                        for (o in options) if (o.size.width > widest) widest = o.size.width
+                        val padX = 16.dp.toPx()
+                        val padY = 6.dp.toPx()
+                        // Slides in a little from the letter as it appears.
+                        val cx = restX + inward * (depth + PrefixOffset.toPx() - 12.dp.toPx() * (1f - column))
+                        val pillWidth = widest + 2 * padX
+                        drawRoundRect(
+                            style.scrim,
+                            topLeft = Offset(cx - pillWidth / 2f, columnTop - padY),
+                            size = Size(pillWidth, slotP * options.size + 2 * padY),
+                            cornerRadius = CornerRadius(22.dp.toPx()),
+                            alpha = 0.72f * column,
+                        )
+                        for (i in options.indices) {
+                            val layout = options[i]
+                            val on = i == picked
+                            val cy = columnTop + slotP * (i + 0.5f)
+                            val scale = if (on) 1.2f else 1f
+                            withTransform({ scale(scale, scale, pivot = Offset(cx, cy)) }) {
+                                drawText(
+                                    layout,
+                                    color = if (on) style.accent else style.content,
+                                    topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f),
+                                    alpha = column * if (on || !picking) 1f else 0.7f,
+                                )
+                            }
+                        }
+                    }
                 }
             },
     )

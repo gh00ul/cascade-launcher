@@ -18,6 +18,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -109,10 +110,14 @@ internal class SettingsNav(
     val openFolder: (String) -> Unit = {},
 )
 
-private val StackSaver = listSaver<List<SettingsScreen>, String>(
-    save = { stack -> stack.map { it.name } },
-    // Nothing left (pages renamed since it was saved) restores nothing, so the stack starts over instead of being empty.
-    restore = { names -> names.mapNotNull { name -> SettingsScreen.entries.firstOrNull { it.name == name } }.ifEmpty { null } },
+// Saves the state itself, not its value: restoring nothing then means "start over" (rememberSaveable runs init), where
+// a stateSaver would restore a state holding nothing.
+private val StackSaver = listSaver<MutableState<List<SettingsScreen>>, String>(
+    save = { stack -> stack.value.map { it.name } },
+    // No page left (renamed since it was saved): the stack starts over instead of being empty.
+    restore = { names ->
+        names.mapNotNull { name -> SettingsScreen.entries.firstOrNull { it.name == name } }.takeIf { it.isNotEmpty() }?.let { mutableStateOf(it) }
+    },
 )
 
 /**
@@ -131,7 +136,7 @@ internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit, startFolder:
     }
     // Home's rows: apps and folders, for the favorites page.
     val homeItems = remember(apps, settings.favorites, settings.folders) { homeItems(settings, apps.associateBy { it.key }) }
-    var stack by rememberSaveable(stateSaver = StackSaver) { mutableStateOf(listOf(start)) }
+    var stack by rememberSaveable(saver = StackSaver) { mutableStateOf(listOf(start)) }
     // The folder the folder pages are about; one at a time, so it needn't be part of the stack.
     var folder by rememberSaveable { mutableStateOf(startFolder) }
     var forward by remember { mutableStateOf(true) }

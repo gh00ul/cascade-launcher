@@ -1,0 +1,4 @@
+<resources>
+    <!-- The dark pages' color from Android 14; see values-v34/themes.xml. -->
+    <color name="settings_page">@android:color/system_surface_container_dark</color>
+</resources>

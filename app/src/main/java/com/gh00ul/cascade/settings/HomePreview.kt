@@ -8,6 +8,7 @@ import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -75,6 +77,7 @@ private const val PreviewScale = 0.6f
 /** The home page's own width at most, so the preview's rows are as wide as on a phone and the wallpaper shows beside them. */
 private val PhoneWidth = 420.dp
 
+/** The card's height; a large font can make it taller. */
 internal val PreviewHeight = 240.dp
 
 /**
@@ -103,7 +106,7 @@ internal fun HomePreview(
     Box(
         modifier
             .fillMaxWidth()
-            .height(PreviewHeight)
+            .heightIn(min = PreviewHeight)
             .clip(shape)
             .background(wallpaper)
             .border(1.dp, Color.White.copy(alpha = 0.08f), shape)
@@ -123,10 +126,14 @@ internal fun HomePreview(
             LocalContentColor provides style.content,
         ) {
             if (!settings.hideStatusBar) PreviewStatusBar(style, settings.timeFormat)
-            Column(Modifier.fillMaxHeight().widthIn(max = PhoneWidth).padding(top = StatusBarHeight)) {
+            // The card's height, with the clock at the top and the rows at the bottom; taller when a large font needs
+            // more room (here in the preview's scaled dp), rather than cutting off the rows.
+            Column(
+                Modifier.heightIn(min = PreviewHeight / PreviewScale).widthIn(max = PhoneWidth).padding(top = StatusBarHeight),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
                 // The home page's own padding (HomePage), so the clock and rows sit where they will.
                 ClockHeader(settings, Modifier.padding(start = 28.dp, end = 52.dp, top = 20.dp))
-                Spacer(Modifier.weight(1f))
                 Column(Modifier.padding(start = 20.dp, end = 44.dp, bottom = 20.dp)) {
                     rows.forEachIndexed { i, app ->
                         AppRow(

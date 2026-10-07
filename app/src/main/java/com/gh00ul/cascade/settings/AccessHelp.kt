@@ -2,6 +2,8 @@ package com.gh00ul.cascade.settings
 
 import android.content.Context
 import android.os.Build
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -13,9 +15,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import com.gh00ul.cascade.R
 import com.gh00ul.cascade.util.LauncherActions
 
 /*
@@ -39,6 +44,8 @@ internal fun NotificationAccessHelp(onDismiss: () -> Unit) {
                 "If Cascade's switch was greyed out, Android is blocking it because Cascade wasn't installed from an " +
                     "app store. Open Cascade's App info, tap ⋮, choose “Allow restricted settings”, then come back and " +
                     "tap Allow again.",
+                // At a large font it can be taller than the dialog has room for.
+                modifier = Modifier.verticalScroll(rememberScrollState()),
             )
         },
         confirmButton = {
@@ -55,15 +62,19 @@ internal fun NotificationAccessHelp(onDismiss: () -> Unit) {
 @Composable
 internal fun LockServiceHelp(onDismiss: () -> Unit) {
     val context = LocalContext.current
+    // The name the accessibility list shows for the service (the manifest's label), so the two can't drift apart.
+    val service = stringResource(R.string.lock_service_label)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Turn on the lock service") },
         text = {
             Text(
                 "Android lets apps lock the screen only through an accessibility service. Cascade's reads nothing on " +
-                    "your screen: it only locks it when you double-tap home.\n\nIn the list, open Cascade and turn it on. " +
+                    "your screen: it only locks it when you double-tap home.\n\nIn the list, open “$service” and turn it on. " +
                     "If Android says the setting is restricted, open Cascade's App info, tap ⋮, choose “Allow restricted " +
                     "settings”, and try again.",
+                // At a large font it can be taller than the dialog has room for.
+                modifier = Modifier.verticalScroll(rememberScrollState()),
             )
         },
         confirmButton = {

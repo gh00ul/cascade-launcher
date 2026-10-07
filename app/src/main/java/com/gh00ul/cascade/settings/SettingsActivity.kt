@@ -1,8 +1,11 @@
 package com.gh00ul.cascade.settings
 
+import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.window.SplashScreen
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -15,7 +18,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
@@ -25,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gh00ul.cascade.data.homeItems
@@ -88,11 +94,19 @@ class SettingsActivity : ComponentActivity() {
 
         /** Opens Settings on [screen]; the folder pages need the [folder]'s id. */
         fun open(context: Context, screen: SettingsScreen = SettingsScreen.MAIN, folder: String? = null) {
+            // A new task started from home gets the splash screen with Cascade's icon, as if an app were starting. The
+            // plain one is just the theme's window background, which is the pages' own color.
+            val options = if (Build.VERSION.SDK_INT >= 33) {
+                ActivityOptions.makeBasic().setSplashScreenStyle(SplashScreen.SPLASH_SCREEN_STYLE_SOLID_COLOR).toBundle()
+            } else {
+                null
+            }
             context.startActivity(
                 Intent(context, SettingsActivity::class.java)
                     .putExtra(EXTRA_SCREEN, screen.name)
                     .putExtra(EXTRA_FOLDER, folder)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                options,
             )
         }
     }
@@ -174,7 +188,13 @@ internal fun SettingsApp(start: SettingsScreen, onExit: () -> Unit, startFolder:
     )
     BackHandler(enabled = stack.size > 1, onBack = nav.back)
 
-    AnimatedContent(targetState = stack.last(), transitionSpec = { pageTransition(forward) }, label = "settingsPage") { screen ->
+    // The pages' color behind them too: mid cross-fade both are partly see-through, and the window would show.
+    AnimatedContent(
+        targetState = stack.last(),
+        modifier = Modifier.fillMaxSize().background(PageColor),
+        transitionSpec = { pageTransition(forward) },
+        label = "settingsPage",
+    ) { screen ->
         CompositionLocalProvider(LocalHighlight provides highlight?.takeIf { it.first == screen }?.second) {
             when (screen) {
                 SettingsScreen.MAIN -> MainPage(settings, apps, favorites, icons, nav)

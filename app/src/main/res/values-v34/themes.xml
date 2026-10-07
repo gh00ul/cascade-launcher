@@ -1,0 +1,4 @@
+<resources>
+    <!-- From Android 14 the pages' color is this system color itself (Material reads it for dynamic colors). -->
+    <color name="settings_page">@android:color/system_surface_container_light</color>
+</resources>

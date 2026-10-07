@@ -9,7 +9,15 @@
     </style>
 
     <style name="Theme.Cascade.Settings" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/settings_page</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <!--
+        The pages' color (Material's surfaceContainer, PageColor) for Settings' window and the splash it opens with, so
+        neither shows a lighter grey around the pages. Here the baseline scheme's, which the pages use before Android 12
+        and which is near the dynamic one on 12 and 13; from Android 14 values-v34 names the system's own.
+    -->
+    <color name="settings_page">#FFF3EDF7</color>
 </resources>

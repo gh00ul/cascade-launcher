@@ -8,11 +8,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -30,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -50,7 +54,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -324,11 +330,22 @@ internal fun FindPage(nav: SettingsNav) {
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query) { findSettings(query) }
     val focus = remember { FocusRequester() }
+    // The field's text is the bar's title style. At a large font its line and the field's padding outgrow the 64dp
+    // bar, which cuts off what's typed, so the bar grows to fit the field; at the default size it stays 64dp.
+    val fieldPadding = TextFieldDefaults.contentPaddingWithoutLabel()
+    val lineHeight = rememberTextMeasurer().measure("Search settings", MaterialTheme.typography.titleLarge).size.height
+    val barHeight = maxOf(
+        TopAppBarDefaults.TopAppBarExpandedHeight,
+        with(LocalDensity.current) { lineHeight.toDp() } + fieldPadding.calculateTopPadding() + fieldPadding.calculateBottomPadding(),
+    )
 
     Scaffold(
         containerColor = PageColor,
+        // The keyboard too, so the last results can scroll up above it.
+        contentWindowInsets = ScaffoldDefaults.contentWindowInsets.union(WindowInsets.ime),
         topBar = {
             TopAppBar(
+                expandedHeight = barHeight,
                 title = {
                     TextField(
                         value = query,

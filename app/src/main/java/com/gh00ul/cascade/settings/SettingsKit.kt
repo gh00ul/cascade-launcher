@@ -31,14 +31,17 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -51,6 +54,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -59,9 +63,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -86,13 +92,19 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.offset
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 /*
@@ -213,6 +225,8 @@ internal fun SettingsListPage(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = PageColor,
         topBar = { PageBar(title, onBack, actions, scrollBehavior) },
+        // Material's default is the system bars only: edge to edge, the keyboard would cover the end of the list.
+        contentWindowInsets = ScaffoldDefaults.contentWindowInsets.union(WindowInsets.ime),
     ) { padding ->
         val direction = LocalLayoutDirection.current
         val margin = wideMargin()
@@ -444,10 +458,41 @@ internal fun <T> SegmentedChoice(options: List<T>, selected: T, label: (T) -> St
                 onClick = { onSelect(option) },
                 enabled = enabled,
                 shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
-            ) { Text(label(option), maxLines = 1) }
+            ) {
+                // At a large font size the label shrinks to fit rather than being cut off.
+                val style = LocalTextStyle.current
+                Text(
+                    label(option),
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = shrinkToFit(style.fontSize),
+                    // Scaled up, an sp line height doesn't shrink with the font: a shrunk label's line would be taller
+                    // than the button, which is measured for the full-size one, so every smaller size would count as
+                    // too big and the label would drop to the minimum. In em it shrinks along. (Not at the default
+                    // size, where the line is exactly as before.)
+                    style = if (LocalDensity.current.fontScale > 1f) {
+                        style.copy(lineHeight = (style.lineHeight.value / style.fontSize.value).em)
+                    } else {
+                        style
+                    },
+                    // Material measures the label in the button's full width, then shifts a checked one right to make
+                    // room for the check. Fitting it to 8dp less keeps a shrunk label clear of the outline; its own
+                    // width is still what the button sees, so a label that fits is laid out exactly as before.
+                    modifier = Modifier.layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints.offset(horizontal = -8.dp.roundToPx()))
+                        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                    },
+                )
+            }
         }
     }
 }
+
+/**
+ * For a one-line label in a fixed width (a segmented button, a tile): a large font shrinks it to fit, rather than it
+ * being cut off or losing its end, but never grows it past its own [size], so at the default font it's unchanged.
+ */
+private fun shrinkToFit(size: TextUnit) = TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = size)
 
 /**
  * A choice shown as picture tiles (clock styles, text colors, icon sizes), each drawn by [tile] and named under it.
@@ -494,6 +539,7 @@ internal fun <T> TilePicker(
                     color = name,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    autoSize = shrinkToFit(MaterialTheme.typography.labelMedium.fontSize),
                     modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
                 )
             }

@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,9 +33,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -328,19 +331,25 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
     }
 }
 
-/** A clock style's look at a glance: 12:45 (or 13:45) in its weight and layout. */
+/**
+ * A clock style's look at a glance: 12:45 (or 13:45) in its weight and layout. It's a picture in a fixed-size tile, so
+ * it keeps the default font size whatever the phone's (the name under the tile follows the phone's): scaled up, 13:45
+ * broke over two lines and the stacked one outgrew its tile.
+ */
 @Composable
 private fun ClockSample(style: ClockStyle, selected: Boolean, is24h: Boolean) {
     val color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
     val hours = if (is24h) "13" else "1"
-    when (style) {
-        ClockStyle.CLASSIC -> Text("$hours:45", style = TextStyle(color = color, fontSize = 30.sp, fontWeight = FontWeight.Light, letterSpacing = (-0.5).sp))
-        ClockStyle.BOLD -> Text("$hours:45", style = TextStyle(color = color, fontSize = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp))
-        ClockStyle.STACKED -> Text(
-            "${hours.padStart(2, '0')}\n45",
-            textAlign = TextAlign.Center,
-            style = TextStyle(color = color, fontSize = 26.sp, lineHeight = 25.sp, fontWeight = FontWeight.Light, letterSpacing = (-1).sp),
-        )
+    CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale = 1f)) {
+        when (style) {
+            ClockStyle.CLASSIC -> Text("$hours:45", softWrap = false, style = TextStyle(color = color, fontSize = 30.sp, fontWeight = FontWeight.Light, letterSpacing = (-0.5).sp))
+            ClockStyle.BOLD -> Text("$hours:45", softWrap = false, style = TextStyle(color = color, fontSize = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp))
+            ClockStyle.STACKED -> Text(
+                "${hours.padStart(2, '0')}\n45",
+                textAlign = TextAlign.Center,
+                style = TextStyle(color = color, fontSize = 26.sp, lineHeight = 25.sp, fontWeight = FontWeight.Light, letterSpacing = (-1).sp),
+            )
+        }
     }
 }
 

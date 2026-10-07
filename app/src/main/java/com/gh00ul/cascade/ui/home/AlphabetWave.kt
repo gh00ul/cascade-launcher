@@ -182,6 +182,12 @@ private class StripPlan(val count: Int) {
     var closingStep = 0f
     /** How far the glide from the last layout has come, 0 to 1. State, so a drawing that reads it follows it. */
     var progress by mutableFloatStateOf(1f)
+    /**
+     * Bumped by each [scroll] step. A step moves only plain fields, and with the finger held still at the strip's end
+     * nothing else the drawing reads changes, so the drawing reads this to follow the scroll a frame at a time.
+     */
+    var scrolled by mutableIntStateOf(0)
+        private set
     /** How tall the laid-out letters and second letters are, all told. */
     private var total = 0f
 
@@ -297,6 +303,7 @@ private class StripPlan(val count: Int) {
     fun scroll(dy: Float) {
         top = if (dy < 0f) max(top + dy, min(top, height - total)) else min(top + dy, max(top, 0f))
         place()
+        scrolled++
     }
 
     private fun place() {
@@ -585,6 +592,8 @@ fun AlphabetWave(
                     if (plan.height != size.height) plan.layOut(size.height, MaxSlot.toPx(), -1, 0, -1, 0f, 0.5f, glide = false)
                     val slot = plan.slot
                     val glide = plan.progress
+                    // Read only so each scroll step redraws (see StripPlan.scrolled); never changes while idle.
+                    plan.scrolled
                     // Letters rest 14dp in from the screen edge and bulge inward, toward the list (mirrored in RTL).
                     val rtl = layoutDirection == LayoutDirection.Rtl
                     val restX = if (rtl) LetterInset.toPx() else size.width - LetterInset.toPx()
@@ -659,7 +668,8 @@ fun AlphabetWave(
                                 layout,
                                 color = color,
                                 topLeft = Offset(left, cy - layout.size.height / 2f),
-                                alpha = lerp(restInk, lerp(NearInk, 1f, accent), influence) * fade * edge,
+                                // Clamped like the glow's: the rise spring's overshoot takes influence past 1.
+                                alpha = (lerp(restInk, lerp(NearInk, 1f, accent), influence) * fade * edge).coerceIn(0f, 1f),
                             )
                         }
                     }

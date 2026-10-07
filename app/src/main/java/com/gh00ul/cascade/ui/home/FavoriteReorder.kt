@@ -93,11 +93,17 @@ internal class FavoriteReorder(
     /** Whether favorites can move at all: something must save the order. */
     val enabled: Boolean get() = commit() != null
 
-    internal fun measured(keys: List<String>, heights: IntArray) {
-        this.keys = keys
+    /** The rows as laid out, in order, with their heights. A child with no key (null) isn't a row: it can't move. */
+    internal fun measured(keys: List<String?>, heights: IntArray) {
+        this.keys = keys.filterNotNull()
         this.heights.clear()
-        keys.forEachIndexed { i, key -> this.heights[key] = heights[i] }
-        total = heights.sum()
+        total = 0
+        keys.forEachIndexed { i, key ->
+            if (key != null) {
+                this.heights[key] = heights[i]
+                total += heights[i]
+            }
+        }
     }
 
     /** Where [key] shows while rows are moving, or null to stack it in place. Read while placing. */
@@ -256,7 +262,9 @@ internal fun ReorderableColumn(
     Layout(content, modifier) { measurables: List<Measurable>, constraints ->
         val loose = constraints.copy(minWidth = 0, minHeight = 0)
         val placeables: List<Placeable> = measurables.map { it.measure(loose) }
-        val keys = measurables.map { it.layoutId as String }
+        // Every favorite sets its key as its layoutId. A child without one (none today) stacks in place and can't be
+        // moved, rather than failing the cast here on every measure.
+        val keys = measurables.map { it.layoutId as? String }
         val heights = IntArray(placeables.size) { placeables[it].height }
         state.measured(keys, heights)
         val width = (placeables.maxOfOrNull { it.width } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
@@ -268,9 +276,9 @@ internal fun ReorderableColumn(
             var y = 0
             placeables.forEachIndexed { i, placeable ->
                 val key = keys[i]
-                val top = state.topOf(key)?.roundToInt() ?: y
+                val top = key?.let { state.topOf(it) }?.roundToInt() ?: y
                 val shown = if (e >= 1f) 1f else ((e - EntranceStagger * i) / span).coerceIn(0f, 1f)
-                placeable.place(0, top + ((1f - shown) * rise).roundToInt(), zIndex = if (key == state.held) 1f else 0f)
+                placeable.place(0, top + ((1f - shown) * rise).roundToInt(), zIndex = if (key != null && key == state.held) 1f else 0f)
                 y += placeable.height
             }
         }

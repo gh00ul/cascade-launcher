@@ -18,8 +18,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -30,6 +32,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.gh00ul.cascade.data.DayForecast
@@ -41,6 +44,7 @@ import com.gh00ul.cascade.data.WeatherNow
 import com.gh00ul.cascade.data.WeatherPlace
 import com.gh00ul.cascade.settings.SettingsActivity
 import com.gh00ul.cascade.settings.SettingsScreen
+import com.gh00ul.cascade.ui.common.rememberReplaySkip
 import com.gh00ul.cascade.ui.home.LocalNow
 import com.gh00ul.cascade.ui.home.is24Hour
 import com.gh00ul.cascade.ui.home.rememberWeatherAt
@@ -123,7 +127,14 @@ private fun Forecast(w: WeatherNow, is24h: Boolean, onLongPress: () -> Unit, mod
     val style = LocalLauncherStyle.current
     val text = rememberWidgetText()
     val locale = LocalConfiguration.current.locales[0]
-    val now = LocalNow.current()
+    val clock = LocalNow.current
+    // The time is read with each reading and on each return home, so hours that passed while away drop even when no
+    // new reading came (fetches failing offline, say). The start replayed right after composition doesn't re-read it:
+    // composition just did.
+    var starts by remember { mutableIntStateOf(0) }
+    val replayedStart = rememberReplaySkip(Lifecycle.State.STARTED)
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { if (!replayedStart.consume()) starts++ }
+    val now = remember(clock, w, starts) { clock() }
     val (_, spoken) = weatherText(w)
     BoxWithConstraints(
         modifier

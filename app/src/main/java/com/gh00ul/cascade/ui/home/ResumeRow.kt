@@ -34,7 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -140,21 +140,27 @@ fun ResumeRow(
         modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .drawBehind {
+            // Redrawn on every scroll frame; the gradient and stroke are built once per size.
+            .drawWithCache {
                 val brush = Brush.horizontalGradient(
                     listOf(colors.washStart, colors.washEnd),
                     startX = if (rtl) size.width else 0f,
                     endX = if (rtl) 0f else size.width,
                 )
-                drawRoundRect(brush, cornerRadius = CornerRadius(20.dp.toPx()))
+                val corner = CornerRadius(20.dp.toPx())
                 val edge = GlassEdgeWidth.toPx()
-                drawRoundRect(
-                    style.glassEdge,
-                    topLeft = Offset(edge / 2, edge / 2),
-                    size = Size(size.width - edge, size.height - edge),
-                    cornerRadius = CornerRadius(20.dp.toPx() - edge / 2),
-                    style = Stroke(edge),
-                )
+                val edgeCorner = CornerRadius(20.dp.toPx() - edge / 2)
+                val edgeStroke = Stroke(edge)
+                onDrawBehind {
+                    drawRoundRect(brush, cornerRadius = corner)
+                    drawRoundRect(
+                        style.glassEdge,
+                        topLeft = Offset(edge / 2, edge / 2),
+                        size = Size(size.width - edge, size.height - edge),
+                        cornerRadius = edgeCorner,
+                        style = edgeStroke,
+                    )
+                }
             }
             .clip(ResumeShape)
             .combinedClickable(

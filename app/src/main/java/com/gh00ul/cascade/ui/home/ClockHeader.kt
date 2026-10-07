@@ -476,6 +476,10 @@ private fun rememberBattery(enabled: Boolean): Battery? {
             return@LifecycleStartEffect onStopOrDispose {}
         }
         val manager = context.getSystemService(BatteryManager::class.java)
+        // What this start last read. The charge estimate is a binder call into BatteryStats, and while charging the
+        // broadcast comes with every voltage or temperature change: it's asked again only once per start, when the
+        // level or charging state moves, and while the system doesn't know it yet (just after plugging in).
+        var last: Battery? = null
         fun read(intent: Intent?) {
             if (intent == null) return
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -485,8 +489,14 @@ private fun rememberBattery(enabled: Boolean): Battery? {
             // The status can still say FULL or CHARGING for a moment after unplugging; require power too.
             val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
             val charging = plugged && (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
-            val fullIn = if (charging && Build.VERSION.SDK_INT >= 28) runCatching { manager.computeChargeTimeRemaining() }.getOrDefault(-1L) else -1L
-            battery = Battery(level * 100 / scale, charging, fullIn)
+            val percent = level * 100 / scale
+            val previous = last
+            val fullIn = when {
+                !charging || Build.VERSION.SDK_INT < 28 -> -1L
+                previous != null && previous.charging && previous.level == percent && previous.fullInMs > 0 -> previous.fullInMs
+                else -> runCatching { manager.computeChargeTimeRemaining() }.getOrDefault(-1L)
+            }
+            battery = Battery(percent, charging, fullIn).also { last = it }
         }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, intent: Intent) = read(intent)

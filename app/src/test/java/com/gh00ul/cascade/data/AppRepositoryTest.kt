@@ -198,6 +198,33 @@ class AppRepositoryTest {
         assertEquals(listOf(folderKey("1")), prefs.settings.value.favorites)
     }
 
+    /**
+     * A moved app's settings are stored without the repository's lock held: a settings change on the main thread holds
+     * Prefs' lock while its collectors refresh, which takes the repository's, so the other order could deadlock.
+     */
+    @Test fun aMoveIsStoredWithoutTheListLockHeld() {
+        FakeLauncherApps.install(context, "Alpha", "Bravo")
+        val repo = repository(favorites = listOf(key("Alpha")))
+        scheduler.advanceUntilIdle()
+        // By reflection: it's private, and Thread.holdsLock needs the object itself.
+        val lock: Any = AppRepository::class.java.getDeclaredField("lock").apply { isAccessible = true }.get(repo)!!
+        val heldWhileStoring = Collections.synchronizedList(mutableListOf<Boolean>())
+        // Unconfined, so it runs inside each update, on the thread storing it.
+        val watcher = CoroutineScope(Dispatchers.Unconfined).launch {
+            prefs.settings.drop(1).collect { heldWhileStoring.add(Thread.holdsLock(lock)) }
+        }
+
+        FakeLauncherApps.uninstallAll()
+        FakeLauncherApps.install(context, "Bravo")
+        val alias = FakeLauncherApps.installActivity(context, "Alpha", "${FakeLauncherApps.pkg("Alpha")}.Alias")
+        repo.refresh(FakeLauncherApps.pkg("Alpha"))
+        scheduler.advanceUntilIdle()
+        watcher.cancel()
+
+        assertEquals(listOf("${alias.componentName.flattenToString()}#$serial"), prefs.settings.value.favorites)
+        assertTrue("held while storing: $heldWhileStoring", heldWhileStoring.isNotEmpty() && true !in heldWhileStoring)
+    }
+
     @Test fun everyIconPublishHasAllTheFavorites() = runBlocking<Unit> {
         val favorites = (0 until 6).toList()
         val rendered = ConcurrentHashMap.newKeySet<Int>()

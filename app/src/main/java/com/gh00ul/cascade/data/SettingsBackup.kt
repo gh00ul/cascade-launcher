@@ -70,7 +70,14 @@ object SettingsBackup {
         .toString(2)
 
     /** [current] with every field the backup carries replaced; null when [json] isn't a Cascade settings backup. */
-    fun decode(json: String, current: LauncherSettings): LauncherSettings? {
+    fun decode(json: String, current: LauncherSettings): LauncherSettings? = parse(json)?.invoke(current)
+
+    /**
+     * The slow half of [decode]: parses [json] and returns the merge, which puts the backup onto the settings it's given
+     * as [decode] does, without parsing anything again. A restore parses off the main thread, then merges onto the
+     * latest settings inside the Prefs update. Null when [json] isn't a Cascade settings backup.
+     */
+    fun parse(json: String): ((LauncherSettings) -> LauncherSettings)? {
         val root = try {
             JSONObject(json)
         } catch (_: JSONException) {
@@ -79,16 +86,23 @@ object SettingsBackup {
         // Any version from 1 up loads; a newer build's extra keys are ignored.
         val version = root.opt(VERSION_KEY) as? Number ?: return null
         if (version.toDouble() < 1) return null
+        // The lists, maps and nested objects now; the merge only looks up single values.
         val favorites = root.strings("favorites")?.distinct()
-        return LauncherSettings(
+        val hidden = root.strings("hidden")?.toCollection(LinkedHashSet())
+        // Same rule as Prefs.rename: blank labels mean no rename.
+        val renames = (root.opt("renames") as? JSONObject)?.let { obj ->
+            buildMap<String, String> {
+                for (key in obj.keys()) (obj.opt(key) as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let { put(key, it) }
+            }
+        }
+        val place = root.opt("weatherPlace")
+        val restoredPlace = (place as? JSONObject)?.let { parsePlace(it.toString()) }
+        val folders = (root.opt("folders") as? JSONObject)?.let { parseFolders(it.toString()) }
+        val builtIns = root.strings("widgetStack")?.filter { it == WIDGET_CALENDAR || it == WIDGET_WEATHER }?.distinct()
+        return { current -> LauncherSettings(
             favorites = favorites ?: current.favorites,
-            hidden = root.strings("hidden")?.toCollection(LinkedHashSet()) ?: current.hidden,
-            // Same rule as Prefs.rename: blank labels mean no rename.
-            renames = (root.opt("renames") as? JSONObject)?.let { obj ->
-                buildMap<String, String> {
-                    for (key in obj.keys()) (obj.opt(key) as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let { put(key, it) }
-                }
-            } ?: current.renames,
+            hidden = hidden ?: current.hidden,
+            renames = renames ?: current.renames,
             showIcons = root.bool("showIcons") ?: current.showIcons,
             monochromeIcons = root.bool("monochromeIcons") ?: current.monochromeIcons,
             showNotificationPreviews = root.bool("showNotificationPreviews") ?: current.showNotificationPreviews,
@@ -117,20 +131,19 @@ object SettingsBackup {
             batteryAlways = root.bool("batteryAlways") ?: current.batteryAlways,
             showWeather = root.bool("showWeather") ?: current.showWeather,
             // Null is a value here (no place picked), not a missing key; a malformed or out-of-range place is skipped.
-            weatherPlace = when (val place = root.opt("weatherPlace")) {
+            weatherPlace = when (place) {
                 JSONObject.NULL -> null
-                is JSONObject -> parsePlace(place.toString()) ?: current.weatherPlace
+                is JSONObject -> restoredPlace ?: current.weatherPlace
                 else -> current.weatherPlace
             },
             tempUnit = root.enum("tempUnit", TempUnit.entries) ?: current.tempUnit,
             resumePrompt = root.bool("resumePrompt") ?: current.resumePrompt,
-            folders = (root.opt("folders") as? JSONObject)?.let { parseFolders(it.toString()) } ?: current.folders,
+            folders = folders ?: current.folders,
             // The current app widgets stay (they're this install's, bound and set up), and the backup's own widgets
             // replace the rest, as many as fit: a configured widget is never pushed off the stack.
-            widgetStack = root.strings("widgetStack")?.let { restored ->
+            widgetStack = builtIns?.let { restored ->
                 val apps = current.widgetStack.filter { it.startsWith(WIDGET_APP_PREFIX) }
-                val builtIns = restored.filter { it == WIDGET_CALENDAR || it == WIDGET_WEATHER }.distinct()
-                builtIns.take((MAX_STACK_WIDGETS - apps.size).coerceAtLeast(0)) + apps
+                restored.take((MAX_STACK_WIDGETS - apps.size).coerceAtLeast(0)) + apps
             } ?: current.widgetStack,
             searchCalculator = root.bool("searchCalculator") ?: current.searchCalculator,
             // Only with the permission still to ask for: restoring can't grant it.
@@ -147,7 +160,7 @@ object SettingsBackup {
             // keeps its current value only if the backup's other mode is off, rather than leave both on.
             secondLetters = root.bool("secondLetters") ?: (current.secondLetters && root.bool("stripApps") != true),
             stripApps = root.bool("stripApps") ?: (current.stripApps && root.bool("secondLetters") != true),
-        )
+        ) }
     }
 
     /** Short text for the restore confirmation: what applying [restored] replaces in [current]. */

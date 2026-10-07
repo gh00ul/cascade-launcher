@@ -309,9 +309,9 @@ internal fun BackupPage(nav: SettingsNav) {
         }
     }
     // The picked backup, saved so a rotation or theme switch mid-read or mid-confirmation doesn't drop it; the
-    // file's text and what it restores to are read again from it.
+    // parsed backup and what it restores to are read again from it.
     var pendingUri by rememberSaveable { mutableStateOf<Uri?>(null) }
-    var pending by remember { mutableStateOf<Pair<String, LauncherSettings>?>(null) }
+    var pending by remember { mutableStateOf<Pair<(LauncherSettings) -> LauncherSettings, LauncherSettings>?>(null) }
     val restoreRequest = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) pendingUri = uri
     }
@@ -322,20 +322,23 @@ internal fun BackupPage(nav: SettingsNav) {
             runCatching { context.contentResolver.openInputStream(uri)?.use { it.readTextAtMost(BACKUP_MAX_BYTES) } }
                 .getOrNull()
         }
-        // Off the main thread too: org.json recurses, so a pathologically nested file could overflow the stack.
-        val preview = text?.let {
-            withContext(Dispatchers.Default) { runCatching { SettingsBackup.decode(it, prefs.settings.value) }.getOrNull() }
+        // Off the main thread too: org.json recurses, so a pathologically nested file could overflow the stack. Parsed
+        // once, here: Restore only merges the result onto the settings as they are then.
+        val parsed = text?.let {
+            withContext(Dispatchers.Default) {
+                runCatching { SettingsBackup.parse(it)?.let { merge -> merge to merge(prefs.settings.value) } }.getOrNull()
+            }
         }
         when {
             text == null -> {
                 Toast.makeText(context, "Couldn't read that file", Toast.LENGTH_SHORT).show()
                 pendingUri = null
             }
-            preview == null -> {
+            parsed == null -> {
                 Toast.makeText(context, "That file isn't a Cascade settings backup", Toast.LENGTH_SHORT).show()
                 pendingUri = null
             }
-            else -> pending = text to preview
+            else -> pending = parsed
         }
     }
     val closeRestore = { pendingUri = null; pending = null }
@@ -371,15 +374,16 @@ internal fun BackupPage(nav: SettingsNav) {
         }
     }
 
-    pending?.let { (json, preview) ->
+    pending?.let { (merge, preview) ->
         AlertDialog(
             onDismissRequest = closeRestore,
             title = { Text("Restore settings?") },
             text = { Text(SettingsBackup.summary(settings, preview)) },
             confirmButton = {
                 TextButton(onClick = {
-                    // Merged again onto the latest settings, in one write.
-                    prefs.update { SettingsBackup.decode(json, it) ?: it }
+                    // Merged again onto the latest settings, in one write; the file isn't parsed again, so Prefs' lock
+                    // is held on the main thread only for the merge.
+                    prefs.update(merge)
                     Toast.makeText(context, "Settings restored", Toast.LENGTH_SHORT).show()
                     closeRestore()
                 }) { Text("Restore") }

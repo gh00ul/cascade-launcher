@@ -2,6 +2,10 @@ package com.gh00ul.cascade.data
 
 import android.app.Application
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -33,6 +37,32 @@ class PrefsTest {
             threads.forEach { it.join() }
             assertEquals("Round $round", prefs.settings.value, Prefs(context).settings.value)
         }
+    }
+
+    /**
+     * A collector that runs inside the update that set it off (as Main.immediate ones do for an update on the main
+     * thread) and updates again: its newer state is the one stored, not the one before it.
+     */
+    @Test fun anUpdateFromInsideAnUpdateIsStoredLast() {
+        val prefs = Prefs(context)
+        // Unconfined, so it runs inside the outer update, on this thread, with Prefs' lock held.
+        val watcher = CoroutineScope(Dispatchers.Unconfined).launch {
+            prefs.settings.drop(1).collect { if (!it.haptics) prefs.update { s -> s.copy(haptics = true, showDate = false) } }
+        }
+        prefs.update { it.copy(haptics = false) }
+        watcher.cancel()
+
+        val latest = LauncherSettings(haptics = true, showDate = false)
+        assertEquals(latest, prefs.settings.value)
+        assertEquals(latest, Prefs(context).settings.value)
+    }
+
+    /** The stack's editors move widgets by their place among the ones it shows, so anything else never loads. */
+    @Test fun onlyWidgetsTheStackShowsLoad() {
+        context.getSharedPreferences("launcher", Context.MODE_PRIVATE).edit()
+            .putString("widget_stack", """["clock","calendar","app:seven","app:7","weather","app:","app:9","app:12"]""")
+            .commit()
+        assertEquals(listOf(WIDGET_CALENDAR, "app:7", WIDGET_WEATHER, "app:9"), Prefs(context).settings.value.widgetStack)
     }
 
     @Test fun defaultsWhenNothingIsStored() {

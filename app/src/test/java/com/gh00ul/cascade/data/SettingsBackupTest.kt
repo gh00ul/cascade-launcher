@@ -81,6 +81,16 @@ class SettingsBackupTest {
         assertEquals(current.copy(showIcons = false, favorites = listOf("x"), favoritesSeeded = true), restored)
     }
 
+    /** Restore parses the file before the confirmation and merges it when tapped: a change made in between stays. */
+    @Test fun aParsedBackupMergesOntoTheSettingsAsTheyAreThen() {
+        val merge = SettingsBackup.parse("""{"cascadeSettingsVersion":1,"showIcons":false,"widgetStack":["weather","clock"]}""")!!
+        // Changed after the file was read: another setting, and an app widget added.
+        val later = full.copy(showIcons = true, haptics = true, widgetStack = listOf("app:3", WIDGET_CALENDAR))
+        assertEquals(later.copy(showIcons = false, widgetStack = listOf(WIDGET_WEATHER, "app:3")), merge(later))
+        assertNull(SettingsBackup.parse("not json"))
+        assertNull(SettingsBackup.parse("""{"showIcons":false}"""))
+    }
+
     @Test fun aBackupFromBeforeAppNamesDoesntLeaveBothStripModesOn() {
         // Second letters on, and no App names at all: restored over App names, App names goes off.
         val old = JSONObject(SettingsBackup.encode(LauncherSettings(secondLetters = true))).apply { remove("stripApps") }.toString()

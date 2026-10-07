@@ -175,7 +175,7 @@ class AppRepository(
 ) {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
     private val userManager = context.getSystemService(UserManager::class.java)
-    /** The list the last reload installed; null until the first. Written under [lock]. */
+    /** The list the last reload installed; null until the first. Written by [install], under [lock]. */
     @Volatile private var installed: List<InstalledApp>? = null
 
     private val _apps = MutableStateFlow<List<AppEntry>>(emptyList())
@@ -189,9 +189,12 @@ class AppRepository(
     val icons: StateFlow<Map<String, IconImage>> = _icons.asStateFlow()
 
     private var loadJob: Job? = null
+    /** Held only briefly, never over a binder call or a Prefs update: the main thread waits for it (see [install]). */
     private val lock = Any()
     /** Bumped by every refresh; a load job only writes shared state while its own is current. Guarded by [lock]. */
     private var generation = 0
+    /** One reload's install and moved keys at a time. Only reload jobs take it; never taken under [lock] or Prefs'. */
+    private val retargetLock = Any()
     /** Whether [registerForChanges] has run. Guarded by [callback]. */
     private var registered = false
 
@@ -278,7 +281,7 @@ class AppRepository(
                     .filter { it.componentName.packageName != context.packageName }
                     .map { async { InstalledApp("${it.componentName.flattenToString()}#$serial", it.label.toString(), it, other, managed) } }
             }.awaitAll()
-            if (!ifCurrent(gen) { retargetMovedKeys(installed, list); installed = list }) return@launch
+            if (!install(list, gen)) return@launch
             seedFavorites(list)
             index.join()
             // The favorites' icons render while the list sorts, and go out after it.
@@ -325,6 +328,27 @@ class AppRepository(
     }
 
     /**
+     * Installs [list] unless a newer refresh has started since generation [gen], and moves the settings of apps whose
+     * launcher activity it replaced; returns whether it installed.
+     *
+     * Neither the moves' PackageManager calls nor their Prefs update run under [lock]: a settings change on the main
+     * thread holds Prefs' lock while its collectors refresh, which takes [lock], so the other order deadlocked.
+     * [retargetLock] keeps the look at the previous list, the install and the moves together instead, so the next
+     * reload, which diffs against this list, finds this one's moves stored.
+     */
+    private fun install(list: List<InstalledApp>, gen: Int): Boolean {
+        synchronized(retargetLock) {
+            // Every install takes this lock, so [installed] is still the list these moves are worked out from.
+            val moves = movedKeys(installed, list)
+            if (!ifCurrent(gen) { installed = list }) return false
+            // Stored even if a newer refresh starts now: it diffs against this list, so it needs them in. Apps in
+            // folders follow too. A rename the new entry already has wins over the carried-over one.
+            if (moves.isNotEmpty()) prefs.update { s -> s.withMovedApps(moves) }
+        }
+        return true
+    }
+
+    /**
      * Sorts [list] with the current renames and publishes it, unless a newer list was installed since or (with [gen])
      * a newer refresh started. A rename that lands meanwhile sorts it again, so a reload's list always goes out before
      * its icons. Returns the published entries, or null when superseded.
@@ -359,17 +383,18 @@ class AppRepository(
         }
 
     /**
-     * Keeps favorites, folder places, hidden flags and renames when an app's launcher activity is replaced: icon
-     * pickers (Telegram, Signal) swap activity-aliases, and updates can rename the activity. [old] is the previous list.
+     * The keys to move so favorites, folder places, hidden flags and renames stay with an app whose launcher activity
+     * was replaced: icon pickers (Telegram, Signal) swap activity-aliases, and updates can rename the activity. [old] is
+     * the previous list. Old key to new; empty when nothing moved.
      */
-    private fun retargetMovedKeys(old: List<InstalledApp>?, new: List<InstalledApp>) {
+    private fun movedKeys(old: List<InstalledApp>?, new: List<InstalledApp>): Map<String, String> {
         val settings = prefs.settings.value
         val live = new.mapTo(HashSet()) { it.key }
         // Folder entries in the favorites aren't apps: never stale, never moved.
         val gestureApps = listOfNotNull(settings.swipeDownApp, settings.doubleTapApp)
         val stale = (settings.favorites + settings.folders.values.flatMap { it.apps } + settings.hidden + settings.renames.keys + gestureApps)
             .filterTo(HashSet()) { it !in live && !isFolderKey(it) }
-        if (stale.isEmpty()) return
+        if (stale.isEmpty()) return emptyMap()
         // The same app in the same profile: "pkg/cls#serial" -> "pkg#serial".
         fun owner(key: String) = key.substringBefore('/') + "#" + key.substringAfterLast('#')
         val newByOwner = new.groupBy { owner(it.key) }
@@ -390,9 +415,7 @@ class AppRepository(
             } ?: continue
             moves[key] = target.key
         }
-        if (moves.isEmpty()) return
-        // Apps in folders follow too. A rename the new entry already has wins over the carried-over one.
-        prefs.update { s -> s.withMovedApps(moves) }
+        return moves
     }
 
     /** First run: start the home screen with the default phone, messages, browser, camera and gallery apps. */

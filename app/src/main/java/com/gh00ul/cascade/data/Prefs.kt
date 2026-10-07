@@ -5,7 +5,6 @@ import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.updateAndGet
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -142,8 +141,14 @@ class Prefs(context: Context) {
     /**
      * Changes the settings and stores them. One at a time: the app list's worker and the widget prune update from other
      * threads, and two updates writing out of order would store the older state last, losing the newer on a restart.
+     * Stored before it's published: publishing can run a collector on this thread that updates again, and its newer
+     * state must be the one stored last.
      */
-    fun update(transform: (LauncherSettings) -> LauncherSettings) = synchronized(this) { write(state.updateAndGet(transform)) }
+    fun update(transform: (LauncherSettings) -> LauncherSettings) = synchronized(this) {
+        val next = transform(state.value)
+        write(next)
+        state.value = next
+    }
 
     fun toggleFavorite(key: String) = update {
         it.copy(favorites = if (key in it.favorites) it.favorites - key else it.favorites + key)
@@ -197,7 +202,8 @@ class Prefs(context: Context) {
         tempUnit = sp.getString(TEMP_UNIT, null)?.let { name -> TempUnit.entries.firstOrNull { it.name == name } } ?: TempUnit.AUTO,
         resumePrompt = sp.getBoolean(RESUME_PROMPT, true),
         folders = sp.getString(FOLDERS, null)?.let(::parseFolders) ?: emptyMap(),
-        widgetStack = sp.getString(WIDGET_STACK, null)?.let(::parseList)?.take(MAX_STACK_WIDGETS) ?: emptyList(),
+        // Only entries the stack can show: its editors move widgets by their place in that list, which must be this one.
+        widgetStack = sp.getString(WIDGET_STACK, null)?.let(::parseList)?.filter(::isStackWidget)?.take(MAX_STACK_WIDGETS) ?: emptyList(),
         searchCalculator = sp.getBoolean(SEARCH_CALCULATOR, true),
         searchContacts = sp.getBoolean(SEARCH_CONTACTS, false),
         swipeDownApp = sp.getString(SWIPE_DOWN_APP, null),

@@ -9,17 +9,22 @@ plugins {
 // Release builds pass -PappVersion=X.Y.Z from the git tag (see .github/workflows/build.yml).
 // Any other build is a dev build of the last v* tag: N commits after vX.Y.Z becomes "X.Y.Z-dev.N", whose
 // versionCode sits above that release and below the next one, so it installs over the release it came from.
-val describeOutput = runCatching {
+val describe = runCatching {
     providers.exec {
         commandLine("git", "describe", "--tags", "--long", "--match", "v[0-9]*.[0-9]*.[0-9]*", "--exclude", "*-*")
     }.standardOutput.asText.get().trim()
-}.getOrNull()
+}
+val describeOutput = describe.getOrNull()
 // No git or no release tag falls back to 0.0.1; a tag describe found but this can't parse is an error, not a silent downgrade.
 val describedTag = describeOutput?.let {
     Regex("""v(\d+\.\d+\.\d+)-(\d+)-g\p{XDigit}+""").matchEntire(it)
         ?: throw GradleException("Unexpected git describe output: $it (delete the malformed v* tag)")
 }?.groupValues
 val taggedVersion = findProperty("appVersion") as String?
+// Warned, not silent: a 0.0.1 build can't be installed over a release (adb install -r refuses the downgrade).
+if (taggedVersion == null && describeOutput == null) {
+    logger.warn("git describe found no v* tag (${describe.exceptionOrNull()?.message}): building as 0.0.1.")
+}
 val appVersion = taggedVersion ?: describedTag?.get(1) ?: "0.0.1"
 val devBuild = if (taggedVersion != null) 0 else describedTag?.get(2)?.toInt() ?: 0
 

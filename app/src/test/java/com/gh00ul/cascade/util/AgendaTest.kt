@@ -15,6 +15,7 @@ import com.gh00ul.cascade.testing.withFixedZone
 import com.gh00ul.cascade.ui.home.widgets.AgendaRow
 import com.gh00ul.cascade.ui.home.widgets.agendaRows
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -162,6 +163,25 @@ class AgendaTest {
         assertTrue(provider.queries.isEmpty())
     }
 
+    /**
+     * A read that fails, or gets no cursor back, is null, which the widget reports as an error; a clear calendar is
+     * empty, as it is without access (above). Before the fix both failures read as empty: "Nothing coming up".
+     */
+    @Test fun aFailedReadIsNullNotAClearCalendar() {
+        val app = RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(Manifest.permission.READ_CALENDAR)
+        val provider = Robolectric.setupContentProvider(FailingProvider::class.java, CalendarContract.AUTHORITY)
+        fun read() = withFixedZone { upcomingEvents(app, FIXED_NOW, days = 3, limit = 8) }
+
+        provider.answer = FailingProvider.Answer.ROWS
+        assertEquals(emptyList<AgendaEvent>(), read())
+        provider.answer = FailingProvider.Answer.THROW
+        assertNull(read())
+        provider.answer = FailingProvider.Answer.NO_CURSOR
+        assertNull(read())
+        assertEquals(3, provider.queries)
+    }
+
     /** [agenda] at [now] of [rows] in no particular order: the query's order mustn't matter. */
     private fun shape(rows: List<CalendarInstance>, now: Long = FIXED_NOW, days: Int = 3, limit: Int = 8) =
         agenda(rows.shuffled(java.util.Random(7)), now, days, limit, zone)
@@ -208,6 +228,30 @@ class AgendaTest {
             val columns = requireNotNull(projection)
             queries += Query(uri, columns.toList(), selection)
             return MatrixCursor(columns).apply { for (row in rows) addRow(columns.map { row[it] }) }
+        }
+
+        override fun getType(uri: Uri): String? = null
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?) = 0
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<String>?) = 0
+    }
+
+    /** Answers each query as [answer] says: no rows, a failure (the provider busy, or access just revoked), or no cursor. */
+    class FailingProvider : ContentProvider() {
+        enum class Answer { ROWS, THROW, NO_CURSOR }
+
+        var answer = Answer.THROW
+        var queries = 0
+
+        override fun onCreate() = true
+
+        override fun query(uri: Uri, projection: Array<String>?, selection: String?, selectionArgs: Array<String>?, sortOrder: String?): Cursor? {
+            queries++
+            return when (answer) {
+                Answer.ROWS -> MatrixCursor(requireNotNull(projection))
+                Answer.THROW -> throw IllegalStateException("The calendar provider is busy")
+                Answer.NO_CURSOR -> null
+            }
         }
 
         override fun getType(uri: Uri): String? = null

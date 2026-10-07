@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
+import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.os.Process
@@ -38,8 +39,9 @@ import org.robolectric.util.ReflectionHelpers
 
 /**
  * WidgetHost against a stand-in for the system's side of it: a widget whose setup screen outlives the process keeps its
- * id through home's prune for a day, and the setup's answer places or frees that id; the start right after the first
- * prune doesn't look the widgets up again; and a prune never frees an id an add is being handed.
+ * id through home's prune for a day, and the setup's answer places or frees that id (a record of the wrong type reads
+ * as none); the start right after the first prune doesn't look the widgets up again; and a prune never frees an id an
+ * add is being handed.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(
@@ -221,6 +223,23 @@ class WidgetHostTest {
 
         WidgetHost.onActivityResult(app, WidgetHost.REQUEST_CONFIGURE, Activity.RESULT_OK, null)
         assertEquals(emptyList<String>(), stack)
+    }
+
+    /**
+     * A setup record whose id isn't an Int (a hand-edited or restored file) reads as no record: a setup screen's answer
+     * after a process death finds nothing to place or free, and a prune frees an id nothing uses. Before the fix getInt
+     * threw ClassCastException out of both: out of MainActivity.onActivityResult, and out of home's create-time prune.
+     */
+    @Test fun aSetupRecordOfTheWrongTypeReadsAsNone() {
+        app.getSharedPreferences("widget_setup", Context.MODE_PRIVATE).edit().putString("id", "41").commit()
+        SystemWidgetHost.ids += 41
+
+        assertTrue(WidgetHost.onActivityResult(app, WidgetHost.REQUEST_CONFIGURE, Activity.RESULT_CANCELED, null))
+        assertEquals(emptyList<Int>(), SystemWidgetHost.deleted)
+        assertEquals(emptyList<String>(), stack)
+
+        awaitPrunes { WidgetHost.pruneOnce(app) }
+        assertEquals("The id nothing uses is freed", listOf(41), SystemWidgetHost.deleted)
     }
 
     /**

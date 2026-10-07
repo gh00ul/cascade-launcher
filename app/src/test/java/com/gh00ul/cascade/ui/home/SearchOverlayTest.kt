@@ -44,8 +44,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
- * Search's settings: opening a lone match as you type, the web row, apps left out of the results, the calculator's
- * answer, and contacts.
+ * Search's settings: opening a lone match as you type, the web row (and, without it, the line saying nothing matches),
+ * apps left out of the results, the calculator's answer, and contacts.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class)
@@ -177,6 +177,31 @@ class SearchOverlayTest {
         field.performTextReplacement("cam")
         field.performImeAction()
         assertEquals(listOf("Camera"), launched)
+    }
+
+    /**
+     * Without web search, a query nothing matches says so rather than leaving search blank. It fades in late (a spec
+     * delay), so contacts arriving just after don't flash it. Before the fix nothing showed at all.
+     */
+    @Test fun withoutWebSearchAQueryNothingMatchesSaysSo() {
+        show(searchWeb = false)
+        field.performTextInput("zzz")
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.onNodeWithText("No apps match “zzz”.").assertExists()
+        // A query an app matches takes it away.
+        field.performTextReplacement("cam")
+        compose.waitForIdle()
+        assertTrue(compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isNotEmpty())
+        compose.onNodeWithText("No apps match", substring = true).assertDoesNotExist()
+    }
+
+    /** With web search on, the web row is what a query nothing matches gets. */
+    @Test fun withWebSearchNothingSaysNoAppsMatch() {
+        show(searchWeb = true)
+        field.performTextInput("zzz")
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.onNodeWithText("Search the web", substring = true).assertExists()
+        compose.onNodeWithText("No apps match", substring = true).assertDoesNotExist()
     }
 
     @Test fun anAnswerTopsTheResultsAndATapCopiesIt() {

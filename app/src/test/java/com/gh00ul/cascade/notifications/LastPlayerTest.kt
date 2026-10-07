@@ -23,7 +23,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
-/** Listen mode's memory of the last player, and which outputs count as headphones. */
+/** Listen mode's memory of the last player (a bad stored record included), and which outputs count as headphones. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class)
 class LastPlayerTest {
@@ -52,6 +52,21 @@ class LastPlayerTest {
         shadowOf(Looper.getMainLooper()).idle()
         prefs.unregisterOnSharedPreferenceChangeListener(listener)
         assertEquals(1, writes)
+    }
+
+    /**
+     * A stored record that isn't a string (a hand-edited or restored file) reads as none, and the next track writes over
+     * it. Before the fix getString threw ClassCastException here, in Application.onCreate: home crashed on every launch.
+     */
+    @Test fun aRecordOfTheWrongTypeReadsAsNone() {
+        LastPlayer.init(context)
+        LastPlayer.played("com.spotify.music", "Intro", "The xx")
+        prefs.edit().putInt("last", 7).commit()
+        // A new process reads it back.
+        LastPlayer.init(context)
+        assertNull(LastPlayer.state.value)
+        LastPlayer.played("com.example.radio", "News", "")
+        assertEquals(LastPlayed("com.example.radio", "News", ""), LastPlayer.parse(prefs.getString("last", null).orEmpty()))
     }
 
     @Test fun aMalformedRecordIsDropped() {

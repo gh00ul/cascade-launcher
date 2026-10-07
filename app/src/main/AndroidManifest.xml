@@ -22,7 +22,8 @@
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <!-- enableOnBackInvokedCallback: the list, search and pop-ups follow a back gesture on Android 13 to 15 too; 16 does
-         it by default at target 36. -->
+         it by default at target 36. It's only read from Android 13 (tiramisu), hence tools:targetApi, which covers no
+         other attribute here: the rest are API 26 or older. -->
     <application
         android:name=".LauncherApplication"
         android:allowBackup="true"

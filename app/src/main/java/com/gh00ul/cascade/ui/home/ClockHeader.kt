@@ -380,10 +380,12 @@ private fun ChipText(text: String, trailing: String?, style: TextStyle, modifier
         val inline = measurables.getOrNull(1)
         when {
             inline == null -> main.measure(loose).let { only -> layout(only.width, only.height) { only.placeRelative(0, 0) } }
-            // Beside the text, leaving it at least a third of the line, or all it needs when that's less.
-            inline.maxIntrinsicWidth(constraints.maxHeight) <= width - minOf(main.maxIntrinsicWidth(constraints.maxHeight), width / 3) -> {
+            // Beside the text, leaving it at least a third of the line, or all it needs when that's less. With no width
+            // limit (an intrinsic measure) there's room for both.
+            !constraints.hasBoundedWidth ||
+                inline.maxIntrinsicWidth(constraints.maxHeight) <= width - minOf(main.maxIntrinsicWidth(constraints.maxHeight), width / 3) -> {
                 val end = inline.measure(loose)
-                val start = main.measure(loose.copy(maxWidth = width - end.width))
+                val start = main.measure(if (constraints.hasBoundedWidth) loose.copy(maxWidth = width - end.width) else loose)
                 layout(start.width + end.width, maxOf(start.height, end.height)) {
                     start.placeRelative(0, 0)
                     end.placeRelative(start.width, 0)

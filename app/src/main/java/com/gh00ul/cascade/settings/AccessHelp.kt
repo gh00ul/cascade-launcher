@@ -100,9 +100,10 @@ internal class NotificationAccessRequest(askedState: MutableState<Boolean>, help
         private set
 
     fun open(context: Context) {
-        // Only while it's off: coming back after turning it off on purpose needs no help.
-        asked = !LauncherActions.hasNotificationAccess(context)
-        LauncherActions.openNotificationAccess(context)
+        // Only while it's off (coming back after turning it off on purpose needs no help), and only a trip that opened
+        // the page.
+        val off = !LauncherActions.hasNotificationAccess(context)
+        asked = LauncherActions.openNotificationAccess(context) && off
     }
 
     fun dismissHelp() {

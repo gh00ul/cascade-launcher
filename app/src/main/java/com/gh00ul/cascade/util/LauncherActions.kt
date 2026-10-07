@@ -216,16 +216,16 @@ object LauncherActions {
     fun hasNotificationAccess(context: Context): Boolean =
         context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
 
-    fun openNotificationAccess(context: Context) {
+    fun openNotificationAccess(context: Context): Boolean {
         if (Build.VERSION.SDK_INT >= 30) {
             val component = ComponentName(context, NotificationListener::class.java).flattenToString()
             val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
                 .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component)
-            if (start(context, detail)) return
+            if (start(context, detail)) return true
         }
-        if (!start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))) {
-            Toast.makeText(context, "Couldn't open notification access settings", Toast.LENGTH_SHORT).show()
-        }
+        if (start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))) return true
+        Toast.makeText(context, "Couldn't open notification access settings", Toast.LENGTH_SHORT).show()
+        return false
     }
 
     /**

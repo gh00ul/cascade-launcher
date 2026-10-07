@@ -1,8 +1,8 @@
 package com.gh00ul.cascade.update
 
-import android.app.Activity
 import android.app.ActivityManager
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -152,44 +152,53 @@ object Updater {
         busy = true
         // LAST_CHECK is read on scope too: home's first check runs while its first frame is being composed.
         scope.launch {
-            // busy keeps install() out, so an APK here was left by a run that died mid-download.
-            File(app.cacheDir, APK_FILE).delete()
-            val prefs = prefs(app)
-            // Not getLong: a value of another type would throw, on a coroutine where nothing catches it.
-            if (!force && !autoCheckDue(now, prefs.all[LAST_CHECK] as? Long ?: 0L, lastAttempt, retryInterval)) {
+            try {
+                checkNow(app, now, force)
+            } finally {
                 busy = false
-                return@launch
             }
-            lastAttempt = now
-            _state.value = State.Checking
-            val installed = installedInfo(app)
-            val outcome = try {
-                readLatest(request(LATEST, "application/vnd.github+json"), PackageInfoCompat.getLongVersionCode(installed), now)
-            } catch (_: SSLException) {
-                // Usually a Wi-Fi sign-in page answering in GitHub's place.
-                CheckFailure("Couldn't connect to GitHub securely. If this Wi-Fi needs a sign-in, sign in and try again.", RETRY_INTERVAL_MS)
-            } catch (_: IOException) {
-                CheckFailure("Couldn't reach GitHub. Check your connection.", RETRY_INTERVAL_MS)
-            } catch (_: SecurityException) {
-                // What Android throws when Cascade's network access is blocked (a data restriction or a firewall app).
-                CheckFailure("Couldn't reach GitHub. Check your connection.", RETRY_INTERVAL_MS)
-            }
-            val result = when (outcome) {
-                is CheckAnswer -> {
-                    if (outcome.settled) prefs.edit { putLong(LAST_CHECK, now) }
-                    retryInterval = RETRY_INTERVAL_MS
-                    outcome.offer?.let { State.Available(it) } ?: State.UpToDate(installed.versionName.orEmpty())
-                }
-                is CheckFailure -> {
-                    retryInterval = outcome.retryMs
-                    State.Failed(outcome.message, null)
-                }
-            }
-            // A release the user hid stays hidden: home must know the stored tag before it sees the offer.
-            loadDismissed(prefs)
-            _state.value = result
-            busy = false
         }
+    }
+
+    /** The check itself, on [scope]; [check] has made sure it's the only one running. */
+    private fun checkNow(app: Context, now: Long, force: Boolean) {
+        // busy keeps install() out, so an APK here was left by a run that died mid-download.
+        File(app.cacheDir, APK_FILE).delete()
+        val prefs = prefs(app)
+        // Not getLong: a value of another type would throw, on a coroutine where nothing catches it.
+        if (!force && !autoCheckDue(now, prefs.all[LAST_CHECK] as? Long ?: 0L, lastAttempt, retryInterval)) return
+        lastAttempt = now
+        _state.value = State.Checking
+        val installed = installedInfo(app)
+        val outcome = try {
+            readLatest(request(LATEST, "application/vnd.github+json"), PackageInfoCompat.getLongVersionCode(installed), now)
+        } catch (_: SSLException) {
+            // Usually a Wi-Fi sign-in page answering in GitHub's place.
+            CheckFailure("Couldn't connect to GitHub securely. If this Wi-Fi needs a sign-in, sign in and try again.", RETRY_INTERVAL_MS)
+        } catch (_: IOException) {
+            CheckFailure("Couldn't reach GitHub. Check your connection.", RETRY_INTERVAL_MS)
+        } catch (_: SecurityException) {
+            // What Android throws when Cascade's network access is blocked (a data restriction or a firewall app).
+            CheckFailure("Couldn't reach GitHub. Check your connection.", RETRY_INTERVAL_MS)
+        } catch (e: RuntimeException) {
+            // The platform's HTTP stack (okhttp inside) can throw unchecked exceptions of its own. A background check
+            // runs on a scope with no handler, where one would crash home, and again on every return home after.
+            CheckFailure("Couldn't check for updates (${e.javaClass.simpleName}).", RETRY_INTERVAL_MS)
+        }
+        val result = when (outcome) {
+            is CheckAnswer -> {
+                if (outcome.settled) prefs.edit { putLong(LAST_CHECK, now) }
+                retryInterval = RETRY_INTERVAL_MS
+                outcome.offer?.let { State.Available(it) } ?: State.UpToDate(installed.versionName.orEmpty())
+            }
+            is CheckFailure -> {
+                retryInterval = outcome.retryMs
+                State.Failed(outcome.message, null)
+            }
+        }
+        // A release the user hid stays hidden: home must know the stored tag before it sees the offer.
+        loadDismissed(prefs)
+        _state.value = result
     }
 
     fun install(context: Context, release: Release) {
@@ -263,11 +272,14 @@ object Updater {
         heldConfirm = null
         // No session means the install finished or was canceled; its result broadcast says which.
         if (context.packageManager.packageInstaller.getSessionInfo(held.sessionId) == null) return
-        val confirm = Intent(held.intent)
-        if (context !is Activity) confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Its own task, as the receiver starts it: in home's task (singleTask, cleared on launch) a Home press would
+        // finish it, which the installer takes for a refusal.
+        val confirm = Intent(held.intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
             context.startActivity(confirm)
-        } catch (_: RuntimeException) {
+        } catch (_: ActivityNotFoundException) {
+            _state.value = State.Failed("Tap Try again to finish installing.", installing.release)
+        } catch (_: SecurityException) {
             _state.value = State.Failed("Tap Try again to finish installing.", installing.release)
         }
     }
@@ -276,7 +288,9 @@ object Updater {
      * Android asked for [confirm] to be shown for [sessionId]'s install, and the receiver is about to start it. While
      * Cascade is in front Android lets it, so nothing is held: holding it then would show it again when home resumes
      * after the user confirms, while the install runs. Otherwise the start may be blocked, so it's held for
-     * [showPendingConfirm]. A process started after Cascade died learns of the install here.
+     * [showPendingConfirm]. Android doesn't always block it (the lock service exempts Cascade, say), so the screen can
+     * then come up a second time on the next return home, once; that beats an install left waiting on a screen nobody
+     * saw. A process started after Cascade died learns of the install here.
      */
     internal fun awaitingConfirm(sessionId: Int, confirm: Intent, release: Release?) {
         if (release != null && _state.value !is State.Installing) _state.value = State.Installing(release)
@@ -360,10 +374,18 @@ object Updater {
         }
     }
 
-    /** The bytes Cascade can have where [file] goes, counting cached files Android would clear to make room. */
+    /**
+     * The bytes Cascade can have where [file] goes, counting cached files Android would clear to make room. Unknown
+     * (as much as asked) when the storage can't say: the download then just tries, rather than an update failing for
+     * good on a question about space.
+     */
     private fun allocatableBytes(context: Context, file: File): Long {
         val storage = context.getSystemService(StorageManager::class.java)
-        return storage.getAllocatableBytes(storage.getUuidForPath(file.parentFile ?: context.cacheDir))
+        return try {
+            storage.getAllocatableBytes(storage.getUuidForPath(file.parentFile ?: context.cacheDir))
+        } catch (_: IOException) {
+            Long.MAX_VALUE
+        }
     }
 
     /** Refuse anything that isn't a newer Cascade signed with the installed key, with a message that says why. */

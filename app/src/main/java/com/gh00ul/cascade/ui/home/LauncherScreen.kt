@@ -849,10 +849,9 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                                         title = "See notifications beside your apps",
                                         body = "Allow notification access to show a dot and the latest message under each favorite.",
                                         action = "Allow",
-                                        onAction = {
-                                            accessAsked = true
-                                            LauncherActions.openNotificationAccess(context)
-                                        },
+                                        // Only a trip that opened the page counts: otherwise the help would pop up on
+                                        // some later, unrelated return home.
+                                        onAction = { accessAsked = LauncherActions.openNotificationAccess(context) },
                                         onDismiss = { launcher.prefs.update { it.copy(notificationPromptDismissed = true) } },
                                     )
                                     // Full width, so a card coming or going only animates its height.

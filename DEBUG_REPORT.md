@@ -2,7 +2,29 @@
 
 Branch `hardening/debug-pass`, started 2026-10-06 from `main` at v0.18.0 (08731b0).
 
-<!-- SUMMARY: filled in at the end (Phase 8) -->
+## Summary
+
+- [x] **Phase 1, map:** one module, Compose, no DI/Room/network library. No secrets, no logging. Data map and
+  dependency inventory below.
+- [x] **Phase 2, build health:** lint went from 4 errors and 40 code warnings to 0 and 0. Gradle 8.14.5, AGP 8.13.2,
+  Kotlin 2.2.21. Bigger upgrades are deferred, with reasons. R8 needs no new keep rules.
+- [x] **Phase 3, crash hunt:** 6 audits, 16 fixes. The serious ones were an **ANR deadlock** (Prefs vs app list), the
+  **listen-mode fallback opening an app over another app**, and a **widget lost across a process death**. No crash on
+  a normal path was found.
+- [ ] **Phase 4, on-device:** **skipped.** The S25 Ultra was never connected (only the Tab S7 briefly). Debug builds now
+  log StrictMode. There is a 14-item phone checklist below.
+- [x] **Phase 5, data and network:** 17 fixes. Top items: the **updater said "Up to date" on any HTTP error** (rate
+  limits blocked updates for 6 h), **restoring an old backup deleted your folders**, an install could get **stuck on
+  "Installing"**, and silent failures now say what went wrong.
+- [x] **Phase 6, tests:** 424 → 521 unit tests, all passing. Regression tests were proven against the old code. Writing
+  them caught 2 of our own mistakes, both fixed.
+- [x] **Phase 7, UI polish:** large-font clipping fixed on home, widgets, menus, strip and Settings; no Settings flash.
+  98 new 2x shots, and all 142 old shots byte-identical.
+- [ ] **Phase 8, review:** an independent reviewer is auditing the full diff; its findings get fixed before release.
+- **Needs you:** the Auto Backup scope decision, and a run of the phone checklist.
+
+Every bug is listed below with severity, root cause, fix, files, the agent that found it, and how it was verified.
+
 
 ## Phase 1: project map
 
@@ -167,3 +189,183 @@ Left on purpose:
 
 Verified: debug and release build, lint clean (only the dependency-version warnings left on purpose), 431 unit tests
 pass (7 new), and all 142 Robolectric screenshots are byte-identical to v0.18.0's.
+
+## Phase 4: runtime verification — skipped (no device)
+
+The Device Agent ran `adb devices -l` twice. The first time, only the owner's Galaxy Tab S7 (`R52T105KRGA`, Android 13,
+Cascade 0.9.0, not the default home) was attached. Per the owner's notes that tablet isn't the target and is left
+alone. The second time nothing was attached. The S25 Ultra was never connected, and no emulator was running (the one
+AVD stopped booting earlier today and wasn't started, per the rules). So nothing was installed, no logcat was captured,
+and no rotation, background/foreground, process-death or permission-denial tests ran.
+
+What stands in for it:
+- Debug builds now log StrictMode violations (thread and VM policies, `penaltyLog`), ready for the next device run.
+- Robolectric unit tests, including lifecycle-driven ones (`ClockHeaderLifecycleTest`, `ListenModeTest` with a paused
+  recomposer, `MotionSettleTest`).
+- The JVM screenshot harness: 142 shots before and after every phase, compared byte for byte.
+
+The on-device checklist is under "Not verified on a device" in the summary.
+
+## Phase 5: data and network
+
+Three read-only audits (Persistence, Network, Error UX: 73 error paths walked), then four fix agents with disjoint
+files: Network (updater, weather), Persistence (settings, restore, widget add), Settings/permission copy, and home/actions
+copy. Cross-agent calls were fixed as exact signatures up front (`HttpStatusException`, `Updater.showPendingConfirm`,
+`NotificationAccessHelp`).
+
+| # | Severity | Bug | Root cause | Fix | Files | Found by | Verified |
+|---|---|---|---|---|---|---|---|
+| 1 | High | "Up to date" when GitHub rate-limits (403/429) or fails (5xx), and no check for 6 h | Android's HttpURLConnection throws FileNotFoundException for every status ≥ 400; the code took it for 404 and wrote the last-check time | Status read first; per-status messages and retry waits (rate limit 30–61 min from GitHub's headers); last-check written only after a parsed answer | `Updater.kt` | Data Layer, Network, Error UX | `UpdaterTest`: every status row, header parsing, intervals, a fake connection |
+| 2 | Medium | Update stuck on "Installing" | Android can silently block the confirm screen started from the install broadcast while home is away | Confirmation held and reopened on home's next resume; only when Cascade wasn't in front | `Updater.kt`, `LauncherScreen.kt` | Network | Needs device |
+| 3 | Medium-low | A cancelled or blocked install after a process restart showed nothing on home | The fresh process lost the release | The release rides on the install's result intent | `Updater.kt` | Architecture, Network | `UpdaterTest` (`releaseOf`); needs device |
+| 4 | Low | Raw exception text on the update card ("Unable to resolve host…", "ENOSPC…"), a cut-off download called "not a valid APK", copy naming a "Update" button that doesn't exist, uninstall advice that would wipe the setup | Messages taken from exceptions; no size/space checks | Status-aware messages, free-space (allocatable) and completeness checks, size caps, "Try again" wording, Backup & restore before any uninstall | `Updater.kt` | Error UX, Network | `UpdaterTest` |
+| 5 | Low | Connections left open; partial `update.apk` and uncommitted sessions left by a crash | No `disconnect()`; no cleanup | `finally { disconnect() }`; cleanup at the next check / install | `Updater.kt` | Data Layer, Network | Review |
+| 6 | Medium | Restoring a backup from before folders (v0.6–v0.8) deleted the current folders | Favorites restored without folder keys while folders were kept; the next edit tidied the orphans away | Favorites and folders restore as one unit; summary names folders | `SettingsBackup.kt` | Data Layer, Persistence | `SettingsBackupTest` |
+| 7 | Low | A restored field with only wrong-typed entries wiped the current value | Filtering left an empty list | Skip a field with entries but none valid; gesture apps of the wrong type keep the current app | `SettingsBackup.kt` | Data Layer, Persistence | `SettingsBackupTest` |
+| 8 | Low-medium (latent) | One wrong-typed stored value would crash home on every launch | Typed getters throw ClassCastException in `Application.onCreate` | Type-checked reads via `sp.all` (Prefs, last player, widget setup, updater, weather) | `Prefs.kt`, `LastPlayer.kt`, `WidgetHost.kt`, `Updater.kt`, `Weather.kt` | Data Layer, Persistence | `PrefsTest` |
+| 9 | Low | Weather widget said "shows here once it has loaded" forever when offline; place search said "check your connection" for server errors; a superseded search ran on for 20 s | Failure state was private; no status type; blocking read ignored cancellation | `Weather.failedFor`, `HttpStatusException`, disconnect on cancel | `Weather.kt`, `Http.kt`, `WeatherWidget.kt`, `LookPages.kt` | Network, Error UX | `WeatherTest` |
+| 10 | Medium | Notification access greyed out as a "restricted setting" (sideloaded install) with no explanation | Only the lock dialog explained it | Back from Allow with access still off (13+): a dialog explaining App info > ⋮ > Allow restricted settings, on home and in Settings | `AccessHelp.kt`, `MainPage.kt`, `MorePages.kt`, `LauncherScreen.kt` | Permissions, Error UX | Needs device |
+| 11 | Low | Closing the first permission dialog counted as "blocked" | No rationale before or after looks like a block | Blocked only after an earlier refusal (remembered per permission) or a second silent refusal | `PermissionPrompt.kt`, `LookPages.kt`, `MorePages.kt`, `CalendarWidget.kt` | Permissions, Error UX | Needs device |
+| 12 | Low | Silent failures: App info, Uninstall, calendar, Accessibility, notification access, home-app setting; the role request could crash home if unhandled | `runCatching` / unchecked `start` results | A short message for each; Default apps fallback; guarded role request with a hint | `LauncherActions.kt`, `LauncherScreen.kt`, `MainPage.kt` | Permissions, Error UX | Test agent 3 |
+| 13 | Low | Settings summaries promised the calendar without access and double-tap lock with the service off; a failed check read "update didn't finish" | Summaries read only the setting | Read access / service state / failure kind | `MainPage.kt` | Error UX | Test agent 3 |
+| 14 | Low | A calendar read error looked like an empty calendar | `getOrNull().orEmpty()` | Null on failure; the widget says it couldn't read | `Calendar.kt`, `CalendarWidget.kt` | Error UX | Test agent 3 |
+| 15 | Low | Adding a widget did nothing when no id could be had or the bind dialog wouldn't open | `begin()` returned null for both bound and failed | `Begin` result type; "Couldn't add the widget" | `WidgetHost.kt`, `WidgetPicker.kt` | Error UX | Review |
+| 16 | Low | Backup save could fail on providers rejecting "wt"; an oversized restore file said "couldn't read" | — | "wt" then "w"; "isn't a Cascade settings backup" | `MorePages.kt` | Persistence, Error UX | Needs device (Drive) |
+| 17 | Low | Search with nothing matching (web search off) showed a blank list | No empty state | "No apps match “…”." after a 300 ms spec delay | `SearchOverlay.kt` | Error UX | Test agent 3 |
+
+Lead review changes: removed the network agent's confirm-intent action check (it adds nothing, since the receiver isn't
+exported and only Android holds the PendingIntent, and it would silently break self-update on an OEM that used another
+action name); made the permission helper treat a second silent refusal as a block (so a permission permanently denied
+before this build still leads to App info).
+
+Left on purpose, with reasons:
+- Setting aside unparseable JSON values (Persistence option 2): adds keys and complexity to every settings write, for a
+  corruption only this code could produce; the Backup page is the safety net.
+- Logging persistence failures: the app deliberately has no logging; added nothing.
+- "Android may hide some login codes" note on the setting: true on Pixel with Android 15+, unverified on One UI;
+  no copy added until it's confirmed on the phone.
+- Auto Backup scope: the owner's privacy decision (see "Decisions for you").
+
+## Phase 6: tests
+
+Unit tests went from 424 to 521, all passing (`./gradlew testDebugUnitTest`, run by the lead only). They came from three
+test-writing agents (by module) and from the fix agents' own focused tests:
+
+| Area | Tests added | Highlights |
+|---|---|---|
+| Home UI (test agent 1) | 14 | Dialogs and the widget sheet through activity recreation; the folder dialog's focus; a keyless favorites child; weather hours on return; the battery estimate's binder calls; the Settings stack restore |
+| Widgets, notifications, intents (test agent 2) | 13 | Widget setups across a process death (record, answer, cancel, one prune per cold start, allocation race) with a custom widget-host shadow; the listener rebind; background-start mode per Android version; NaN launch bounds |
+| Phase 5 fixes (test agent 3) | ~35 | The permission prompt (truth table and real dialog flows); every action that can't open says so; Settings summaries; calendar read errors; "No apps match"; wrong-typed stored values; "Couldn't add the widget" |
+| Fix agents | ~35 | Updater status mapping, rate-limit waits, last-check writes and a fake connection; weather failure state and cancellation; restore folder/type rules; every setting differs from its default in the round-trip fixtures (reflection check); the lock-order and nested-update regressions |
+
+Proving the regression tests catch the bugs: `ListenModeTest.leavingHomeCancelsTheFallback` was run against the old
+LauncherScreen code and failed, and all six `HomeDialogsTest` dialog tests were run against the old `Dialogs.kt` and
+failed with exactly the bugs (typed text lost, no focus). Writing the tests also found two bugs the fixes had missed:
+- `SettingsStackRestoreTest` showed that Phase 3's Settings stack fix crashed with an NPE instead of starting over.
+- `PermissionPromptTest`'s author showed that a quick double tap on Allow loses the user's answer.
+
+Both are fixed.
+
+Instrumented tests: the project has no `androidTest` source set, no instrumentation runner and no Test Orchestrator /
+`clearPackageData` setting. `connectedAndroidTest` has nothing to run, and no device was connected anyway.
+
+## Phase 7: UI polish
+
+Three UI agents with disjoint screens: home cards and widgets; the list, search, strip and menus; Settings and themes.
+Each fixed issues the Resources audit listed and checked its own screens at One UI's largest font size. Nothing was
+redesigned. The proof is the screenshot harness: 98 new shots at 1.5x and 2x, rendered with Android's own nonlinear font
+scaling, and all 142 existing shots still byte-identical to v0.18.0 at the default size. One change that moved a
+checkmark by a few pixels was caught that way and reworked.
+
+| # | Severity | Issue | Fix | Files | Verified |
+|---|---|---|---|---|---|
+| 1 | Medium | Settings flashed the window colour (a grey lift in dark mode) between pages and on open; it opened on an icon splash | Page-colour background under the cross-fade; window background = the page colour (exact dynamic colour on 34+); solid-colour splash on 33+ | `SettingsActivity.kt`, `themes.xml` (+ `-v34`) | Reasoned from timings; needs device |
+| 2 | Medium | Widget cards at large font: the "Allow"/"Pick a place" button fell off the card; weather hours and rain clipped; "10 PM" showed as "10" | Text gives way to the button; the weather card drops the rain line, then the hours, when they don't fit; hour labels don't wrap | `WidgetStack.kt`, `WeatherWidget.kt` | `Widget_*_Font1_5x/2x` |
+| 3 | Medium | Home long-press menu names cut mid-word ("Wallpap") | One shared size for the four names with a gap | `HomeMenu.kt` | `Home_Menu_Font1_5x/2x` |
+| 4 | Medium | Segmented buttons ("Automatic") and tile labels clipped | Shrink to fit; line height scales with the label above 1x; checked label kept clear of the outline | `SettingsKit.kt` | `Settings_ClockFormat_Font2x`, `Settings_AppearanceTiles_Font2x` |
+| 5 | Low-medium | Settings search text clipped in the 64 dp bar at 2x | Bar height follows the field | `MainPage.kt` | `Settings_Find_Font2x` |
+| 6 | Low | Clock-style samples broke "13:45" over two lines; the home preview clipped favorites | Samples drawn at font scale 1; preview height has a minimum, not a fixed value | `LookPages.kt`, `HomePreview.kt` | `Settings_Clock_Font2x` |
+| 7 | Low | Long "until" times crowded a chip's title out | The time moves to a second line when it would | `ClockHeader.kt` | `Home_EventUntil_Font2x` |
+| 8 | Low | Letter strip at large font: names overlapped and long ones ran off screen | Option swell bounded by its slot; names capped and ellipsized | `AlphabetWave.kt` | `AlphabetWave_*_Font2x` |
+| 9 | Low | App menu button labels clipped or ran together; section names broke mid-word | Shrink to fit with a gap; one line | `AppMenu.kt` | `Menu_*_Font2x` |
+| 10 | Low | List pages and Find could hide their last rows under the keyboard (edge-to-edge) | IME insets in the Scaffold | `SettingsKit.kt`, `MainPage.kt` | Needs device |
+| 11 | Low | The lock-service dialog and the home message called the service by the wrong name | Read from the service's label string | `AccessHelp.kt`, `LauncherScreen.kt` | Review |
+
+Checked and left alone:
+- **Touch targets:** Compose 1.9 already widens any tap target under 48 dp to 48 dp, unless a neighbour is hit
+  directly. The remaining small ones (list rows with icons off, expanded notification items, agenda rows) sit edge to
+  edge and can't grow without a new layout.
+- **Search and dialogs above the keyboard:** search already pads for it (`imePadding`), and dialogs are left to the
+  system.
+- **The widget sheet's bar icons:** follow the sheet's own colours in Material3 1.4.
+- **Dark-text contrast:** fine in every shot reviewed.
+- **Possible pre-existing tap issue (needs device):** the favorite's preview line and its pills get that automatic
+  widening too, and it reaches ~12 dp up into the app's name. So a tap on the lower half of a favorite's name may open
+  its latest notification instead of the app. The fix (consume pointer input on the name row) changes tap behaviour,
+  so it waits for the owner.
+
+## Not verified on a device (S25 Ultra checklist)
+
+No phone was connected during the pass. On the phone, after installing (commands below), check:
+
+1. **No freeze:** switch an icon pack / icon style in Telegram or Signal (an activity-alias swap) while toggling
+   monochrome icons; restore a large backup in Settings > Backup & restore.
+2. **Listen mode:** with headphones, tap Resume on an app that ignores it, then lock the phone or open another app
+   within 4 s. The music app must not open.
+3. **Widget setup:** add a widget that has a setup screen, `adb shell am kill com.gh00ul.cascade` while it's up, finish
+   it. The widget is placed. Cancel instead: no leftover id in `adb shell dumpsys appwidget`.
+4. **Notification listener:** after an update (`adb install -r`), dots, previews and the player come back within about
+   5 s of home showing.
+5. **Updater:** a rate-limited or offline check says so in About (not "Up to date"). A real update installs, and the
+   confirm screen reappears on return home if the screen was off when it was due.
+6. **Restricted setting:** on a fresh sideloaded install, notification access is greyed out, and the help dialog
+   appears after Allow.
+7. **Permission dialogs:** Back on the first calendar/contacts dialog keeps asking; a second refusal goes to App info.
+8. **Dark mode / font size change:** with the rename or new-folder dialog open (text typed) or the widget sheet open,
+   everything stays.
+9. **Large font (One UI max):** home menu, widget cards, chips, the app menu, Settings segmented buttons and the Find
+   bar look like the `_Font2x` shots. The keyboard doesn't cover Add favorite's last rows.
+10. **Settings:** no grey flash between pages in dark mode; a plain splash on open.
+11. **Predictive back** on Android 15 (if the phone is still on it): the list and search follow the gesture.
+12. **Login codes on Android 15/16:** whether One UI hides one-time codes from Cascade ("Sensitive notification
+    content hidden").
+13. **Logcat:** debug builds log StrictMode violations:
+    `adb logcat --pid=$(adb shell pidof com.gh00ul.cascade) StrictMode:D *:S`.
+14. **Tap targets:** a tap on the lower half of a favorite's name opens the app, not its notification.
+
+## Remaining risks and next steps (by impact)
+
+1. **Nothing ran on hardware.** The checklist above, especially the self-update path (5): the updater is how every later
+   fix arrives.
+2. **CI runs no tests or lint.** The workflow only builds release APKs on JDK 17, and the Robolectric tests need JDK 21.
+   Add a separate JDK 21 job (`testDebugUnitTest lintDebug`) that doesn't gate releases.
+3. **Library upgrades left behind** (Compose BOM 2025.10 → 2026.09, activity 1.11 → 1.13, core 1.17 → 1.19,
+   lifecycle 2.9 → 2.11, coroutines 1.10 → 1.11; AGP 9 later). Do them in one pass with a phone in hand: activity's
+   back-dispatcher rewrite affects MainActivity's catch-all.
+4. **Auto Backup scope** is unscoped (decision below).
+5. **Deferred from earlier hunts, still open:** notifications capped at 8 in the expanded row; album art thumbnailed
+   on the main thread; favorites overlapping if one's height changes mid-drag; "open single match" firing mid-command;
+   home menu clipping under ~350 dp; RTL/zh-TW nits; work-profile chips and player falling back to the personal app.
+6. **No logging at all:** data loss or an updater failure in the field leaves nothing to diagnose. Consider a few
+   privacy-safe `Log.w` lines (key names, exception classes only).
+
+## Decisions for you
+
+- **Auto Backup** (`allowBackup="true"` with no rules sends all prefs, including the weather place and last track, to
+  Google backup and device transfer). Options: keep as is; back up only `launcher.xml`, encrypted only (rules XML
+  drafted by the Persistence agent); or turn it off and rely on the Backup page.
+- **The possible name-tap issue** above (needs a look on the phone first).
+
+## Build and install
+
+```bash
+./gradlew clean assembleRelease testDebugUnitTest lintRelease
+adb devices
+adb -s <serial> install -r app/build/outputs/apk/release/app-release.apk
+```
+
+Use the release APK: the local `.signing/release.jks` is the same key as GitHub's releases, so `install -r` updates
+the installed app in place. The debug APK is debug-signed and would fail with a signature mismatch (don't uninstall to
+get around it: that wipes the launcher's setup). After an `adb install`, adb is the installer of record, so the next
+self-update asks for confirmation once. JVM screenshots:
+`./gradlew.bat testDebugUnitTest -PcascadeScreenshots` (240 PNGs in `app/build/screenshots`).

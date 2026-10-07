@@ -12,6 +12,7 @@ import androidx.compose.ui.test.TouchInjectionScope
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.LauncherSettings
@@ -133,33 +134,38 @@ class SecondLettersTest {
         return Offset(centerX, top + slot * (letters.indexOf(letter) + 0.5f))
     }
 
+    /** A finger resting a moment, then lifting: a deliberate lift, as opposed to one still on the move. */
+    private fun TouchInjectionScope.rest() = advanceEventTime(150)
+
+    /**
+     * Moves the finger half a dp at a time, [down] the strip or up it, until the list has jumped to [target] (or [max]
+     * has been covered): every row the list jumped to on the way, in order, starting with where it was.
+     */
+    private fun walkTo(target: String, down: Boolean = true, max: Dp = 300.dp): List<String> {
+        val seen = mutableListOf(top().toString())
+        var moved = 0.dp
+        while (seen.last() != target && moved < max) {
+            strip { moveBy(Offset(0f, (if (down) 0.5.dp else (-0.5).dp).toPx())) }
+            moved += 0.5.dp
+            if (top().toString() != seen.last()) seen += top().toString()
+        }
+        return seen
+    }
+
+    private fun key(label: String) = "app:${app(label).key}"
+
     /** Small steps, as a finger moves: the strip follows every event. */
     private fun TouchInjectionScope.slide(dx: Float, dy: Float, steps: Int = 12) = repeat(steps) { moveBy(Offset(dx / steps, dy / steps)) }
 
     @Test fun draggingThroughALetterScrollsItsSecondLetters() {
         show(secondLetters = true)
-        // Letters' slots are 22dp here, second letters' 1.3 times that: half of each from one center to the next.
-        val letter = 22.dp
-        val option = letter * 1.3f
-        val toFirst = (letter + option) / 2
         // C, early in the list, so each jump has room to bring its row to the top. It opens where it is, under the finger.
         strip { down(letter("C")) }
         assertEquals("section:C", top())
-        // On down the strip: Ca, Cl and Co, each a slot of its own, before D.
-        strip { slide(0f, toFirst.toPx()) }
-        assertEquals("app:${app("Calculator").key}", top())
-        strip { slide(0f, option.toPx()) }
-        assertEquals("app:${app("Clock").key}", top())
-        strip { slide(0f, option.toPx()) }
-        assertEquals("app:${app("Contacts").key}", top())
-        // D (only Docs, so nothing to open): C folds back and D stays under the finger.
-        strip { slide(0f, toFirst.toPx()) }
-        assertEquals("section:D", top())
-        // Back up a letter: C, just above D again, opens once more, with its second letters below it.
-        strip { slide(0f, -letter.toPx()) }
-        assertEquals("section:C", top())
-        strip { slide(0f, toFirst.toPx()) }
-        assertEquals("app:${app("Calculator").key}", top())
+        // On down the strip: Ca, Cl and Co, each a slot of its own, then D (only Docs, so nothing to open).
+        assertEquals(listOf("section:C", key("Calculator"), key("Clock"), key("Contacts"), "section:D"), walkTo("section:D"))
+        // Back up, having overshot onto D: C opens again with its last, Co, under the finger, then its others, then C.
+        assertEquals(listOf("section:D", key("Contacts"), key("Clock"), key("Calculator"), "section:C"), walkTo("section:C", down = false))
         strip { up() }
     }
 
@@ -189,39 +195,38 @@ class SecondLettersTest {
 
     /**
      * A letter with more apps than fit below it on the strip (S, with 16) still opens under the finger, its first app
-     * just below; the strip then scrolls up past the finger as it moves, so the last app and the letters after it come
-     * within reach.
+     * just below, and the strip follows the finger one to one. Held past the strip's end, the strip scrolls in the rest,
+     * on through T to Z, picking as it goes, and stops at the last app, which letting go opens.
      */
     @Test fun aCrowdedLetterOpensUnderTheFinger() {
         show(stripApps = true, apps = FakeApps.crowded)
         val letters = apps.map { it.section }.distinct()
-        val opened = apps.count { it.section == "S" }
+        val sApps = apps.count { it.section == "S" }
         var slot = 0f
-        var below = 0f
         strip {
-            val at = letter("S")
-            down(at)
-            // S's layout once open: slots shrunk to fit it all, S kept where it was, and how fast the rest scrolls past.
-            slot = minOf(height / (letters.size + opened * 1.3f), 22.dp.toPx())
-            val total = slot * letters.size + opened * slot * 1.3f
-            below = maxOf(1f, (total - slot * (letters.indexOf("S") + 0.5f)) / (height - at.y))
+            down(letter("S"))
+            // S's layout once open: slots shrunk to fit it all, S kept where it was.
+            slot = minOf(height / (letters.size + sApps * 1.3f), 22.dp.toPx())
         }
         assertEquals("section:S", top())
         // A finger settling doesn't leave S (it used to land halfway down S's apps, which had moved under it).
         strip { slide(0f, slot / 4) }
         assertEquals("section:S", top())
-        // From S's middle: to its first app, its second, then its last, and on to T, each a scrolled slot on.
-        val toFirst = (slot / 2 + slot * 1.3f / 2) / below - slot / 4
-        strip { slide(0f, toFirst) }
+        // From S's middle: to its first app, then its second, each where it's drawn.
+        strip { slide(0f, slot / 2 + slot * 1.3f / 2 - slot / 4) }
         assertEquals("app:${app("Samsung Free").key}", top())
-        strip { slide(0f, slot * 1.3f / below) }
+        strip { slide(0f, slot * 1.3f) }
         assertEquals("app:${app("Samsung Health").key}", top())
-        strip { slide(0f, slot * 1.3f * (opened - 2) / below) }
-        assertEquals("app:${app("Steam").key}", top())
-        // Just past Steam's slot: T, which opens around the finger.
-        strip { slide(0f, slot * 1.3f / 2 / below + 1.dp.toPx()) }
-        assertEquals("section:T", top())
-        strip { up() }
+        // Past the strip's end and held: it scrolls to the very last app, Zoom. Lifting out there opens nothing;
+        // back on the strip, on Zoom at its end, a lift opens it.
+        strip { slide(0f, height.toFloat()) }
+        strip { rest(); up() }
+        assertEquals(emptyList<AppEntry>(), opened)
+        strip { down(letter("S")) }
+        strip { slide(0f, height.toFloat()) }
+        strip { moveTo(Offset(centerX, height - 4.dp.toPx())) }
+        strip { rest(); up() }
+        assertEquals(listOf(app("Zoom")), opened)
     }
 
     /**
@@ -246,55 +251,64 @@ class SecondLettersTest {
 
     /**
      * Past the last letter's last app (W's Weather) and off the strip's end: there's nothing after it, so the finger stays
-     * on Weather, and letting go opens it. (Past the last letter's apps used to throw, taking the launcher down.)
+     * on Weather (past the last letter's apps used to throw, taking the launcher down). Letting go out there, well past
+     * the end, opens nothing: sliding off the end is a way to call it off.
      */
     @Test fun pastTheLastLettersAppsStaysOnTheLast() {
         show(stripApps = true)
         strip { down(letter("W")) }
         strip { slide(0f, 300.dp.toPx(), steps = 30) }
-        strip { up() }
-        assertEquals(listOf(app("Weather")), opened)
+        strip { rest(); up() }
+        assertEquals(emptyList<AppEntry>(), opened)
     }
 
     /** App names: letting go on an app's name opens that app; letting go on a letter opens nothing. */
     @Test fun withAppNamesLettingGoOnAnAppOpensIt() {
         show(stripApps = true)
-        val letter = 22.dp
-        val option = letter * 1.3f
-        val toFirst = (letter + option) / 2
-        // C to its second app, Calendar, and let go.
         strip { down(letter("C")) }
-        strip { slide(0f, toFirst.toPx() + option.toPx()) }
-        assertEquals("app:${app("Calendar").key}", top())
+        assertEquals(listOf("section:C", key("Calculator"), key("Calendar")), walkTo(key("Calendar")))
         assertEquals(emptyList<AppEntry>(), opened)
-        strip { up() }
+        strip { rest(); up() }
         assertEquals(listOf(app("Calendar")), opened)
-        // C again, then down past its apps onto D, and let go there: the list stays at D and nothing opens.
+        // C again, down past its apps onto D, and let go there: the list stays at D and nothing opens.
         strip { down(letter("C")) }
-        strip { slide(0f, toFirst.toPx() + option.toPx() * 4 + toFirst.toPx()) }
-        assertEquals("section:D", top())
-        strip { up() }
+        walkTo("section:D")
+        strip { rest(); up() }
         assertEquals(listOf(app("Calendar")), opened)
     }
 
-    /** A gesture the system takes over (a back swipe from this edge, say) ends in a cancel, not a lift: nothing opens. */
-    @Test fun withAppNamesACancelledGestureOpensNothing() {
+    /**
+     * App names: the lifts that open nothing. A swipe that only passes over the strip (a flick, lifting on the move), a tap
+     * (even low on a letter, a short roll from its first app), and a finger slid off sideways onto the list.
+     */
+    @Test fun withAppNamesStrayLiftsOpenNothing() {
+        show(stripApps = true)
+        // A flick down from C, lifting as it goes.
+        strip {
+            down(letter("C"))
+            slide(0f, 100.dp.toPx(), steps = 5)
+            up()
+        }
+        // A tap low on C, rolling a few dp as it lifts.
+        strip { down(letter("C") + Offset(0f, 8.dp.toPx())) }
+        strip { slide(0f, 4.dp.toPx(), steps = 2) }
+        strip { rest(); up() }
+        // Onto Calendar, then off sideways over the list.
+        strip { down(letter("C")) }
+        walkTo(key("Calendar"))
+        strip { slide(-200.dp.toPx(), 0f) }
+        strip { rest(); up() }
+        assertEquals(emptyList<AppEntry>(), opened)
+    }
+
+    /** App names: overshooting C's last app onto D and coming back lands on that last app, Contacts, not on C. */
+    @Test fun withAppNamesAnOvershootComesBackToTheLastApp() {
         show(stripApps = true)
         strip { down(letter("C")) }
-        strip { slide(0f, ((22.dp + 22.dp * 1.3f) / 2).toPx()) }
-        assertEquals("app:${app("Calculator").key}", top())
-        strip { cancel() }
-        assertEquals(emptyList<AppEntry>(), opened)
-    }
-
-    /** Second letters only jump the list: letting go on one opens nothing. */
-    @Test fun withSecondLettersLettingGoOpensNothing() {
-        show(secondLetters = true)
-        strip { down(letter("C")) }
-        strip { slide(0f, ((22.dp + 22.dp * 1.3f) / 2).toPx()) }
-        assertEquals("app:${app("Calculator").key}", top())
-        strip { up() }
-        assertEquals(emptyList<AppEntry>(), opened)
+        walkTo("section:D")
+        assertEquals(listOf("section:D", key("Contacts")), walkTo(key("Contacts"), down = false))
+        strip { rest(); up() }
+        assertEquals(listOf(app("Contacts")), opened)
     }
 
     /** Off (the default), the letters are all the strip has: one slot down from C is D. */

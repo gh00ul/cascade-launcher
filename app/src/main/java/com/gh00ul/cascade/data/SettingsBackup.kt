@@ -143,8 +143,10 @@ object SettingsBackup {
             searchShortcuts = root.bool("searchShortcuts") ?: current.searchShortcuts,
             musicGlow = root.bool("musicGlow") ?: current.musicGlow,
             copyLoginCodes = root.bool("copyLoginCodes") ?: current.copyLoginCodes,
-            secondLetters = root.bool("secondLetters") ?: current.secondLetters,
-            stripApps = root.bool("stripApps") ?: current.stripApps,
+            // The strip opens one way or the other: a mode the backup doesn't have (App names, in one from before it)
+            // keeps its current value only if the backup's other mode is off, rather than leave both on.
+            secondLetters = root.bool("secondLetters") ?: (current.secondLetters && root.bool("stripApps") != true),
+            stripApps = root.bool("stripApps") ?: (current.stripApps && root.bool("secondLetters") != true),
         )
     }
 

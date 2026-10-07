@@ -37,7 +37,7 @@ class CrowdedStripScreenshots : ScreenshotTest() {
         HomeScreen(LauncherSettings(stripApps = true), crowded, emptyList(), icons, firstItem = FIRST_APP_ROW)
     }
 
-    /** The finger moved from S down to its tenth app, Shazam: the strip has scrolled up past it, bringing in T and U. */
+    /** The finger moved from S down to its tenth app, Shazam, the strip following it one to one. */
     @Test fun crowdedTenth() = snap(
         "AlphabetWave_AppNamesCrowdedTenth",
         afterContent = {
@@ -45,13 +45,10 @@ class CrowdedStripScreenshots : ScreenshotTest() {
                 if (currentPosition() != null) up()
                 val y = restingS()
                 down(Offset(centerX, y))
-                // S stays under the finger; below it, the rest scrolls past just fast enough for its end to reach the strip's.
-                val s = letters.indexOf("S")
+                // S stays under the finger, its apps below it in slots of their own.
                 val opened = crowded.count { it.section == "S" }
                 val slot = min(height / (letters.size + opened * 1.3f), 22.dp.toPx())
-                val total = slot * letters.size + opened * slot * 1.3f
-                val below = maxOf(1f, (total - slot * (s + 0.5f)) / (height - y))
-                val tenth = y + (slot * 0.5f + slot * 1.3f * 9.5f) / below
+                val tenth = y + slot * 0.5f + slot * 1.3f * 9.5f
                 repeat(24) { moveBy(Offset(0f, (tenth - y) / 24)) }
             }
         },

@@ -25,9 +25,10 @@ and Android won't update an app across a key change.
   Turn on Second letters (Settings > Gestures) and the letter under your finger opens up right in the strip to its
   apps' second letters: drag down from M through Ma, Me and Mu to jump straight to them, then on to N. Or turn on
   App names instead, and the letter opens up to its apps by name (Mail, Maps, Messages) to scroll through;
-  let go on one to open it, or on a letter to just stay there.
-  The letter you touch stays under your finger; when its apps run past the end of the strip, the strip scrolls
-  them up to you as you drag.
+  pause on one and let go to open it. Letting go on a letter, mid-swipe, past either end of the strip, or after
+  sliding off sideways opens nothing. What you touch stays under your finger; hold your finger at either end of
+  the strip and it scrolls in what's past it. Overshoot a letter's last app and come back, and you land on that
+  app again.
 - **Notifications in the list.** Apps with notifications get a dot. Favorites also show the latest message
   underneath, sender first; tap it to open that notification, or tap **+2** to see the rest.
 - **Swipe an app to see its notifications.** Swipe a row to the right to expand all of that app's

@@ -81,6 +81,16 @@ class SettingsBackupTest {
         assertEquals(current.copy(showIcons = false, favorites = listOf("x"), favoritesSeeded = true), restored)
     }
 
+    @Test fun aBackupFromBeforeAppNamesDoesntLeaveBothStripModesOn() {
+        // Second letters on, and no App names at all: restored over App names, App names goes off.
+        val old = JSONObject(SettingsBackup.encode(LauncherSettings(secondLetters = true))).apply { remove("stripApps") }.toString()
+        val restored = decode(old, LauncherSettings(stripApps = true))!!
+        assertEquals(true to false, restored.secondLetters to restored.stripApps)
+        // With Second letters off in it, App names stays as it was.
+        val off = JSONObject(SettingsBackup.encode(LauncherSettings())).apply { remove("stripApps") }.toString()
+        assertEquals(true, decode(off, LauncherSettings(stripApps = true))!!.stripApps)
+    }
+
     @Test fun anythingButABackupIsRejected() {
         val encoded = SettingsBackup.encode(full)
         for (json in listOf(

@@ -113,7 +113,8 @@ class SearchOverlayTest {
         compose.waitForIdle()
         val row = compose.onNode(hasText("Set an alarm for", substring = true)).fetchSemanticsNode()
             .config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text }.orEmpty()
-        assertTrue(row, Regex("""^Set an alarm for (7|19):30, """).containsMatchIn(row))
+        // Typed after 7:30 PM, it means 7:30 tomorrow morning: 07:30 in 24-hour time.
+        assertTrue(row, Regex("""^Set an alarm for (07|19):30, """).containsMatchIn(row))
     }
 
     @Test fun typingDownToOneMatchOpensIt() {

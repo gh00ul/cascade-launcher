@@ -127,7 +127,7 @@ data class LauncherSettings(
     val musicGlow: Boolean = true,
     /** A login code arriving in a notification goes straight to the clipboard. */
     val copyLoginCodes: Boolean = true,
-    /** Holding a letter on the strip offers its apps' second letters too (Ma, Me, Mu), a slide toward the list away. */
+    /** The letter under the finger on the strip opens up to its apps' second letters (Ma, Me, Mu) to scroll through. */
     val secondLetters: Boolean = false,
 )
 

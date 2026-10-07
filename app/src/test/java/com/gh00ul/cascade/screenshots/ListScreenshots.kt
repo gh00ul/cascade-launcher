@@ -63,8 +63,8 @@ class ListScreenshots : ScreenshotTest() {
     }
 
     /**
-     * Second letters on: M held, then the finger slid toward the list. M's second letters stand in a column beside it
-     * (Ma, Me, Mu), the one level with the finger (Me) takes the accent, and the list has jumped to Messages.
+     * Second letters on: M held and the finger dragged on down two slots. M has opened up in the strip to Ma, Me and Mu
+     * before N; Me, under the finger, swells and takes the accent, and the list has jumped to Messages.
      */
     @Test fun alphabetWaveSecondLetters() = snap(
         "AlphabetWave_SecondLetters",
@@ -72,7 +72,7 @@ class ListScreenshots : ScreenshotTest() {
             onNodeWithContentDescription("Alphabet index").performTouchInput {
                 if (currentPosition() != null) up()
                 down(center + Offset(0f, 33.dp.toPx()))
-                repeat(12) { moveBy(Offset(-110.dp.toPx() / 12, 0f)) }
+                repeat(12) { moveBy(Offset(0f, 44.dp.toPx() / 12)) }
             }
         },
     ) {

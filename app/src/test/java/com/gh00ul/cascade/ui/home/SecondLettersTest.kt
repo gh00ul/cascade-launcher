@@ -62,8 +62,8 @@ class LetterPrefixesTest {
 }
 
 /**
- * The strip with Second letters on, in the harness's A–Z list: hold C, slide toward the list, and moving up and down
- * picks among Ca, Cl and Co, the list jumping to each; slide back and the letters are picked again.
+ * The strip with Second letters on, in the harness's A–Z list: the letter under the finger opens up in the strip to its
+ * second letters, and dragging on through them jumps the list to each; the next letter folds them back.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class, qualifiers = ScreenshotTest.PHONE)
@@ -123,30 +123,39 @@ class SecondLettersTest {
     /** Small steps, as a finger moves: the strip follows every event. */
     private fun TouchInjectionScope.slide(dx: Float, dy: Float, steps: Int = 12) = repeat(steps) { moveBy(Offset(dx / steps, dy / steps)) }
 
-    @Test fun slidingTowardTheListPicksSecondLetters() {
+    @Test fun draggingThroughALetterScrollsItsSecondLetters() {
         show(secondLetters = true)
-        // C, early in the list, so each jump has room to bring its row to the top.
+        // Letters' slots are 22dp here, second letters' 1.3 times that: half of each from one center to the next.
+        val letter = 22.dp
+        val option = letter * 1.3f
+        val toFirst = (letter + option) / 2
+        // C, early in the list, so each jump has room to bring its row to the top. It opens where it is, under the finger.
         strip { down(letter("C")) }
         assertEquals("section:C", top())
-        // Toward the list: the column (Ca, Cl, Co) is centered on the finger, so it lands on Cl.
-        strip { slide(-110.dp.toPx(), 0f) }
-        assertEquals("app:${app("Clock").key}", top())
-        strip { slide(0f, 44.dp.toPx()) }
-        assertEquals("app:${app("Contacts").key}", top())
-        strip { slide(0f, -88.dp.toPx()) }
+        // On down the strip: Ca, Cl and Co, each a slot of its own, before D.
+        strip { slide(0f, toFirst.toPx()) }
         assertEquals("app:${app("Calculator").key}", top())
-        // Back on the strip, level with C again: the letters are picked as before, from C's top.
-        strip { slide(110.dp.toPx(), 44.dp.toPx()) }
+        strip { slide(0f, option.toPx()) }
+        assertEquals("app:${app("Clock").key}", top())
+        strip { slide(0f, option.toPx()) }
+        assertEquals("app:${app("Contacts").key}", top())
+        // D (only Docs, so nothing to open): C folds back and D stays under the finger.
+        strip { slide(0f, toFirst.toPx()) }
+        assertEquals("section:D", top())
+        // Back up a letter: C, just above D again, opens once more, with its second letters below it.
+        strip { slide(0f, -letter.toPx()) }
         assertEquals("section:C", top())
+        strip { slide(0f, toFirst.toPx()) }
+        assertEquals("app:${app("Calculator").key}", top())
         strip { up() }
     }
 
-    /** Off (the default), sliding toward the list changes nothing: the letter under the finger stays picked. */
-    @Test fun offTheStripOnlyPicksLetters() {
+    /** Off (the default), the letters are all the strip has: one slot down from C is D. */
+    @Test fun offTheStripOnlyHasLetters() {
         show(secondLetters = false)
         strip { down(letter("C")) }
-        strip { slide(-110.dp.toPx(), 0f) }
-        assertEquals("section:C", top())
+        strip { slide(0f, 22.dp.toPx()) }
+        assertEquals("section:D", top())
         strip { up() }
     }
 }

@@ -149,7 +149,7 @@ internal fun GesturesPage(settings: LauncherSettings, apps: List<AppEntry>, icon
         SettingsGroup("Letter strip") {
             SwitchRow(
                 "Second letters",
-                "Hold a letter, then slide toward the list to pick its second letter too: Ma, Me, Mu",
+                "The letter under your finger opens up to its second letters, Ma, Me, Mu, to scroll through on the way to the next",
                 settings.secondLetters,
                 key = "secondLetters",
             ) { on -> prefs.update { it.copy(secondLetters = on) } }

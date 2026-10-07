@@ -12,16 +12,13 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.translate
@@ -31,7 +28,6 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -40,11 +36,11 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import com.gh00ul.cascade.data.normalizedForSearch
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
@@ -68,16 +64,14 @@ private const val GlowHeadroom = 1.25f
 private const val AccentGrowth = 0.03f
 /** The accent moving from one letter to the next. */
 private val Handover = tween<Float>(Motion.QUICK)
-
-/** The second letters' column: how far inward of the swollen letter it stands, and each one's height at most. */
-private val PrefixOffset = 72.dp
-private val PrefixSlot = 44.dp
+/** Second letters opening out of their letter (and folding back), the strip making room as they do. */
+private val Unfold = tween<Float>(Motion.QUICK)
 /**
- * How far past the strip's inner edge the finger slides to pick second letters, and how far back it comes to return to
- * the letters: apart, so a finger resting near the line doesn't flicker between the two.
+ * A second letter's slot against a letter's: taller, as two letters swell wider and taller than one, and a little
+ * easier to land on. Under the finger it swells less than a letter's 2.6x, to fit.
  */
-private val EnterPrefixes = 64.dp
-private val LeavePrefixes = 40.dp
+private const val OptionSlot = 1.3f
+private const val OptionSwell = 2f
 
 /** A second-letter step under a strip letter: "Ma", and the A–Z list row its first app is at. */
 @Immutable
@@ -105,13 +99,100 @@ internal fun letterPrefixes(entries: List<PrefixSource>): Map<String, List<Lette
 }
 
 /**
+ * Where the strip's letters sit, with the open letter's second letters in slots of their own between it and the next
+ * letter: the layout that picks read, and that drawing glides each letter to from where it was ([progress]).
+ */
+private class StripPlan(val count: Int) {
+    /** The height laid out for; below 0 until the first layout. */
+    var height = -1f
+    /** The letter whose second letters are out, and how many there are: -1 and 0 with none. */
+    var open = -1
+    var openCount = 0
+    var top = 0f
+    var slot = 0f
+    val fromY = FloatArray(count)
+    val toY = FloatArray(count)
+    /** Where the open letter's second letters come out of: their letter, as it was when they opened. */
+    var openFrom = 0f
+    /** Second letters folding back into their letter: whose (a letter index, or -1), how many, and where they started. */
+    var closing = -1
+    var closingCount = 0
+    var closingFirst = 0f
+    var closingStep = 0f
+    /** How far the glide from the last layout has come, 0 to 1. State, so a drawing that reads it follows it. */
+    var progress by mutableFloatStateOf(1f)
+
+    /** The second letters' slot height. */
+    val optionSlot get() = slot * OptionSlot
+
+    /** Letter [i]'s center below the strip's top: in its slot, below the second letters out above it. */
+    fun offset(i: Int) = slot * (i + 0.5f) + if (open in 0 until i) openCount * optionSlot else 0f
+
+    fun letterY(i: Int) = if (progress >= 1f) toY[i] else lerp(fromY[i], toY[i], progress)
+
+    private fun optionTarget(j: Int) = top + slot * (open + 1) + optionSlot * (j + 0.5f)
+
+    fun optionY(j: Int) = if (progress >= 1f) optionTarget(j) else lerp(openFrom, optionTarget(j), progress)
+
+    fun closingY(j: Int) = lerp(closingFirst + closingStep * j, toY[closing], progress)
+
+    /** What's at [y] in the layout: a letter's index, or -2 - j for the open letter's j-th second letter. */
+    fun hit(y: Float): Int {
+        val down = y - top
+        if (open < 0) return (down / slot).toInt().coerceIn(0, count - 1)
+        val options = slot * (open + 1)
+        val after = options + openCount * optionSlot
+        return when {
+            down < options -> (down / slot).toInt().coerceIn(0, open)
+            down < after -> -2 - ((down - options) / optionSlot).toInt().coerceIn(0, openCount - 1)
+            else -> (open + 1 + ((down - after) / slot).toInt()).coerceIn(open + 1, count - 1)
+        }
+    }
+
+    /**
+     * Lays the strip out with [newOpen]'s [newCount] second letters out (-1 and 0 for none), keeping letter [anchor] at
+     * [anchorY] so what's under the finger stays there, or centering it all with no anchor (-1). Slots shrink from
+     * [maxSlot] only as far as needed to fit [height]. With [glide], everything moves from where it is now.
+     */
+    fun layOut(height: Float, maxSlot: Float, newOpen: Int, newCount: Int, anchor: Int, anchorY: Float, glide: Boolean) {
+        if (glide) {
+            for (i in 0 until count) fromY[i] = letterY(i)
+            if (open >= 0 && open != newOpen && openCount > 0) {
+                closing = open
+                closingCount = openCount
+                closingFirst = optionY(0)
+                closingStep = if (openCount > 1) optionY(1) - closingFirst else 0f
+            } else {
+                closing = -1
+                closingCount = 0
+            }
+            if (newOpen >= 0 && newOpen != open) openFrom = letterY(newOpen)
+        } else {
+            closing = -1
+            closingCount = 0
+        }
+        this.height = height
+        open = newOpen
+        openCount = if (newOpen >= 0) newCount else 0
+        // With none open, exactly the plain strip's layout: count slots, centered.
+        slot = if (openCount == 0) min(height / count, maxSlot) else min(height / (count + openCount * OptionSlot), maxSlot)
+        val total = slot * count + openCount * optionSlot
+        top = if (anchor < 0) (height - total) / 2f
+        else (anchorY - offset(anchor)).coerceIn(0f, (height - total).coerceAtLeast(0f))
+        for (i in 0 until count) toY[i] = if (openCount == 0) top + slot * (i + 0.5f) else top + offset(i)
+        progress = if (glide) 0f else 1f
+    }
+}
+
+/**
  * The letter strip on the end edge. Dragging along it makes the letters near your finger swell and bulge
  * out in a wave, and jumps the app list to whichever letter you're on. [restAlpha] fades the strip while it rests
  * (read while drawing its layer, so it can follow a scroll); under the finger it's always at full strength.
  *
- * With [prefixes] (the Second letters setting), a held letter with more than one shows them in a column beside it (Ma,
- * Me, Mu); sliding the finger toward the list picks among them by height, jumping the list to that one with [onPrefix],
- * and sliding back returns to the letters.
+ * With [prefixes] (the Second letters setting), the letter under the finger opens up in the strip to its second letters
+ * (M: Ma, Me, Mu, each in a slot of its own before N), and dragging on through them jumps the list to each with
+ * [onPrefix]. Reaching the next letter folds them back and opens that one's; the letter just reached stays under the
+ * finger while the strip makes room around it. Lifting the finger folds them all back.
  */
 @Composable
 fun AlphabetWave(
@@ -127,19 +208,20 @@ fun AlphabetWave(
     val style = LocalLauncherStyle.current
     val measurer = rememberTextMeasurer()
     val layouts = remember(letters, measurer, style) { letters.map { measurer.measure(it, style.letter) } }
+    val prefixLayouts: Map<String, List<TextLayoutResult>> = remember(prefixes, measurer, style) {
+        prefixes.mapValues { (_, list) -> list.map { measurer.measure(it.text, style.letter) } }
+    }
     val currentLetters by rememberUpdatedState(letters)
     val currentOnLetter by rememberUpdatedState(onLetter)
     val currentPrefixes by rememberUpdatedState(prefixes)
     val currentOnPrefix by rememberUpdatedState(onPrefix)
-    val rtl by rememberUpdatedState(LocalLayoutDirection.current == LayoutDirection.Rtl)
-    val prefixStyle = remember(style) { style.letter.copy(fontSize = 20.sp) }
-    val prefixLayouts = remember(prefixes, measurer, prefixStyle) {
-        prefixes.mapValues { (_, list) -> list.map { measurer.measure(it.text, prefixStyle) } }
-    }
     val scope = rememberCoroutineScope()
+    val plan = remember(letters.size) { StripPlan(letters.size) }
 
     var touchY by remember { mutableFloatStateOf(Float.NaN) }
     var selected by remember { mutableIntStateOf(-1) }
+    // The open letter's second letter under the finger, -1 while it's on a letter. Kept after release for the fade.
+    var picked by remember { mutableIntStateOf(-1) }
     // For TalkBack the strip is a slider, one letter per step; this is the letter it's on.
     var a11yIndex by remember { mutableIntStateOf(0) }
     // Swells with a little bounce under the finger and settles back without dipping past rest when it lifts.
@@ -156,14 +238,6 @@ fun AlphabetWave(
     var handover by remember { mutableFloatStateOf(1f) }
     val accentFrom = remember(letters.size) { FloatArray(letters.size) }
     val currentAccentFrom by rememberUpdatedState(accentFrom)
-
-    // Second letters: whether the finger is picking among them, the one it's on (kept as the column fades out after
-    // release), and the column's top, which follows the finger until picking starts and then holds still under it.
-    var picking by remember { mutableStateOf(false) }
-    var picked by remember { mutableIntStateOf(-1) }
-    var columnTop by remember { mutableFloatStateOf(0f) }
-    val columnShown = selected >= 0 && (letters.getOrNull(selected)?.let { prefixes[it] }?.size ?: 0) >= 2
-    val column by animateFloatAsState(if (columnShown) 1f else 0f, tween(Motion.QUICK), label = "secondLetters")
 
     Spacer(
         modifier
@@ -195,82 +269,74 @@ fun AlphabetWave(
                     }
                 }
             }
-            .pointerInput(Unit) {
+            .pointerInput(plan) {
                 var handoverJob: Job? = null
-                fun select(y: Float) {
+                var unfoldJob: Job? = null
+                fun accent(index: Int) {
+                    if (index == accented) return
+                    val from = currentAccentFrom
+                    val swellNow = wave.coerceIn(0f, 1f)
+                    for (i in from.indices) from[i] = lerp(from[i], if (i == accented) swellNow else 0f, handover)
+                    accented = index
+                    // Reset here rather than in the coroutine, so no frame draws the new letter at the old progress.
+                    handover = 0f
+                    handoverJob?.cancel()
+                    handoverJob = scope.launch { animate(0f, 1f, animationSpec = Handover) { value, _ -> handover = value } }
+                }
+                fun layOut(open: Int, count: Int, anchor: Int, anchorY: Float) {
+                    plan.layOut(size.height.toFloat(), MaxSlot.toPx(), open, count, anchor, anchorY, glide = true)
+                    unfoldJob?.cancel()
+                    unfoldJob = scope.launch { animate(0f, 1f, animationSpec = Unfold) { value, _ -> plan.progress = value } }
+                }
+                fun move(y: Float) {
                     val count = currentLetters.size
                     if (count == 0) return
-                    val slot = min(size.height.toFloat() / count, MaxSlot.toPx())
-                    val top = (size.height - slot * count) / 2f
-                    val index = ((y - top) / slot).toInt().coerceIn(0, count - 1)
+                    if (plan.height != size.height.toFloat()) {
+                        plan.layOut(size.height.toFloat(), MaxSlot.toPx(), -1, 0, -1, 0f, glide = false)
+                    }
                     touchY = y
-                    if (index != selected) {
-                        selected = index
-                        a11yIndex = index
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        currentOnLetter(currentLetters[index])
-                        if (index != accented) {
-                            val from = currentAccentFrom
-                            val swellNow = wave.coerceIn(0f, 1f)
-                            for (i in from.indices) from[i] = lerp(from[i], if (i == accented) swellNow else 0f, handover)
-                            accented = index
-                            // Reset here rather than in the coroutine, so no frame draws the new letter at the old progress.
-                            handover = 0f
-                            handoverJob?.cancel()
-                            handoverJob = scope.launch { animate(0f, 1f, animationSpec = Handover) { value, _ -> handover = value } }
+                    val hit = plan.hit(y)
+                    if (hit <= -2) {
+                        // On one of the open letter's second letters.
+                        val options = currentLetters.getOrNull(plan.open)?.let { currentPrefixes[it] }.orEmpty()
+                        val j = -2 - hit
+                        if (j != picked && j in options.indices) {
+                            picked = j
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            currentOnPrefix(options[j])
+                            accent(-1)
                         }
+                        return
                     }
-                }
-                fun heldOptions(): List<LetterPrefix> = currentLetters.getOrNull(selected)?.let { currentPrefixes[it] }.orEmpty()
-                fun prefixSlot(count: Int) = min(PrefixSlot.toPx(), size.height.toFloat() / count)
-                fun placeColumn(y: Float, count: Int) {
-                    val height = prefixSlot(count) * count
-                    columnTop = (y - height / 2f).coerceIn(0f, (size.height - height).coerceAtLeast(0f))
-                }
-                fun pick(y: Float, options: List<LetterPrefix>) {
-                    if (options.isEmpty()) return
-                    val index = ((y - columnTop) / prefixSlot(options.size)).toInt().coerceIn(0, options.size - 1)
-                    if (index != picked) {
-                        picked = index
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        currentOnPrefix(options[index])
-                    }
-                }
-                fun move(x: Float, y: Float) {
-                    // How far past the strip's inner edge, toward the list, the finger is.
-                    val inward = if (rtl) x - size.width else -x
-                    if (!picking) {
-                        select(y)
-                        val options = heldOptions()
-                        if (options.size >= 2) placeColumn(y, options.size)
-                        if (options.size >= 2 && inward > EnterPrefixes.toPx()) {
-                            picking = true
-                            pick(y, options)
-                        }
-                    } else if (inward < LeavePrefixes.toPx()) {
-                        // Back on the letters: the list returns to the letter's top.
-                        picking = false
-                        picked = -1
-                        select(y)
-                        currentLetters.getOrNull(selected)?.let(currentOnLetter)
-                    } else {
-                        pick(y, heldOptions())
+                    val index = hit.coerceIn(0, count - 1)
+                    if (index == selected && picked < 0) return
+                    selected = index
+                    a11yIndex = index
+                    picked = -1
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    currentOnLetter(currentLetters[index])
+                    accent(index)
+                    if (index != plan.open) {
+                        // Open this letter's second letters (folding any others back), keeping it under the finger.
+                        val options = currentPrefixes[currentLetters[index]].orEmpty()
+                        val opening = if (options.size >= 2) options.size else 0
+                        if (opening > 0 || plan.open >= 0) layOut(if (opening > 0) index else -1, opening, index, plan.toY[index])
                     }
                 }
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     down.consume()
-                    picking = false
                     picked = -1
-                    move(down.position.x, down.position.y)
+                    move(down.position.y)
                     while (true) {
                         val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) break
                         change.consume()
-                        move(change.position.x, change.position.y)
+                        move(change.position.y)
                     }
-                    picking = false
                     selected = -1
+                    // Lifted: whatever opened folds back, and the strip settles back to its resting layout.
+                    if (currentPrefixes.isNotEmpty() && plan.height >= 0f) layOut(-1, 0, -1, 0f)
                 }
             }
             // Drawn on every frame of a drag, so nothing here allocates: the glow is built once per size and style, the
@@ -285,8 +351,9 @@ fun AlphabetWave(
                 onDrawBehind {
                     val count = letters.size
                     if (count == 0) return@onDrawBehind
-                    val slot = min(size.height / count, MaxSlot.toPx())
-                    val top = (size.height - slot * count) / 2f
+                    if (plan.height != size.height) plan.layOut(size.height, MaxSlot.toPx(), -1, 0, -1, 0f, glide = false)
+                    val slot = plan.slot
+                    val glide = plan.progress
                     // Letters rest 14dp in from the screen edge and bulge inward, toward the list (mirrored in RTL).
                     val rtl = layoutDirection == LayoutDirection.Rtl
                     val restX = if (rtl) 14.dp.toPx() else size.width - 14.dp.toPx()
@@ -304,18 +371,16 @@ fun AlphabetWave(
                         }
                     }
 
-                    // A local function, called rather than passed around, so it allocates nothing.
-                    fun drawLetter(i: Int) {
-                        val layout = layouts[i]
-                        val cy = top + slot * (i + 0.5f)
+                    // A local function, called rather than passed around, so it allocates nothing. [accent] is how far
+                    // toward the accent color it is; [fade] scales its alpha (second letters coming and going).
+                    fun drawItem(layout: TextLayoutResult, cy: Float, accent: Float, fade: Float, swellTo: Float = 2.6f) {
                         val influence = if (touching) {
                             val d = cy - touchY
                             exp(-(d * d) / (2f * spread * spread)) * wave
                         } else 0f
                         val cx = restX + inward * depth * influence
-                        val accent = lerp(accentFrom[i], if (i == accented) swell else 0f, handover)
                         // The letter under the finger still swells to the full 2.6x, and a little more with the accent.
-                        val scale = (fit + (2.6f - fit) * influence) * (1f + AccentGrowth * accent)
+                        val scale = (fit + (swellTo - fit) * influence) * (1f + AccentGrowth * accent)
                         // At rest (and fully accented) the exact colors, not a lerp's round trip through Oklab.
                         val color = when {
                             accent <= 0f -> style.content
@@ -327,47 +392,28 @@ fun AlphabetWave(
                                 layout,
                                 color = color,
                                 topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f),
-                                alpha = 0.55f + 0.45f * influence,
+                                alpha = (0.55f + 0.45f * influence) * fade,
                             )
                         }
                     }
+                    fun drawLetter(i: Int) = drawItem(layouts[i], plan.letterY(i), lerp(accentFrom[i], if (i == accented) swell else 0f, handover), 1f)
+
+                    // Second letters folding back into their letter, fading as they go.
+                    val closing = if (glide < 1f && plan.closing >= 0) letters.getOrNull(plan.closing)?.let { prefixLayouts[it] } else null
+                    if (closing != null) {
+                        for (j in 0 until min(plan.closingCount, closing.size)) drawItem(closing[j], plan.closingY(j), 0f, 1f - glide, OptionSwell)
+                    }
                     // The accented letter last, so if the rise's overshoot makes neighbours touch, it stays in front.
                     for (i in layouts.indices) if (i != accented) drawLetter(i)
-                    if (accented >= 0 && accented < layouts.size) drawLetter(accented)
-
-                    // The held letter's second letters, in a column inward of it on a pill of the scrim.
-                    val options = if (column > 0f) letters.getOrNull(accented)?.let { prefixLayouts[it] } else null
-                    if (options != null && options.size >= 2) {
-                        val slotP = min(PrefixSlot.toPx(), size.height / options.size)
-                        var widest = 0
-                        for (o in options) if (o.size.width > widest) widest = o.size.width
-                        val padX = 16.dp.toPx()
-                        val padY = 6.dp.toPx()
-                        // Slides in a little from the letter as it appears.
-                        val cx = restX + inward * (depth + PrefixOffset.toPx() - 12.dp.toPx() * (1f - column))
-                        val pillWidth = widest + 2 * padX
-                        drawRoundRect(
-                            style.scrim,
-                            topLeft = Offset(cx - pillWidth / 2f, columnTop - padY),
-                            size = Size(pillWidth, slotP * options.size + 2 * padY),
-                            cornerRadius = CornerRadius(22.dp.toPx()),
-                            alpha = 0.72f * column,
-                        )
-                        for (i in options.indices) {
-                            val layout = options[i]
-                            val on = i == picked
-                            val cy = columnTop + slotP * (i + 0.5f)
-                            val scale = if (on) 1.2f else 1f
-                            withTransform({ scale(scale, scale, pivot = Offset(cx, cy)) }) {
-                                drawText(
-                                    layout,
-                                    color = if (on) style.accent else style.content,
-                                    topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f),
-                                    alpha = column * if (on || !picking) 1f else 0.7f,
-                                )
-                            }
+                    // The open letter's second letters, coming out of it; the one under the finger takes the accent.
+                    val open = if (plan.open >= 0) letters.getOrNull(plan.open)?.let { prefixLayouts[it] } else null
+                    if (open != null) {
+                        for (j in 0 until min(plan.openCount, open.size)) {
+                            if (j != picked) drawItem(open[j], plan.optionY(j), 0f, glide, OptionSwell)
                         }
                     }
+                    if (accented >= 0 && accented < layouts.size) drawLetter(accented)
+                    if (open != null && picked in 0 until min(plan.openCount, open.size)) drawItem(open[picked], plan.optionY(picked), swell, glide, OptionSwell)
                 }
             },
     )

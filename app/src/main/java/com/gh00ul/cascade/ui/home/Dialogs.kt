@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -51,7 +52,8 @@ internal fun folderChoices(settings: LauncherSettings, icons: Map<String, IconIm
 @Composable
 fun RenameDialog(app: AppEntry, onDismiss: () -> Unit) {
     val prefs = LocalContext.current.launcher.prefs
-    var text by remember { mutableStateOf(app.label) }
+    // Saved, so what's typed outlives the activity being recreated (dark mode, font size).
+    var text by rememberSaveable { mutableStateOf(app.label) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rename") },
@@ -88,9 +90,11 @@ fun RenameDialog(app: AppEntry, onDismiss: () -> Unit) {
  */
 @Composable
 fun FolderNameDialog(title: String, initial: String, confirmLabel: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    var text by remember { mutableStateOf(TextFieldValue(initial, selection = TextRange(0, initial.length))) }
+    // Saved, selection and all, so what's typed outlives the activity being recreated (dark mode, font size).
+    var text by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(initial, selection = TextRange(0, initial.length)))
+    }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
     fun confirm() {
         onConfirm(text.text.trim())
         onDismiss()
@@ -108,6 +112,9 @@ fun FolderNameDialog(title: String, initial: String, confirmLabel: String, onCon
                 keyboardActions = KeyboardActions(onDone = { confirm() }),
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),
             )
+            // Asked for in here, not in the body above: the dialog is a window of its own, composed about a frame later,
+            // and the field has to be attached before it can take focus.
+            LaunchedEffect(Unit) { focus.requestFocus() }
         },
         confirmButton = { TextButton(onClick = ::confirm) { Text(confirmLabel) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

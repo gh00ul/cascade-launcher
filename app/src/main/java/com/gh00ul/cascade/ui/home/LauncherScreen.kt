@@ -140,6 +140,7 @@ import com.gh00ul.cascade.util.LockService
 import com.gh00ul.cascade.util.sendFromLauncher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -398,14 +399,17 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     val listAlpha = searchTransition.animateHomeAlpha()
     // An app's or a folder's long-press menu, popped from its row.
     var menu by remember { mutableStateOf<MenuTarget?>(null) }
-    var renameApp by remember { mutableStateOf<AppEntry?>(null) }
+    // The app being renamed, by key. It, the widget sheet and the folder dialogs are saved, so they're still open after
+    // the activity is recreated (dark mode, font size); the sheet must be, to receive the widget "Allow" result.
+    var renameApp by rememberSaveable { mutableStateOf<String?>(null) }
     // The home menu, open at the long-press point (root coordinates).
     var homeMenuAt by remember { mutableStateOf<Offset?>(null) }
-    var widgetSheetOpen by remember { mutableStateOf(false) }
-    // Folders: the one popped open (and where from), the one being renamed, and the app a new folder is being named for.
+    var widgetSheetOpen by rememberSaveable { mutableStateOf(false) }
+    // Folders: the one popped open (and where from), the one being renamed, and the app (by key) a new folder is being
+    // named for.
     var openFolder by remember { mutableStateOf<OpenFolder?>(null) }
-    var renameFolder by remember { mutableStateOf<String?>(null) }
-    var newFolderFor by remember { mutableStateOf<AppEntry?>(null) }
+    var renameFolder by rememberSaveable { mutableStateOf<String?>(null) }
+    var newFolderFor by rememberSaveable { mutableStateOf<String?>(null) }
     // Bumped to drop the pop-up without its exit, so coming back home never shows it fading away.
     var folderPopupGeneration by remember { mutableIntStateOf(0) }
     // Row whose notifications are swiped open; "fav:" and "all:" prefixes keep the two lists apart.
@@ -495,14 +499,6 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         mediaResting = live?.isPaused == true
         restPending = live == null
     }
-    val update by Updater.state.collectAsStateWithLifecycle()
-    val dismissedUpdate by remember { Updater.dismissed(context) }.collectAsStateWithLifecycle()
-    val showUpdate = when (val u = update) {
-        is Updater.State.Available -> u.release.tag != dismissedUpdate
-        is Updater.State.Downloading, is Updater.State.Installing -> true
-        is Updater.State.Failed -> u.release != null && u.release.tag != dismissedUpdate
-        else -> false
-    }
     val roleRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         isDefault = LauncherActions.isDefaultLauncher(context)
         // The role dialog is skipped silently after repeated refusals; fall back to the settings page.
@@ -583,8 +579,16 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     LaunchedEffect(resuming) {
         if (!resuming) return@LaunchedEffect
         val app = resumeApp
-        val started = withTimeoutOrNull(4_000) { NowPlaying.state.first { it?.isPlaying == true } }
-        if (started == null && app != null) launch(app, null)
+        // Home doesn't recompose while it's stopped, so ON_STOP clearing `resuming` (below) can't restart this effect
+        // then. The wait watches it itself instead, and lets go of NowPlaying as soon as home is left.
+        val ended = withTimeoutOrNull(4_000) {
+            combine(NowPlaying.state, snapshotFlow { resuming }) { player, waiting -> player?.isPlaying == true || !waiting }
+                .first { it }
+        }
+        // Only ever over home: the time can run out just as home is left, before the wait has seen it.
+        if (ended == null && app != null && resuming && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            launch(app, null)
+        }
         resuming = false
     }
     // Home left meanwhile (another app opened, or the player's own screen): the wait ends there, so the fallback never
@@ -773,7 +777,16 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         },
                         widgets = { WidgetStack(settings, onEdit = { widgetSheetOpen = true }) },
                         onboarding = {
-                            // Read in here, so granting access or the default role recomposes only this slot, not the screen.
+                            // Read in here, so granting access or the default role recomposes only this slot, not the
+                            // screen; so does each step of an update's download progress.
+                            val update by Updater.state.collectAsStateWithLifecycle()
+                            val dismissedUpdate by remember { Updater.dismissed(context) }.collectAsStateWithLifecycle()
+                            val showUpdate = when (val u = update) {
+                                is Updater.State.Available -> u.release.tag != dismissedUpdate
+                                is Updater.State.Downloading, is Updater.State.Installing -> true
+                                is Updater.State.Failed -> u.release != null && u.release.tag != dismissedUpdate
+                                else -> false
+                            }
                             val cardSlot = when {
                                 showUpdate -> HomeCardSlot.UPDATE
                                 !isDefault && !defaultPromptHidden -> HomeCardSlot.DEFAULT
@@ -994,8 +1007,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                                     folders = folderChoices(settings, icons.value),
                                     folderId = settings.folderOf(app.key),
                                     onOpenNotification = { openNotification(app, it) },
-                                    onRename = { renameApp = app },
-                                    onNewFolder = { newFolderFor = app },
+                                    onRename = { renameApp = app.key },
+                                    onNewFolder = { newFolderFor = app.key },
                                     onHidePlayer = if (media != null && !media.isPlaying && app.packageName == media.packageName) NowPlaying::hide else null,
                                     onDismiss = { menu = null },
                                 )
@@ -1023,7 +1036,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         }
     }
 
-    renameApp?.let { app -> RenameDialog(app) { renameApp = null } }
+    renameApp?.let { byKey[it] }?.let { app -> RenameDialog(app) { renameApp = null } }
     if (widgetSheetOpen) WidgetStackSheet(settings, onDismiss = { widgetSheetOpen = false })
     renameFolder?.let { id ->
         FolderNameDialog(
@@ -1034,7 +1047,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             onDismiss = { renameFolder = null },
         )
     }
-    newFolderFor?.let { app ->
+    newFolderFor?.let { byKey[it] }?.let { app ->
         FolderNameDialog(
             title = "New folder",
             // The app's Play category where it has one ("Games"), else "Folder"; numbered if a folder has it already.

@@ -48,7 +48,12 @@ internal fun rememberPermissionPrompt(permission: String, onResult: (granted: Bo
     // A refusal with no rationale before or after: a closed dialog, or a block noted by no earlier session (one from
     // before this was kept). A second one in a row can only be the block, so it counts as one.
     val silentRefusal = rememberSaveable(permission) { mutableStateOf(false) }
+    // A request still waiting on its dialog. Android answers a second one at once with nothing (which reads as a
+    // refusal) and the real answer then reaches no one, so a quick double tap mustn't send one. Not saved: a page made
+    // again (after a rotation, say) starts able to ask, even if an answer got lost on the way.
+    val requesting = remember(permission) { mutableStateOf(false) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        requesting.value = false
         val rationaleNow = activity.showsRationale(permission)
         val refusals = refusals(context)
         // Read without getBoolean, which throws if the file ever held something else under this key.
@@ -65,6 +70,8 @@ internal fun rememberPermissionPrompt(permission: String, onResult: (granted: Bo
     }
     return remember(permission, context, activity, launcher) {
         PermissionPrompt(blocked) {
+            if (requesting.value) return@PermissionPrompt
+            requesting.value = true
             // Read before asking: afterwards it can't tell a closed dialog from a block.
             rationaleBefore.value = activity.showsRationale(permission)
             // Opened here rather than when the page is first drawn (home's first frame, for the calendar widget): the

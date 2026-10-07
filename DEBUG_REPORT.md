@@ -20,7 +20,9 @@ Branch `hardening/debug-pass`, started 2026-10-06 from `main` at v0.18.0 (08731b
   them caught 2 of our own mistakes, both fixed.
 - [x] **Phase 7, UI polish:** large-font clipping fixed on home, widgets, menus, strip and Settings; no Settings flash.
   98 new 2x shots, and all 142 old shots byte-identical.
-- [ ] **Phase 8, review:** an independent reviewer is auditing the full diff; its findings get fixed before release.
+- [x] **Phase 8, review:** the independent reviewer found nothing critical or high. Its one medium finding (an
+  unexpected HTTP-stack exception could crash home on every resume) and four low ones are fixed. Rules check: no
+  logging added, every suppression has its reason, broad catches are justified, no functionality removed.
 - **Needs you:** the Auto Backup scope decision, and a run of the phone checklist.
 
 Every bug is listed below with severity, root cause, fix, files, the agent that found it, and how it was verified.
@@ -303,6 +305,32 @@ Checked and left alone:
   widening too, and it reaches ~12 dp up into the app's name. So a tap on the lower half of a favorite's name may open
   its latest notification instead of the app. The fix (consume pointer input on the name row) changes tap behaviour,
   so it waits for the owner.
+
+## Phase 8: review
+
+An independent Reviewer Agent (read-only) audited `git diff 08731b0..HEAD`: all main code end to end, tests more
+lightly. Nothing critical or high.
+
+| # | Severity | Finding | Resolution |
+|---|---|---|---|
+| 1 | Medium | The rewritten update check caught only network exceptions; an unchecked one from the platform's HTTP stack would crash home from a handler-less scope, and again on every resume (nothing was written to back off) | A last `catch (RuntimeException)` maps it to "Couldn't check for updates (…)" with the 30-minute retry, justified in a comment; `busy` is released in `finally` |
+| 2 | Low (latent) | `ChipText` would throw on an intrinsic (unbounded-width) measure | Unbounded width places both parts side by side |
+| 3 | Low | A held install confirmation could reappear once when Android hadn't blocked it, and opened in home's own task (a Home press there cancels the install) | Always started in its own task, as the receiver does; the trade-off is documented |
+| 5 | Nit | A failed free-space query read as a network failure, which would block updates for good if it always failed | Treated as unknown; the download just tries |
+| 6 | Nit | `catch (RuntimeException)` around starting the confirmation, without a reason | Narrowed to `ActivityNotFoundException` / `SecurityException` |
+| 7 | Nit | `tools:targetApi` on `<application>` unexplained | Commented: it covers only `enableOnBackInvokedCallback` |
+| 8 | Nit | The access-help flag stayed set when notification-access settings didn't open | Set only when the page opened (home and Settings) |
+| 4 | Low | The listener rebind can cycle once a listener whose connection is still queued at boot | Accepted: it ends connected; needs a device to see |
+| 9 | Nit | `widget_setup`'s tiny file can be first read on main | Accepted: once per process, a few bytes |
+
+Rules check from the review:
+- **Logging:** no `Log`/`println` added, and the only StrictMode logging is debug-only.
+- **Error text:** no URLs, tokens or message contents in user-visible errors; the updater never shows the signed
+  download link.
+- **Suppressions:** every one carries its reason.
+- **Broad catches:** each justified.
+- **Removed functionality:** none.
+- **Destructive changes:** none beyond Cascade's own leftover `update.apk` and uncommitted install sessions.
 
 ## Not verified on a device (S25 Ultra checklist)
 

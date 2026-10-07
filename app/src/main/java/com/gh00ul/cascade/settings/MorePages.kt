@@ -152,7 +152,14 @@ internal fun GesturesPage(settings: LauncherSettings, apps: List<AppEntry>, icon
                 "The letter under your finger opens up to its second letters, Ma, Me, Mu, to scroll through on the way to the next",
                 settings.secondLetters,
                 key = "secondLetters",
-            ) { on -> prefs.update { it.copy(secondLetters = on) } }
+            ) { on -> prefs.update { it.copy(secondLetters = on, stripApps = it.stripApps && !on) } }
+            // The strip opens up one way or the other: turning either on turns the other off.
+            SwitchRow(
+                "App names",
+                "The letter under your finger opens up to its apps by name, Mail, Maps, Messages, to scroll through",
+                settings.stripApps,
+                key = "stripApps",
+            ) { on -> prefs.update { it.copy(stripApps = on, secondLetters = it.secondLetters && !on) } }
         }
 
         SettingsGroup("Feedback") {

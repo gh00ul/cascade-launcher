@@ -166,6 +166,9 @@ private sealed interface Row {
     }
 }
 
+/** An app's name as the letter strip shows it: a work app says so, as its row does. */
+internal fun stripName(app: AppEntry) = if (app.isManagedProfile) "${app.label} (work)" else app.label
+
 private fun buildRows(apps: List<AppEntry>): List<Row> = buildList {
     var section: String? = null
     // Sections come in one run each; should one ever repeat, a second header would be a duplicate list key.
@@ -547,10 +550,15 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
         buildMap { rows.forEachIndexed { i, row -> if (row is Row.Section && row.letter !in this) put(row.letter, i + FIRST_APP_ROW) } }
     }
     val letters = remember(letterRows) { letterRows.keys.toList() }
-    // The strip's second letters (Ma, Me, Mu), worked out only while the setting is on.
-    val prefixes = remember(rows, settings.secondLetters) {
-        if (!settings.secondLetters) emptyMap()
-        else letterPrefixes(rows.mapIndexedNotNull { i, row -> (row as? Row.App)?.let { PrefixSource(it.app.section, it.app.label, i + FIRST_APP_ROW) } })
+    // What a letter opens up to on the strip: its second letters (Ma, Me, Mu) or its apps by name, worked out only while
+    // one of those settings is on. A work app's name says so, as its row does.
+    val prefixes = remember(rows, settings.secondLetters, settings.stripApps) {
+        val sources = { rows.mapIndexedNotNull { i, row -> (row as? Row.App)?.let { PrefixSource(it.app.section, stripName(it.app), i + FIRST_APP_ROW) } } }
+        when {
+            settings.stripApps -> letterApps(sources())
+            settings.secondLetters -> letterPrefixes(sources())
+            else -> emptyMap()
+        }
     }
     val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 } }
 
@@ -864,6 +872,7 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
                         prefixes = prefixes,
                         onPrefix = { prefix -> scope.launch { listState.scrollToItem(prefix.row) } },
+                        names = settings.stripApps,
                         // Hidden from TalkBack under an open folder or menu, like the list it scrolls.
                         modifier = Modifier.fillMaxHeight().hiddenFromAccessibilityWhen(popupOpen),
                         // Quiet on home, where the clock and favorites come first; as strong as ever over the list.

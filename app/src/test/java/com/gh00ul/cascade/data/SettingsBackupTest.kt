@@ -54,6 +54,7 @@ class SettingsBackupTest {
         musicGlow = false,
         copyLoginCodes = false,
         secondLetters = true,
+        stripApps = true,
     )
 
     private fun decode(json: String, current: LauncherSettings = LauncherSettings()) = SettingsBackup.decode(json, current)

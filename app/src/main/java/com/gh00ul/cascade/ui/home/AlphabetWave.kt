@@ -72,6 +72,10 @@ private val Unfold = tween<Float>(Motion.QUICK)
  */
 private const val OptionSlot = 1.3f
 private const val OptionSwell = 2f
+/** An app's name under the finger swells less again: it's a word, not two letters. */
+private const val NameSwell = 1.5f
+/** How far past the letters' column, toward the screen edge, app names end (they grow inward from there). */
+private val NameEdge = 5.dp
 
 /** A second-letter step under a strip letter: "Ma", and the A–Z list row its first app is at. */
 @Immutable
@@ -95,6 +99,16 @@ internal fun letterPrefixes(entries: List<PrefixSource>): Map<String, List<Lette
         val prefixes = bySection.getOrPut(entry.section) { ArrayList() }
         if (prefixes.none { it.text == text }) prefixes += LetterPrefix(text, entry.row)
     }
+    return bySection
+}
+
+/**
+ * Each section's apps in list order, by name, each with its row: for the App names setting, where a letter opens up to
+ * its apps rather than their second letters.
+ */
+internal fun letterApps(entries: List<PrefixSource>): Map<String, List<LetterPrefix>> {
+    val bySection = LinkedHashMap<String, MutableList<LetterPrefix>>()
+    for (entry in entries) bySection.getOrPut(entry.section) { ArrayList() } += LetterPrefix(entry.label, entry.row)
     return bySection
 }
 
@@ -192,7 +206,9 @@ private class StripPlan(val count: Int) {
  * With [prefixes] (the Second letters setting), the letter under the finger opens up in the strip to its second letters
  * (M: Ma, Me, Mu, each in a slot of its own before N), and dragging on through them jumps the list to each with
  * [onPrefix]. Reaching the next letter folds them back and opens that one's; the letter just reached stays under the
- * finger while the strip makes room around it. Lifting the finger folds them all back.
+ * finger while the strip makes room around it. Lifting the finger folds them all back. With [names] (the App names
+ * setting), [prefixes] are the letter's apps by name instead: they end at the strip's edge and grow inward, and a letter
+ * with even one app opens.
  */
 @Composable
 fun AlphabetWave(
@@ -202,6 +218,7 @@ fun AlphabetWave(
     restAlpha: () -> Float = { 1f },
     prefixes: Map<String, List<LetterPrefix>> = emptyMap(),
     onPrefix: (LetterPrefix) -> Unit = {},
+    names: Boolean = false,
 ) {
     // Read through a state: the gesture below outlives recompositions, and Settings can turn vibration off meanwhile.
     val haptics by rememberUpdatedState(LocalHapticFeedback.current)
@@ -215,6 +232,7 @@ fun AlphabetWave(
     val currentOnLetter by rememberUpdatedState(onLetter)
     val currentPrefixes by rememberUpdatedState(prefixes)
     val currentOnPrefix by rememberUpdatedState(onPrefix)
+    val currentNames by rememberUpdatedState(names)
     val scope = rememberCoroutineScope()
     val plan = remember(letters.size) { StripPlan(letters.size) }
 
@@ -319,7 +337,7 @@ fun AlphabetWave(
                     if (index != plan.open) {
                         // Open this letter's second letters (folding any others back), keeping it under the finger.
                         val options = currentPrefixes[currentLetters[index]].orEmpty()
-                        val opening = if (options.size >= 2) options.size else 0
+                        val opening = if (options.size >= (if (currentNames) 1 else 2)) options.size else 0
                         if (opening > 0 || plan.open >= 0) layOut(if (opening > 0) index else -1, opening, index, plan.toY[index])
                     }
                 }
@@ -373,12 +391,19 @@ fun AlphabetWave(
 
                     // A local function, called rather than passed around, so it allocates nothing. [accent] is how far
                     // toward the accent color it is; [fade] scales its alpha (second letters coming and going).
-                    fun drawItem(layout: TextLayoutResult, cy: Float, accent: Float, fade: Float, swellTo: Float = 2.6f) {
+                    fun drawItem(layout: TextLayoutResult, cy: Float, accent: Float, fade: Float, swellTo: Float = 2.6f, name: Boolean = false) {
                         val influence = if (touching) {
                             val d = cy - touchY
                             exp(-(d * d) / (2f * spread * spread)) * wave
                         } else 0f
-                        val cx = restX + inward * depth * influence
+                        // An app's name ends just past the letters' column and grows inward from there, so a long one
+                        // stays on screen.
+                        val cx = restX + inward * depth * influence - if (name) inward * NameEdge.toPx() else 0f
+                        val left = when {
+                            !name -> cx - layout.size.width / 2f
+                            rtl -> cx
+                            else -> cx - layout.size.width
+                        }
                         // The letter under the finger still swells to the full 2.6x, and a little more with the accent.
                         val scale = (fit + (swellTo - fit) * influence) * (1f + AccentGrowth * accent)
                         // At rest (and fully accented) the exact colors, not a lerp's round trip through Oklab.
@@ -391,17 +416,18 @@ fun AlphabetWave(
                             drawText(
                                 layout,
                                 color = color,
-                                topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f),
+                                topLeft = Offset(left, cy - layout.size.height / 2f),
                                 alpha = (0.55f + 0.45f * influence) * fade,
                             )
                         }
                     }
+                    val itemSwell = if (names) NameSwell else OptionSwell
                     fun drawLetter(i: Int) = drawItem(layouts[i], plan.letterY(i), lerp(accentFrom[i], if (i == accented) swell else 0f, handover), 1f)
 
                     // Second letters folding back into their letter, fading as they go.
                     val closing = if (glide < 1f && plan.closing >= 0) letters.getOrNull(plan.closing)?.let { prefixLayouts[it] } else null
                     if (closing != null) {
-                        for (j in 0 until min(plan.closingCount, closing.size)) drawItem(closing[j], plan.closingY(j), 0f, 1f - glide, OptionSwell)
+                        for (j in 0 until min(plan.closingCount, closing.size)) drawItem(closing[j], plan.closingY(j), 0f, 1f - glide, itemSwell, names)
                     }
                     // The accented letter last, so if the rise's overshoot makes neighbours touch, it stays in front.
                     for (i in layouts.indices) if (i != accented) drawLetter(i)
@@ -409,11 +435,11 @@ fun AlphabetWave(
                     val open = if (plan.open >= 0) letters.getOrNull(plan.open)?.let { prefixLayouts[it] } else null
                     if (open != null) {
                         for (j in 0 until min(plan.openCount, open.size)) {
-                            if (j != picked) drawItem(open[j], plan.optionY(j), 0f, glide, OptionSwell)
+                            if (j != picked) drawItem(open[j], plan.optionY(j), 0f, glide, itemSwell, names)
                         }
                     }
                     if (accented >= 0 && accented < layouts.size) drawLetter(accented)
-                    if (open != null && picked in 0 until min(plan.openCount, open.size)) drawItem(open[picked], plan.optionY(picked), swell, glide, OptionSwell)
+                    if (open != null && picked in 0 until min(plan.openCount, open.size)) drawItem(open[picked], plan.optionY(picked), swell, glide, itemSwell, names)
                 }
             },
     )

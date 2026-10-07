@@ -78,4 +78,23 @@ class ListScreenshots : ScreenshotTest() {
     ) {
         HomeScreen(settings.copy(secondLetters = true), apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)
     }
+
+    /**
+     * App names on: M held and dragged on four slots. M has opened up in the strip to its apps, whole (Mail, the work
+     * Mail, Maps, Messages, Music), ending at the strip's edge; Messages, under the finger, takes the accent.
+     */
+    @Test fun alphabetWaveAppNames() = snap(
+        "AlphabetWave_AppNames",
+        afterContent = {
+            onNodeWithContentDescription("Alphabet index").performTouchInput {
+                if (currentPosition() != null) up()
+                down(center + Offset(0f, 33.dp.toPx()))
+                // To the first app (half a letter's slot and half an app's), then three apps' slots on.
+                val distance = (22.dp.toPx() + 22.dp.toPx() * 1.3f) / 2 + 22.dp.toPx() * 1.3f * 3
+                repeat(16) { moveBy(Offset(0f, distance / 16)) }
+            }
+        },
+    ) {
+        HomeScreen(settings.copy(stripApps = true), apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)
+    }
 }

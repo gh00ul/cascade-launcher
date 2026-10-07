@@ -129,6 +129,8 @@ data class LauncherSettings(
     val copyLoginCodes: Boolean = true,
     /** The letter under the finger on the strip opens up to its apps' second letters (Ma, Me, Mu) to scroll through. */
     val secondLetters: Boolean = false,
+    /** The letter under the finger on the strip opens up to its apps by name instead (one or the other, never both). */
+    val stripApps: Boolean = false,
 )
 
 class Prefs(context: Context) {
@@ -205,6 +207,7 @@ class Prefs(context: Context) {
         musicGlow = sp.getBoolean(MUSIC_GLOW, true),
         copyLoginCodes = sp.getBoolean(COPY_LOGIN_CODES, true),
         secondLetters = sp.getBoolean(SECOND_LETTERS, false),
+        stripApps = sp.getBoolean(STRIP_APPS, false),
     )
 
     private fun write(s: LauncherSettings) {
@@ -253,6 +256,7 @@ class Prefs(context: Context) {
             .putBoolean(MUSIC_GLOW, s.musicGlow)
             .putBoolean(COPY_LOGIN_CODES, s.copyLoginCodes)
             .putBoolean(SECOND_LETTERS, s.secondLetters)
+            .putBoolean(STRIP_APPS, s.stripApps)
             .apply()
     }
 
@@ -301,6 +305,7 @@ class Prefs(context: Context) {
         const val MUSIC_GLOW = "music_glow"
         const val COPY_LOGIN_CODES = "copy_login_codes"
         const val SECOND_LETTERS = "second_letters"
+        const val STRIP_APPS = "strip_apps"
     }
 }
 

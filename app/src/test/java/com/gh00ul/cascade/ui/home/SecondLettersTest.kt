@@ -52,6 +52,13 @@ class LetterPrefixesTest {
         assertEquals(listOf("Eb", "Ec", "Em"), prefixes("E" to "eBay", "E" to "Écoute", "E" to "Email")["E"]?.map { it.text })
     }
 
+    /** App names: every app of the letter, in list order, whole. */
+    @Test fun appNamesAreEveryAppInListOrder() {
+        val found = letterApps(listOf(PrefixSource("M", "Mail", 10), PrefixSource("M", "Mail (work)", 11), PrefixSource("M", "Maps", 12), PrefixSource("N", "News", 13)))
+        assertEquals(listOf(LetterPrefix("Mail", 10), LetterPrefix("Mail (work)", 11), LetterPrefix("Maps", 12)), found["M"])
+        assertEquals(listOf(LetterPrefix("News", 13)), found["N"])
+    }
+
     /** "#" (digits, symbols), a one-letter name and a space after the first letter offer nothing to pick. */
     @Test fun onlyNamesThatSpellTheirLetterCount() {
         val found = prefixes("#" to "1Password", "#" to "7-Eleven", "M" to "M Bank", "M" to "Mail", "X" to "X")
@@ -84,13 +91,13 @@ class SecondLettersTest {
 
     private val list = LazyListState(firstVisibleItemIndex = FIRST_APP_ROW)
 
-    private fun show(secondLetters: Boolean) {
+    private fun show(secondLetters: Boolean = false, stripApps: Boolean = false) {
         compose.setContent {
             CompositionLocalProvider(LocalNow provides { FIXED_NOW }) {
                 LauncherTheme {
                     LauncherSurface(darkText = false, Modifier.fillMaxSize()) {
                         HomeScreen(
-                            settings = LauncherSettings(favorites = FakeApps.favorites.map { it.key }, secondLetters = secondLetters),
+                            settings = LauncherSettings(favorites = FakeApps.favorites.map { it.key }, secondLetters = secondLetters, stripApps = stripApps),
                             apps = FakeApps.all,
                             favorites = FakeApps.favorites,
                             icons = emptyMap(),
@@ -147,6 +154,30 @@ class SecondLettersTest {
         assertEquals("section:C", top())
         strip { slide(0f, toFirst.toPx()) }
         assertEquals("app:${app("Calculator").key}", top())
+        strip { up() }
+    }
+
+    /** App names: C opens up to its apps, whole, each a slot of its own; even D, with one app, opens to it. */
+    @Test fun withAppNamesALetterOpensToItsApps() {
+        show(stripApps = true)
+        val letter = 22.dp
+        val option = letter * 1.3f
+        val toFirst = (letter + option) / 2
+        strip { down(letter("C")) }
+        assertEquals("section:C", top())
+        strip { slide(0f, toFirst.toPx()) }
+        assertEquals("app:${app("Calculator").key}", top())
+        strip { slide(0f, option.toPx()) }
+        assertEquals("app:${app("Calendar").key}", top())
+        strip { slide(0f, option.toPx() * 2) }
+        assertEquals("app:${app("Clock").key}", top())
+        strip { slide(0f, option.toPx()) }
+        assertEquals("app:${app("Contacts").key}", top())
+        // On to D, which opens to Docs below it.
+        strip { slide(0f, toFirst.toPx()) }
+        assertEquals("section:D", top())
+        strip { slide(0f, toFirst.toPx()) }
+        assertEquals("app:${app("Docs").key}", top())
         strip { up() }
     }
 

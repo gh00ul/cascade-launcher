@@ -69,10 +69,12 @@ import com.gh00ul.cascade.ui.home.SearchOverlay
 import com.gh00ul.cascade.ui.home.SectionHeader
 import com.gh00ul.cascade.ui.home.animateHomeAlpha
 import com.gh00ul.cascade.ui.home.homeScrim
+import com.gh00ul.cascade.ui.home.letterApps
 import com.gh00ul.cascade.ui.home.letterPrefixes
 import com.gh00ul.cascade.ui.home.listCover
 import com.gh00ul.cascade.ui.home.rememberMusicGlow
 import com.gh00ul.cascade.ui.home.rememberHomeSnapFling
+import com.gh00ul.cascade.ui.home.stripName
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import com.gh00ul.cascade.ui.theme.Motion
@@ -238,9 +240,13 @@ internal fun HomeScreen(
         buildMap { rows.forEachIndexed { i, row -> if (row is ListRow.Section && row.letter !in this) put(row.letter, i + FIRST_APP_ROW) } }
     }
     val letters = remember(letterRows) { letterRows.keys.toList() }
-    val prefixes = remember(rows, settings.secondLetters) {
-        if (!settings.secondLetters) emptyMap()
-        else letterPrefixes(rows.mapIndexedNotNull { i, row -> (row as? ListRow.App)?.let { PrefixSource(it.app.section, it.app.label, i + FIRST_APP_ROW) } })
+    val prefixes = remember(rows, settings.secondLetters, settings.stripApps) {
+        val sources = { rows.mapIndexedNotNull { i, row -> (row as? ListRow.App)?.let { PrefixSource(it.app.section, stripName(it.app), i + FIRST_APP_ROW) } } }
+        when {
+            settings.stripApps -> letterApps(sources())
+            settings.secondLetters -> letterPrefixes(sources())
+            else -> emptyMap()
+        }
     }
     val searchTransition = updateTransition(searchOpen, label = "search")
     val listAlpha = searchTransition.animateHomeAlpha()
@@ -343,6 +349,7 @@ internal fun HomeScreen(
                     onLetter = { letter -> letterRows[letter]?.let { index -> scope.launch { listState.scrollToItem(index) } } },
                     prefixes = prefixes,
                     onPrefix = { prefix -> scope.launch { listState.scrollToItem(prefix.row) } },
+                    names = settings.stripApps,
                     modifier = Modifier.fillMaxHeight(),
                     restAlpha = { HomeStripAlpha + (1f - HomeStripAlpha) * progress() },
                 )

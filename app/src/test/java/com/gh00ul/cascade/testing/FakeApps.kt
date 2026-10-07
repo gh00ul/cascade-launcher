@@ -64,6 +64,19 @@ object FakeApps {
     /** The home screen favorites, top to bottom. */
     val favorites = listOf(phone, messages, mail, camera, photos, music)
 
+    /** A real phone's worth of apps, sorted, where some letters hold many: S has 16, G 12, T 8. No icons. */
+    val crowded: List<AppEntry> = listOf(
+        "Amazon", "Android Auto", "AR Zone", "Authenticator", "Bixby", "Calculator", "Calendar", "Camera", "Cascade",
+        "Chrome", "Clock", "CloudMail", "Contacts", "Discord", "Drive", "Facebook", "Files", "Galaxy Store",
+        "Galaxy Wearable", "Gallery", "Game Launcher", "Gemini", "Gmail", "Google", "Google Home", "Google One",
+        "Google Play Games", "Google Play Store", "Google TV", "Instagram", "Keep", "Maps", "Meet", "Messages",
+        "Messenger", "My Files", "Netflix", "Outlook", "Phone", "Photos", "PodBattery", "Reddit", "Samsung Free",
+        "Samsung Health", "Samsung Internet", "Samsung Members", "Samsung Notes", "Samsung Pass", "Samsung Wallet",
+        "Secure Folder", "Settings", "Shazam", "Slack", "Smart Switch", "SmartThings", "Snapchat", "Spotify", "Steam",
+        "Tasks", "Teams", "Telegram", "Threads", "TikTok", "Tips", "Translate", "Twitch", "Uber", "Venmo", "Verizon", "VLC",
+        "Waze", "Wear OS", "Weather", "WhatsApp", "Wikipedia", "X", "Yelp", "YouTube", "YouTube Music", "Zillow", "Zoom",
+    ).map { app(it, pkg(it)) }.sortedBy { it.label.lowercase() }
+
     fun byLabel(label: String, work: Boolean = false) = all.first { it.label == label && it.isWork == work }
 
     /**

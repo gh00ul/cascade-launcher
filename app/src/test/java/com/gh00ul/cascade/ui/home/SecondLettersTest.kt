@@ -91,14 +91,17 @@ class SecondLettersTest {
 
     private val list = LazyListState(firstVisibleItemIndex = FIRST_APP_ROW)
 
-    private fun show(secondLetters: Boolean = false, stripApps: Boolean = false) {
+    private var apps = FakeApps.all
+
+    private fun show(secondLetters: Boolean = false, stripApps: Boolean = false, apps: List<AppEntry> = FakeApps.all) {
+        this.apps = apps
         compose.setContent {
             CompositionLocalProvider(LocalNow provides { FIXED_NOW }) {
                 LauncherTheme {
                     LauncherSurface(darkText = false, Modifier.fillMaxSize()) {
                         HomeScreen(
                             settings = LauncherSettings(favorites = FakeApps.favorites.map { it.key }, secondLetters = secondLetters, stripApps = stripApps),
-                            apps = FakeApps.all,
+                            apps = apps,
                             favorites = FakeApps.favorites,
                             icons = emptyMap(),
                             listState = list,
@@ -112,7 +115,7 @@ class SecondLettersTest {
 
     /** The row the list jumped to, as its key: "app:…" or "section:…". */
     private fun top() = list.layoutInfo.visibleItemsInfo.first { it.index == list.firstVisibleItemIndex }.key
-    private fun app(label: String): AppEntry = FakeApps.byLabel(label)
+    private fun app(label: String): AppEntry = apps.first { it.label == label && !it.isWork }
 
     private fun strip(block: TouchInjectionScope.() -> Unit) {
         compose.onNodeWithContentDescription("Alphabet index").performTouchInput(block)
@@ -121,7 +124,7 @@ class SecondLettersTest {
 
     /** Where [letter] sits on the strip, laid out as the strip lays its letters out: centered, slots of 22dp at most. */
     private fun TouchInjectionScope.letter(letter: String): Offset {
-        val letters = FakeApps.all.map { it.section }.distinct()
+        val letters = apps.map { it.section }.distinct()
         val slot = minOf(height.toFloat() / letters.size, 22.dp.toPx())
         val top = (height - slot * letters.size) / 2f
         return Offset(centerX, top + slot * (letters.indexOf(letter) + 0.5f))
@@ -178,6 +181,42 @@ class SecondLettersTest {
         assertEquals("section:D", top())
         strip { slide(0f, toFirst.toPx()) }
         assertEquals("app:${app("Docs").key}", top())
+        strip { up() }
+    }
+
+    /**
+     * A letter with more apps than fit below it on the strip (S, with 16) still opens under the finger, its first app
+     * just below; the strip then scrolls up past the finger as it moves, so the last app and the letters after it come
+     * within reach.
+     */
+    @Test fun aCrowdedLetterOpensUnderTheFinger() {
+        show(stripApps = true, apps = FakeApps.crowded)
+        val letters = apps.map { it.section }.distinct()
+        val opened = apps.count { it.section == "S" }
+        var slot = 0f
+        var below = 0f
+        strip {
+            val at = letter("S")
+            down(at)
+            // S's layout once open: slots shrunk to fit it all, S kept where it was, and how fast the rest scrolls past.
+            slot = minOf(height / (letters.size + opened * 1.3f), 22.dp.toPx())
+            val total = slot * letters.size + opened * slot * 1.3f
+            below = maxOf(1f, (total - slot * (letters.indexOf("S") + 0.5f)) / (height - at.y))
+        }
+        assertEquals("section:S", top())
+        // A finger settling doesn't leave S (it used to land halfway down S's apps, which had moved under it).
+        strip { slide(0f, slot / 4) }
+        assertEquals("section:S", top())
+        // From S's middle: to its first app, its second, then its last, and on to T, each a scrolled slot on.
+        val toFirst = (slot / 2 + slot * 1.3f / 2) / below - slot / 4
+        strip { slide(0f, toFirst) }
+        assertEquals("app:${app("Samsung Free").key}", top())
+        strip { slide(0f, slot * 1.3f / below) }
+        assertEquals("app:${app("Samsung Health").key}", top())
+        strip { slide(0f, slot * 1.3f * (opened - 2) / below) }
+        assertEquals("app:${app("Steam").key}", top())
+        strip { slide(0f, (slot * 1.3f / 2 + slot / 2) / below) }
+        assertEquals("section:T", top())
         strip { up() }
     }
 

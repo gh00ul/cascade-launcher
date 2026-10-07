@@ -101,6 +101,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gh00ul.cascade.R
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.DoubleTapAction
 import com.gh00ul.cascade.data.HomeFolder
@@ -667,7 +668,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                 LockService.isSupported && LockService.isEnabled(context) -> {
                     Toast.makeText(
                         context,
-                        "Couldn't lock the screen. Turn Cascade's lock service off and on in Accessibility.",
+                        // Named as Accessibility lists it, from the same string, so the two can't drift apart.
+                        "Couldn't lock the screen. Turn “${context.getString(R.string.lock_service_label)}” off and on in Accessibility.",
                         Toast.LENGTH_LONG,
                     ).show()
                     LauncherActions.openAccessibilitySettings(context)

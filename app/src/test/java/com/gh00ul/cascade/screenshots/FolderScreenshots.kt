@@ -60,6 +60,8 @@ class FolderScreenshots : ScreenshotTest() {
 
     @Test fun foldersWithoutIcons() = snap("Home_FoldersNoIcons") { Home(settings(showIcons = false)) }
 
+    @Test fun foldersFont2x() = snap("Home_Folders_Font2x") { FontScale(2f) { Home(settings()) } }
+
     /**
      * A tap on Work's icon (the row's middle is its notification preview, which opens the notification): its apps pop
      * up above the row, Mail with its dot.

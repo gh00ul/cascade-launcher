@@ -117,4 +117,31 @@ class RowScreenshots : ScreenshotTest() {
         val state = media.playing()
         snap("Media_Notifications", Frame.Component) { Player(state, notifications = FakeNotifications.messages(), expanded = true) }
     }
+
+    // At 2x font size: names and previews ellipsized on one line, pills and buttons whole.
+
+    @Test fun favoritePreviewFont2x() = snap("AppRow_FavoritePreview_Font2x", Frame.Component) {
+        FontScale(2f) {
+            RowBackdrop {
+                Row(FakeApps.messages, FakeNotifications.messages(), large = true)
+                Row(FakeApps.mail, FakeNotifications.mail(), large = true)
+                Row(FakeApps.phone, emptyList(), large = true)
+            }
+        }
+    }
+
+    @Test fun loginCodeFont2x() = snap("AppRow_LoginCode_Font2x", Frame.Component) {
+        val code = FakeNotifications.notification("0|messages|9", "Google", "G-482913 is your Google verification code", 60_000L)
+            .copy(code = "482913")
+        FontScale(2f) { RowBackdrop { Row(FakeApps.messages, listOf(code) + FakeNotifications.messages().take(1), large = true) } }
+    }
+
+    @Test fun expandedFont2x() = snap("AppRow_Expanded_Font2x", Frame.Component) {
+        FontScale(2f) { RowBackdrop { Row(FakeApps.messages, FakeNotifications.messages(), large = true, expanded = true) } }
+    }
+
+    @Test fun mediaPlayingFont2x() {
+        val state = media.playing()
+        snap("Media_Playing_Font2x", Frame.Component) { FontScale(2f) { Player(state) } }
+    }
 }

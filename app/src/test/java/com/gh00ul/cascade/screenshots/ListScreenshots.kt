@@ -1,13 +1,23 @@
 package com.gh00ul.cascade.screenshots
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
+import com.gh00ul.cascade.data.Contact
 import com.gh00ul.cascade.data.LauncherSettings
 import com.gh00ul.cascade.testing.FakeNotifications
+import com.gh00ul.cascade.ui.home.ContactResult
+import com.gh00ul.cascade.ui.home.ContactRow
+import com.gh00ul.cascade.ui.theme.LocalLauncherStyle
 import org.junit.Test
 
 /** The A–Z list with the alphabet strip, and search over it. */
@@ -97,4 +107,85 @@ class ListScreenshots : ScreenshotTest() {
     ) {
         HomeScreen(settings.copy(stripApps = true), apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW)
     }
+
+    // At One UI's largest font size (see LargeFont): the same screens, nothing cut short or overlapping.
+
+    /** "ca" at 2x: the pill, the rows, the Settings page's two lines and the web row. */
+    @Test fun searchResultsLargeFont() = snap("Search_Results_Font2x", afterContent = { onNode(hasSetTextAction()).performTextInput("ca") }) {
+        LargeFont { HomeScreen(settings, apps, favorites, icons, searchOpen = true) }
+    }
+
+    /** "10m" at 2x: the timer's row, title over detail, above the apps. */
+    @Test fun searchTimerLargeFont() = snap("Search_Timer_Font2x", afterContent = { onNode(hasSetTextAction()).performTextInput("10m") }) {
+        LargeFont { HomeScreen(settings, apps, favorites, icons, searchOpen = true) }
+    }
+
+    /** "24*7" at 2x: the calculator's answer over its question. */
+    @Test fun searchCalculationLargeFont() = snap("Search_Calculation_Font2x", afterContent = { onNode(hasSetTextAction()).performTextInput("24*7") }) {
+        LargeFont { HomeScreen(settings, apps, favorites, icons, searchOpen = true) }
+    }
+
+    /**
+     * Contacts as search lists them, drawn alone on search's scrim (search reaches them through the contacts provider):
+     * a long name ends before Message and Call, and one without a number has neither. At the default size and at 2x.
+     */
+    @Test fun searchContacts() = snap("Search_Contacts", Frame.Component) { Contacts() }
+
+    @Test fun searchContactsLargeFont() = snap("Search_Contacts_Font2x", Frame.Component) { LargeFont { Contacts() } }
+
+    @Composable
+    private fun Contacts() {
+        val style = LocalLauncherStyle.current
+        val iconSize = settings.iconSize.listDp.dp
+        Column(Modifier.fillMaxWidth().drawBehind { drawRect(style.scrim, alpha = 0.94f) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
+            for (contact in listOf(
+                Contact(1, null, "Alexandra Montgomery-Whitfield", null, "+1 555 0100"),
+                Contact(2, null, "Sam Ortiz", null, null),
+            )) {
+                ContactRow(ContactResult(contact, null), showIcon = true, iconSize = iconSize, onOpen = {}, onMessage = {}, onCall = {})
+            }
+        }
+    }
+
+    /** The top of the list at 2x: the search pill and the gear, section letters and rows. */
+    @Test fun topLargeFont() = snap("List_Top_Font2x") {
+        LargeFont { HomeScreen(settings, apps, favorites, icons, FakeNotifications.byApp(), firstItem = 1) }
+    }
+
+    /** As AlphabetWave_SecondLetters, at 2x: Me swells no more than its slot leaves room for. */
+    @Test fun alphabetWaveSecondLettersLargeFont() = snap(
+        "AlphabetWave_SecondLetters_Font2x",
+        afterContent = {
+            onNodeWithContentDescription("Alphabet index").performTouchInput {
+                if (currentPosition() != null) up()
+                down(center + Offset(0f, 33.dp.toPx()))
+                repeat(12) { moveBy(Offset(0f, 44.dp.toPx() / 12)) }
+            }
+        },
+    ) {
+        LargeFont { HomeScreen(settings.copy(secondLetters = true), apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW) }
+    }
+
+    /** As AlphabetWave_AppNames, at 2x: Messages' pill fits its slot, and no name reaches the screen's far edge. */
+    @Test fun alphabetWaveAppNamesLargeFont() = snap(
+        "AlphabetWave_AppNames_Font2x",
+        afterContent = {
+            onNodeWithContentDescription("Alphabet index").performTouchInput {
+                if (currentPosition() != null) up()
+                down(center + Offset(0f, 33.dp.toPx()))
+                val distance = (22.dp.toPx() + 22.dp.toPx() * 1.3f) / 2 + 22.dp.toPx() * 1.3f * 3
+                repeat(16) { moveBy(Offset(0f, distance / 16)) }
+            }
+        },
+    ) {
+        LargeFont { HomeScreen(settings.copy(stripApps = true), apps, favorites, icons, FakeNotifications.byApp(), firstItem = FIRST_APP_ROW) }
+    }
 }
+
+/**
+ * [content] at One UI's largest font size, 2x, scaled the way Android 14 and later scale it (nonlinearly: large text
+ * grows less than small), as a phone set to it would draw it. Only sp change; the canvas and dp stay as they are, so
+ * touches land where they do at the default size. Pop-ups in a window of their own (dialogs) don't see it.
+ */
+@Composable
+internal fun LargeFont(content: @Composable () -> Unit) = FontScale(2f, content)

@@ -55,4 +55,43 @@ class CrowdedStripScreenshots : ScreenshotTest() {
     ) {
         HomeScreen(LauncherSettings(stripApps = true), crowded, emptyList(), icons, firstItem = FIRST_APP_ROW)
     }
+
+    /** Where [letter] rests on the strip, before anything opens. */
+    private fun TouchInjectionScope.resting(letter: String): Float {
+        val slot = min(height.toFloat() / letters.size, 22.dp.toPx())
+        return (height - slot * letters.size) / 2f + slot * (letters.indexOf(letter) + 0.5f)
+    }
+
+    /**
+     * Holds [letter], then moves on to the middle of its app at [index], the strip following one to one (see
+     * AlphabetWave_AppNamesCrowdedTenth).
+     */
+    private fun TouchInjectionScope.moveToApp(letter: String, index: Int) {
+        if (currentPosition() != null) up()
+        val y = resting(letter)
+        down(Offset(centerX, y))
+        val opened = crowded.count { it.section == letter }
+        val slot = min(height / (letters.size + opened * 1.3f), 22.dp.toPx())
+        val target = y + slot * 0.5f + slot * 1.3f * (index + 0.5f)
+        repeat(24) { moveBy(Offset(0f, (target - y) / 24)) }
+    }
+
+    /**
+     * As AlphabetWave_AppNamesCrowdedTenth, at One UI's largest font size: the names, in their short slots, keep to
+     * them, and Shazam's pill fits its own.
+     */
+    @Test fun crowdedTenthLargeFont() = snap(
+        "AlphabetWave_AppNamesCrowdedTenth_Font2x",
+        afterContent = { onNodeWithContentDescription("Alphabet index").performTouchInput { moveToApp("S", 9) } },
+    ) {
+        LargeFont { HomeScreen(LauncherSettings(stripApps = true), crowded, emptyList(), icons, firstItem = FIRST_APP_ROW) }
+    }
+
+    /** G held and moved on to Google Play Store, at 2x: the long names end in an ellipsis rather than run off screen. */
+    @Test fun crowdedLongNamesLargeFont() = snap(
+        "AlphabetWave_AppNamesCrowdedLong_Font2x",
+        afterContent = { onNodeWithContentDescription("Alphabet index").performTouchInput { moveToApp("G", 10) } },
+    ) {
+        LargeFont { HomeScreen(LauncherSettings(stripApps = true), crowded, emptyList(), icons, firstItem = FIRST_APP_ROW) }
+    }
 }

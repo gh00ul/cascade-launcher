@@ -1,7 +1,9 @@
 package com.gh00ul.cascade.screenshots
 
+import android.Manifest
 import android.content.Intent
 import android.os.BatteryManager
+import android.provider.CalendarContract
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -21,13 +23,18 @@ import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.notifications.LastPlayed
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.testing.FIXED_NOW
+import com.gh00ul.cascade.testing.FIXED_ZONE
 import com.gh00ul.cascade.ui.home.ResumeRow
 import com.gh00ul.cascade.testing.FakeApps
 import com.gh00ul.cascade.testing.FakeNotifications
 import com.gh00ul.cascade.ui.home.OnboardingCard
 import com.gh00ul.cascade.ui.home.UpdateCard
 import com.gh00ul.cascade.update.Updater
+import com.gh00ul.cascade.util.CalendarEvent
 import org.junit.Test
+import org.robolectric.Robolectric
+import org.robolectric.Shadows.shadowOf
+import java.time.ZonedDateTime
 
 /** The first screen: clock, chips and favorites over the wallpaper. */
 class HomeScreenshots : ScreenshotTest() {
@@ -216,5 +223,90 @@ class HomeScreenshots : ScreenshotTest() {
     /** First run: no favorites yet, so the hint sits where they will go. */
     @Test fun empty() = snap("Home_Empty") {
         HomeScreen(LauncherSettings(), apps, emptyList(), icons)
+    }
+
+    /** The home menu's tile names shrink to fit their tiles rather than being cut. */
+    @Test fun homeMenuFont1_5x() = snap(
+        "Home_Menu_Font1_5x",
+        afterContent = { onRoot().performTouchInput { longClick(Offset(width * 0.55f, height * 0.4f)) } },
+    ) {
+        FontScale(1.5f) { HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp()) }
+    }
+
+    @Test fun homeMenuFont2x() = snap(
+        "Home_Menu_Font2x",
+        afterContent = { onRoot().performTouchInput { longClick(Offset(width * 0.55f, height * 0.4f)) } },
+    ) {
+        FontScale(2f) { HomeScreen(settings(), apps, favorites, icons, FakeNotifications.byApp()) }
+    }
+
+    /** Every chip at 2x: they wrap onto more rows, each still whole. */
+    @Test fun classicWithChipsFont2x() {
+        ClockFixtures.install(compose.activity)
+        snap("Home_Classic_Chips_Font2x", afterContent = ClockFixtures.awaitEventChip) {
+            FontScale(2f) { HomeScreen(settings(showCalendar = true), apps, favorites, icons, FakeNotifications.byApp()) }
+        }
+    }
+
+    /**
+     * An overnight event under way that ends tomorrow, so its chip reads "until Tue 8:30 AM": beside it the long title
+     * is ellipsized, as always.
+     */
+    @Test fun eventUntil() {
+        installEventUntil()
+        snap("Home_EventUntil", afterContent = ClockFixtures.awaitEventChip) {
+            HomeScreen(settings(showCalendar = true), apps, favorites, icons, FakeNotifications.byApp())
+        }
+    }
+
+    /** The same at 2x: the time would leave the title almost nothing, so it goes under the title instead. */
+    @Test fun eventUntilFont2x() {
+        installEventUntil()
+        snap("Home_EventUntil_Font2x", afterContent = ClockFixtures.awaitEventChip) {
+            FontScale(2f) { HomeScreen(settings(showCalendar = true), apps, favorites, icons, FakeNotifications.byApp()) }
+        }
+    }
+
+    /** Only the event chip: on call since an hour ago, until 8:30 tomorrow morning (under a day, so the chip shows it). */
+    private fun installEventUntil() {
+        val app = compose.activity.application
+        shadowOf(app).grantPermissions(Manifest.permission.READ_CALENDAR)
+        Robolectric.setupContentProvider(FakeCalendarProvider::class.java, CalendarContract.AUTHORITY)
+        val end = ZonedDateTime.of(2026, 10, 6, 8, 30, 0, 0, FIXED_ZONE).toInstant().toEpochMilli()
+        FakeCalendarProvider.events = listOf(CalendarEvent(8, "On call for the payments platform", FIXED_NOW - 60 * 60_000L, end, allDay = false))
+    }
+
+    /** The glance at 2x: the weather wraps under the date when the two don't fit side by side. */
+    @Test fun glanceFont2x() {
+        val seattle = WeatherPlace("Seattle, Washington, United States", 47.61, -122.33)
+        Weather.showForTest(WeatherNow(18, 21, 12, code = 2, isDay = true, fahrenheit = false, fetchedAt = FIXED_NOW, place = seattle))
+        @Suppress("DEPRECATION") // The only way to fake the battery broadcast.
+        compose.activity.application.sendStickyBroadcast(
+            Intent(Intent.ACTION_BATTERY_CHANGED)
+                .putExtra(BatteryManager.EXTRA_LEVEL, 82)
+                .putExtra(BatteryManager.EXTRA_SCALE, 100)
+                .putExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_DISCHARGING),
+        )
+        val glance = settings().copy(timeFormat = TimeFormat.H24, showWeather = true, weatherPlace = seattle, tempUnit = TempUnit.CELSIUS, batteryAlways = true)
+        snap("Home_Glance_Font2x", afterContent = {
+            waitUntil(5_000) { onAllNodes(hasContentDescription("Weather:", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        }) {
+            FontScale(2f) { HomeScreen(glance, apps, favorites, icons, FakeNotifications.byApp()) }
+        }
+    }
+
+    /** The onboarding card at 2x: its buttons and text still fit the card, which grows to hold them. */
+    @Test fun onboardingFont2x() = snap("Home_Onboarding_Font2x") {
+        FontScale(2f) {
+            HomeScreen(settings(), apps, favorites, icons, onboarding = {
+                OnboardingCard(
+                    title = "Make Cascade your home screen",
+                    body = "Set it as your default home app so the Home button brings you here.",
+                    action = "Set as default",
+                    onAction = {},
+                    onDismiss = {},
+                )
+            })
+        }
     }
 }

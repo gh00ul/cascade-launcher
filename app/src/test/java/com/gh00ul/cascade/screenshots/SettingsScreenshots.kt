@@ -101,6 +101,52 @@ class SettingsScreenshots : ScreenshotTest() {
         afterContent = { onNode(hasSetTextAction()).performTextInput("icon") },
     ) { SettingsApp(SettingsScreen.FIND, onExit = {}) }
 
+    /*
+     * The pages again at the largest font size (200%): text should wrap, shrink or scroll, never be cut off. Robolectric
+     * sets the configuration's font scale before the activity starts, so Compose scales text as a phone does, less for
+     * large sizes than small ones.
+     */
+    @Config(fontScale = 2f) @Test fun mainFont2x() = page("Settings_Main_Font2x", SettingsScreen.MAIN)
+    @Config(fontScale = 2f) @Test fun mainBottomFont2x() = page("Settings_MainBottom_Font2x", SettingsScreen.MAIN, scrollTo = "About Cascade")
+    @Config(fontScale = 2f) @Test fun homeFont2x() = page("Settings_Home_Font2x", SettingsScreen.HOME)
+    @Config(fontScale = 2f) @Test fun favoritesFont2x() = page("Settings_Favorites_Font2x", SettingsScreen.FAVORITES)
+    @Config(fontScale = 2f) @Test fun addFavoriteFont2x() = page("Settings_AddFavorite_Font2x", SettingsScreen.ADD_FAVORITE)
+    @Config(fontScale = 2f) @Test fun hiddenFont2x() = page("Settings_Hidden_Font2x", SettingsScreen.HIDDEN)
+    @Config(fontScale = 2f) @Test fun appearanceFont2x() = page("Settings_Appearance_Font2x", SettingsScreen.LOOK)
+    @Config(fontScale = 2f) @Test fun appearanceBottomFont2x() = page("Settings_AppearanceBottom_Font2x", SettingsScreen.LOOK, scrollTo = "Wallpaper")
+
+    /** The four-tile pickers (dimming, icon size), where a name like Medium has to shrink to fit its tile. */
+    @Config(fontScale = 2f) @Test fun appearanceTilesFont2x() = page("Settings_AppearanceTiles_Font2x", SettingsScreen.LOOK, scrollTo = "XL")
+
+    /** The Stacked clock, the tallest, in the preview, and the three style tiles. */
+    @Config(fontScale = 2f)
+    @Test fun clockFont2x() {
+        app.prefs.update { it.copy(clockStyle = ClockStyle.STACKED) }
+        page("Settings_Clock_Font2x", SettingsScreen.CLOCK)
+    }
+
+    /** Time format's segmented buttons, Automatic chosen and checked. */
+    @Config(fontScale = 2f) @Test fun clockFormatFont2x() = page("Settings_ClockFormat_Font2x", SettingsScreen.CLOCK, scrollTo = "24-hour")
+    @Config(fontScale = 2f) @Test fun clockBottomFont2x() = page("Settings_ClockBottom_Font2x", SettingsScreen.CLOCK, scrollTo = "Always show battery")
+
+    @Config(fontScale = 2f)
+    @Test fun gesturesFont2x() {
+        app.prefs.update { it.copy(doubleTapAction = DoubleTapAction.LOCK_SCREEN) }
+        page("Settings_Gestures_Font2x", SettingsScreen.GESTURES)
+    }
+
+    @Config(fontScale = 2f) @Test fun searchFont2x() = page("Settings_Search_Font2x", SettingsScreen.SEARCH)
+    @Config(fontScale = 2f) @Test fun backupFont2x() = page("Settings_Backup_Font2x", SettingsScreen.BACKUP)
+    @Config(fontScale = 2f) @Test fun aboutFont2x() = page("Settings_About_Font2x", SettingsScreen.ABOUT)
+
+    @Config(fontScale = 2f)
+    @Test fun findFont2x() = snap(
+        "Settings_Find_Font2x",
+        variants = Variant.Settings,
+        wallpaper = false,
+        afterContent = { onNode(hasSetTextAction()).performTextInput("icon") },
+    ) { SettingsApp(SettingsScreen.FIND, onExit = {}) }
+
     private val serial get() = app.getSystemService(UserManager::class.java).getSerialNumberForUser(Process.myUserHandle())
 
     /** The repository's key for the app [FakeLauncherApps] installs under [label]. */

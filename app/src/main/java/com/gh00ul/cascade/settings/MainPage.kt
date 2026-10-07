@@ -312,7 +312,6 @@ internal fun FindPage(nav: SettingsNav) {
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query) { findSettings(query) }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
     Scaffold(
         containerColor = PageColor,
@@ -334,6 +333,8 @@ internal fun FindPage(nav: SettingsNav) {
                         ),
                         modifier = Modifier.fillMaxWidth().focusRequester(focus),
                     )
+                    // From inside the bar, which composes after the page: asked from the page, the field isn't there yet.
+                    LaunchedEffect(Unit) { focus.requestFocus() }
                 },
                 navigationIcon = {
                     IconButton(onClick = nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }

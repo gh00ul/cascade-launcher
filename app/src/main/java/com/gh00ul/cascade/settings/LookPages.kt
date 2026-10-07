@@ -356,7 +356,6 @@ private fun PlaceDialog(onPick: (WeatherPlace) -> Unit, onDismiss: () -> Unit) {
     var results by remember { mutableStateOf<List<WeatherPlace>>(emptyList()) }
     var status by remember { mutableStateOf<String?>(null) }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     // Each keystroke restarts this, so only a pause in typing searches.
     LaunchedEffect(query) {
         val q = query.trim()
@@ -391,6 +390,9 @@ private fun PlaceDialog(onPick: (WeatherPlace) -> Unit, onDismiss: () -> Unit) {
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 )
+                // Asked from inside the dialog's own window, once the field is in it: from the page, a frame earlier,
+                // the request finds no field and the keyboard never comes up.
+                LaunchedEffect(Unit) { focus.requestFocus() }
                 status?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
                 }

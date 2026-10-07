@@ -38,7 +38,8 @@ class AppShortcut(val info: ShortcutInfo, val label: String, val icon: ImageBitm
 object LauncherActions {
     /** Starts the app, animating it out of [bounds] (window coordinates) when given. */
     fun launch(context: Context, app: AppEntry, sourceView: View? = null, bounds: androidx.compose.ui.geometry.Rect? = null) {
-        val rect = bounds?.let { Rect(it.left.roundToInt(), it.top.roundToInt(), it.right.roundToInt(), it.bottom.roundToInt()) }
+        // Only finite bounds animate: roundToInt throws on NaN, and that would cost the launch itself.
+        val rect = bounds?.takeIf { it.isFinite }?.let { Rect(it.left.roundToInt(), it.top.roundToInt(), it.right.roundToInt(), it.bottom.roundToInt()) }
         val options = if (sourceView != null && rect != null && !rect.isEmpty) {
             ActivityOptions.makeClipRevealAnimation(sourceView, rect.left, rect.top, rect.width(), rect.height()).toBundle()
         } else null
@@ -96,6 +97,7 @@ object LauncherActions {
         }
     }
 
+    // Lint's WrongConstant: "statusbar" is a real system service, just not one of Context's public names.
     /** Pulls down the notification shade. There is no public API for this, so it goes through StatusBarManager. */
     @SuppressLint("WrongConstant")
     fun expandNotifications(context: Context): Boolean = runCatching {
@@ -104,7 +106,7 @@ object LauncherActions {
     }.isSuccess
 
     /** Pulls down quick settings, through StatusBarManager like [expandNotifications]. */
-    @SuppressLint("WrongConstant")
+    @SuppressLint("WrongConstant") // see expandNotifications
     fun expandQuickSettings(context: Context): Boolean = runCatching {
         val statusBar = context.getSystemService("statusbar")
         Class.forName("android.app.StatusBarManager").getMethod("expandSettingsPanel").invoke(statusBar)

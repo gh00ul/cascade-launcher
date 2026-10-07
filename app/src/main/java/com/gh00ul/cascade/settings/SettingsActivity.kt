@@ -111,7 +111,8 @@ internal class SettingsNav(
 
 private val StackSaver = listSaver<List<SettingsScreen>, String>(
     save = { stack -> stack.map { it.name } },
-    restore = { names -> names.mapNotNull { name -> SettingsScreen.entries.firstOrNull { it.name == name } } },
+    // Nothing left (pages renamed since it was saved) restores nothing, so the stack starts over instead of being empty.
+    restore = { names -> names.mapNotNull { name -> SettingsScreen.entries.firstOrNull { it.name == name } }.ifEmpty { null } },
 )
 
 /**

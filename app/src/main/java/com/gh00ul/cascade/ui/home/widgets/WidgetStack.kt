@@ -280,7 +280,9 @@ internal fun WidgetMessage(
             .then(if (onClick != null) Modifier.widgetClick(title, onLongPress, onClick) else Modifier)
             .padding(start = 20.dp, end = 12.dp, top = 18.dp, bottom = 8.dp),
     ) {
-        Row(Modifier.padding(end = 8.dp)) {
+        // The text takes the height the button leaves: the card's height is fixed, so under a large font the body is
+        // ellipsized instead of pushing the button off the card.
+        Row(Modifier.weight(1f).padding(end = 8.dp)) {
             Icon(icon, contentDescription = null, tint = style.content, modifier = Modifier.padding(top = 2.dp).size(24.dp))
             Spacer(Modifier.width(14.dp))
             Column {
@@ -296,7 +298,6 @@ internal fun WidgetMessage(
             }
         }
         if (action != null) {
-            Spacer(Modifier.weight(1f))
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.End) {
                 Button(
                     onClick = onAction,

@@ -363,7 +363,8 @@ internal fun HomeCard(title: String, body: String, content: @Composable ColumnSc
 @Composable
 internal fun HomeCardActions(action: String, onAction: () -> Unit, onDismiss: () -> Unit) {
     val style = LocalLauncherStyle.current
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+    // Centered on each other: under a large font the action's label can wrap to two lines.
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
         TextButton(onClick = onDismiss) { Text("Not now", color = style.content.copy(alpha = 0.8f)) }
         Spacer(Modifier.width(4.dp))
         Button(

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Settings
@@ -36,8 +37,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.findRootCoordinates
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.gh00ul.cascade.ui.common.ExtraIcons
@@ -50,6 +54,11 @@ private val MenuShape = RoundedCornerShape(24.dp)
 /** Between the card and the finger, so the finger doesn't cover it. */
 private val MenuGap = 20.dp
 private val TileShape = RoundedCornerShape(18.dp)
+private val TileWidth = 76.dp
+/** Each side of a tile's name, so names shrunk to fill their tiles don't run into each other. */
+private val LabelInset = 4.dp
+/** The smallest a tile's name gets: "Wallpaper" fits its tile up to about 15dp. */
+private val MinLabelSize = 10.dp
 
 /**
  * Long-press on empty home space: a card that pops from the finger ([at], root coordinates), with Wallpaper, Widgets,
@@ -79,6 +88,7 @@ internal fun HomeMenuPopup(
 @Composable
 internal fun HomeMenuCard(onWallpaper: () -> Unit, onWidgets: () -> Unit, onFavorites: () -> Unit, onSettings: () -> Unit) {
     val style = LocalLauncherStyle.current
+    val labelSize = rememberLabelSize("Wallpaper", "Widgets", "Favorites", "Settings")
     Surface(
         shape = MenuShape,
         color = lerp(style.scrim, style.content, CardLift),
@@ -88,23 +98,43 @@ internal fun HomeMenuCard(onWallpaper: () -> Unit, onWidgets: () -> Unit, onFavo
         modifier = Modifier.pointerInput(Unit) { detectTapGestures {} },
     ) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            MenuTile(ExtraIcons.Wallpaper, "Wallpaper", onWallpaper)
+            MenuTile(ExtraIcons.Wallpaper, "Wallpaper", labelSize, onWallpaper)
             // The way to a first widget: an empty stack takes no space on home, so there's nothing to long-press yet.
-            MenuTile(ExtraIcons.Widgets, "Widgets", onWidgets)
-            MenuTile(Icons.Outlined.FavoriteBorder, "Favorites", onFavorites)
-            MenuTile(Icons.Outlined.Settings, "Settings", onSettings)
+            MenuTile(ExtraIcons.Widgets, "Widgets", labelSize, onWidgets)
+            MenuTile(Icons.Outlined.FavoriteBorder, "Favorites", labelSize, onFavorites)
+            MenuTile(Icons.Outlined.Settings, "Settings", labelSize, onSettings)
+        }
+    }
+}
+
+/**
+ * One size for all the tiles' [labels]: the chip size, or under a large font the size at which the longest fits its
+ * tile, so they shrink together rather than being cut ("Wallpap"). As an autosize capped there, so a name a pixel over
+ * steps down a notch instead of being ellipsized. The smallest it goes is in dp, so the names fit at any font size.
+ */
+@Composable
+private fun rememberLabelSize(vararg labels: String): TextAutoSize {
+    val style = LocalLauncherStyle.current
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    return remember(style, density, measurer, labels.toList()) {
+        with(density) {
+            val room = (TileWidth - LabelInset * 2).roundToPx()
+            val widest = labels.maxOf { measurer.measure(it, style.chip, softWrap = false, maxLines = 1).size.width }
+            val max = if (widest <= room) style.chip.fontSize else (style.chip.fontSize.toPx() * room / widest).toSp()
+            TextAutoSize.StepBased(minFontSize = MinLabelSize.toSp(), maxFontSize = max)
         }
     }
 }
 
 /** A tile: the glyph on a soft disc of the text color, and its name under it. Presses like a row does. */
 @Composable
-private fun MenuTile(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun MenuTile(icon: ImageVector, label: String, labelSize: TextAutoSize, onClick: () -> Unit) {
     val style = LocalLauncherStyle.current
     val press = rememberPressIndication()
     Column(
         Modifier
-            .width(76.dp)
+            .width(TileWidth)
             .clip(TileShape)
             .clickable(interactionSource = null, indication = press ?: LocalIndication.current, role = Role.Button, onClick = onClick)
             .pressScale(press)
@@ -115,7 +145,16 @@ private fun MenuTile(icon: ImageVector, label: String, onClick: () -> Unit) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.height(8.dp))
-        Text(label, style = style.chip, maxLines = 1, textAlign = TextAlign.Center)
+        Text(
+            label,
+            style = style.chip,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            autoSize = labelSize,
+            modifier = Modifier.padding(horizontal = LabelInset),
+        )
     }
 }
 

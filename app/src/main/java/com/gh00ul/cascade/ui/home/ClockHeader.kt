@@ -59,6 +59,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -305,7 +306,8 @@ private fun Modifier.endBelowBaseline() = layout { measurable, constraints ->
 }
 
 /**
- * A pill with an icon and a label. [text] is ellipsized when space runs out; [trailing] (a time) never is.
+ * A pill with an icon and a label. [text] is ellipsized when space runs out; [trailing] (a time) stays whole beside
+ * it, or goes on a second line when it would leave [text] less than a third of the pill (a large font).
  * TalkBack reads [description] instead of the raw text. When the text gets wider or narrower, the width glides there
  * if [animateSize]. [image] (an app's icon) takes the glyph's place, and [progress] (0 to 1) fills the pill that far
  * with a tint of the accent.
@@ -343,15 +345,58 @@ private fun InfoChip(
             Icon(icon, contentDescription = null, tint = if (accent) style.accent else style.content, modifier = Modifier.size(16.dp))
         }
         Spacer(Modifier.width(6.dp))
-        Text(
-            text,
-            style = style.chip,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false).clearAndSetSemantics {},
-        )
-        if (trailing != null) {
-            Text("  ·  $trailing", style = style.chip, maxLines = 1, modifier = Modifier.clearAndSetSemantics {})
+        ChipText(text, trailing, style.chip, Modifier.weight(1f, fill = false))
+    }
+}
+
+/**
+ * [text], then [trailing] after a dot, on one line, the text ellipsized so the trailing part stays whole. When that
+ * would leave the text less than a third of the line (a large font), the trailing part goes under the text instead,
+ * ellipsized only if it's wider than the whole line, so neither is cut down to nothing or loses a word unmarked.
+ */
+@Composable
+private fun ChipText(text: String, trailing: String?, style: TextStyle, modifier: Modifier = Modifier) {
+    Layout(
+        content = {
+            Text(text, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clearAndSetSemantics {})
+            if (trailing != null) {
+                Text("  ·  $trailing", style = style, maxLines = 1, modifier = Modifier.clearAndSetSemantics {})
+                // Measured only for the second line; until then it costs no layout.
+                Text(
+                    trailing,
+                    style = style,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clearAndSetSemantics {},
+                )
+            }
+        },
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0)
+        val width = constraints.maxWidth
+        val main = measurables[0]
+        val inline = measurables.getOrNull(1)
+        when {
+            inline == null -> main.measure(loose).let { only -> layout(only.width, only.height) { only.placeRelative(0, 0) } }
+            // Beside the text, leaving it at least a third of the line, or all it needs when that's less.
+            inline.maxIntrinsicWidth(constraints.maxHeight) <= width - minOf(main.maxIntrinsicWidth(constraints.maxHeight), width / 3) -> {
+                val end = inline.measure(loose)
+                val start = main.measure(loose.copy(maxWidth = width - end.width))
+                layout(start.width + end.width, maxOf(start.height, end.height)) {
+                    start.placeRelative(0, 0)
+                    end.placeRelative(start.width, 0)
+                }
+            }
+            else -> {
+                val top = main.measure(loose)
+                val bottom = measurables[2].measure(loose)
+                layout(maxOf(top.width, bottom.width), top.height + bottom.height) {
+                    top.placeRelative(0, 0)
+                    bottom.placeRelative(0, top.height)
+                }
+            }
         }
     }
 }

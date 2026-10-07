@@ -187,11 +187,14 @@ private fun AgendaList(now: Long, events: List<AgendaEvent>, is24h: Boolean, onL
             LocalDate.ofEpochDay(day).dayOfWeek.getDisplayName(TextStyle.FULL, locale)
         }
     }
-    // One column for every time, as wide as the widest, so the titles line up at any font size.
+    // One column for every time, as wide as the widest, so the titles line up at any font size. Each is measured in
+    // the style it's drawn in ("Now" is a weight bolder), so the column is never narrower than a time in it.
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val timeWidth = remember(rows, text, density) {
-        with(density) { rows.maxOf { if (it is AgendaRow.Event) measurer.measure(it.time, text.secondary).size.width else 0 }.toDp() }
+        with(density) {
+            rows.maxOf { if (it is AgendaRow.Event) measurer.measure(it.time, if (it.now) text.accent else text.secondary).size.width else 0 }.toDp()
+        }
     }
     val headers = remember(rows) { rows.indices.filterTo(HashSet()) { rows[it] is AgendaRow.Day } }
     val noColor = style.content.copy(alpha = 0.5f)

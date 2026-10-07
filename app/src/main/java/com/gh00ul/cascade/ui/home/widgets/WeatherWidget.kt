@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,11 +26,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -167,22 +172,48 @@ private fun Forecast(w: WeatherNow, is24h: Boolean, onLongPress: () -> Unit, mod
             Spacer(Modifier.weight(1f))
             if (hours.isNotEmpty() || days.isNotEmpty()) {
                 val hourFormat = remember(locale, is24h) { SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, if (is24h) "Hm" else "ha"), locale) }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                    for (h in hours) HourSlot(h, hourFormat, showRain, Modifier.weight(1f))
-                    if (days.isNotEmpty()) {
-                        Box(
-                            Modifier
-                                .padding(horizontal = 6.dp)
-                                .width(1.dp)
-                                .height(64.dp)
-                                .align(Alignment.CenterVertically)
-                                .background(style.content.copy(alpha = 0.15f)),
-                        )
-                        for (d in days) DaySlot(d, LocalDate.ofEpochDay(d.day).dayOfWeek.getDisplayName(TextStyle.SHORT, locale), Modifier.weight(1f))
-                    }
+                // The card's height is fixed: under a large font the chance of rain goes first, then the hours, rather
+                // than being cut off at its edge, as the agenda drops the rows that don't fit.
+                FirstThatFits {
+                    if (showRain) Slots(hours, days, hourFormat, rain = true)
+                    Slots(hours, days, hourFormat, rain = false)
                 }
             }
         }
+    }
+}
+
+/** The [hours] (with their chance of rain when [rain]) and, on a wide card, the [days] after a divider. */
+@Composable
+private fun Slots(hours: List<HourForecast>, days: List<DayForecast>, hourFormat: SimpleDateFormat, rain: Boolean) {
+    val style = LocalLauncherStyle.current
+    val locale = LocalConfiguration.current.locales[0]
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        for (h in hours) HourSlot(h, hourFormat, rain, Modifier.weight(1f))
+        if (days.isNotEmpty()) {
+            Box(
+                Modifier
+                    .padding(horizontal = 6.dp)
+                    .width(1.dp)
+                    .height(64.dp)
+                    .align(Alignment.CenterVertically)
+                    .background(style.content.copy(alpha = 0.15f)),
+            )
+            for (d in days) DaySlot(d, LocalDate.ofEpochDay(d.day).dayOfWeek.getDisplayName(TextStyle.SHORT, locale), Modifier.weight(1f))
+        }
+    }
+}
+
+/**
+ * The first of [content]'s children whose full height fits the height this is given, or nothing when none does.
+ * Children are measured only until one fits.
+ */
+@Composable
+private fun FirstThatFits(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Layout(content, modifier) { measurables, constraints ->
+        val natural = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
+        val fit = measurables.firstNotNullOfOrNull { m -> m.measure(natural).takeIf { it.height <= constraints.maxHeight } }
+        layout(constraints.constrainWidth(fit?.width ?: 0), constraints.constrainHeight(fit?.height ?: 0)) { fit?.placeRelative(0, 0) }
     }
 }
 
@@ -218,7 +249,9 @@ private fun Slot(
     val style = LocalLauncherStyle.current
     val text = rememberWidgetText()
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, style = text.small, maxLines = 1)
+        // Never wrapped ("10 PM" as "10") or cut at the slot's edge: a time a little wider than its slot, under a large
+        // font, stays whole and centered.
+        Text(label, style = text.small, maxLines = 1, softWrap = false, modifier = Modifier.wrapContentWidth(unbounded = true))
         Icon(icon, contentDescription = null, tint = style.content, modifier = Modifier.padding(vertical = 4.dp).size(22.dp))
         Text(value, style = text.value, maxLines = 1)
         below()

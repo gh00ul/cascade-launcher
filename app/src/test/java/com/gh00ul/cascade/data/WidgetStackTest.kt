@@ -7,7 +7,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The widget stack's list: what can go in it, adding, moving, and dropping app widgets the system lost. */
+/**
+ * The widget stack's list: what can go in it, adding, moving, and dropping app widgets the system lost; and how long an
+ * add's setup screen is waited for.
+ */
 class WidgetStackTest {
     private val calendar = WIDGET_CALENDAR
     private val weather = WIDGET_WEATHER
@@ -69,6 +72,15 @@ class WidgetStackTest {
         val asked = mutableListOf<Int>()
         dropDeadAppWidgets(listOf(calendar, "app:9", weather)) { asked += it; true }
         assertEquals(listOf(9), asked)
+    }
+
+    /** A setup screen's id is kept from pruning for a day once asked for; a restart (the clock going back) ends it. */
+    @Test fun setupIsWaitedForADay() {
+        val day = 24 * 60 * 60 * 1000L
+        assertTrue(setupMayAnswer(askedAt = 5_000, now = 5_000))
+        assertTrue(setupMayAnswer(askedAt = 5_000, now = 5_000 + day))
+        assertFalse(setupMayAnswer(askedAt = 5_000, now = 5_001 + day))
+        assertFalse(setupMayAnswer(askedAt = 5_000, now = 1_000))
     }
 
     /** n cells take 70n − 30 dp, and Android 12's larger cells (73n − 16 dp wide) still count as n. */

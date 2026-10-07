@@ -198,15 +198,15 @@ private fun PageDots(pager: PagerState, count: Int, modifier: Modifier = Modifie
 }
 
 /**
- * An Android app widget filling its page. Its view is made once per activity (WidgetHost.view) and moved into this
- * page whenever the page is composed again; its long press, buttons included, is the stack's.
+ * An Android app widget filling its page. Its view is made once per activity (WidgetHost.view), with what pruning last
+ * looked up off the main thread, and moved into this page whenever the page is composed again; its long press, buttons
+ * included, is the stack's.
  */
 @Composable
 private fun AppWidgetPage(id: Int, onLongPress: () -> Unit) {
     val context = LocalContext.current
-    val info = remember(id) { WidgetHost.info(context, id) }
-    val view = remember(id, info) { info?.let { WidgetHost.view(context, id, it) } }
-    if (info == null || view == null) {
+    val view = remember(id) { WidgetHost.view(context, id) }
+    if (view == null) {
         WidgetMessage(Icons.Outlined.Info, "Widget unavailable", "Its app may have been removed. Long-press to edit the stack.")
         return
     }

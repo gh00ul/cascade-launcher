@@ -1,6 +1,7 @@
 package com.gh00ul.cascade.data
 
 import java.lang.ref.WeakReference
+import java.util.concurrent.ConcurrentHashMap
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.appwidget.AppWidgetHost
@@ -9,11 +10,14 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.SizeF
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import androidx.core.content.edit
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.gh00ul.cascade.launcher
@@ -30,13 +34,15 @@ import kotlin.math.roundToInt
  *
  * Widgets update only while the host listens: MainActivity calls [onStart] and [onStop], and it listens while home is
  * started and the stack holds an app widget (see BATTERY.md). Views are made for the activity that shows them and kept
- * while it lives, so swiping between widgets or scrolling the home page away and back doesn't rebuild them.
+ * while it lives, so swiping between widgets or scrolling the home page away and back doesn't rebuild them; they're
+ * made with what pruning last found each widget to be, so showing one needn't ask the system on the main thread first.
  *
  * Adding one: [begin] allocates an id and binds it, or hands back the system's dialog that asks the user first
  * ([onBindResult]); [setUp] then runs the widget's own setup screen when it has one, whose result comes back through
  * MainActivity.onActivityResult to [onActivityResult]; a widget that's ready goes at the end of the stack, and a
- * cancelled or failed step frees the id. Taking one out of the stack ([remove]) frees its id too. Every call is on the
- * main thread except pruning, which runs on the IO pool.
+ * cancelled or failed step frees the id. The setup screen's id is kept on disk until it answers, so a prune after a
+ * process death leaves it alone. Taking one out of the stack ([remove]) frees its id too. Every call is on the main
+ * thread except pruning, which runs on the IO pool.
  */
 @SuppressLint("StaticFieldLeak")
 object WidgetHost {
@@ -44,17 +50,25 @@ object WidgetHost {
     private const val HOST_ID = 0x0CA5
     /** The request code a widget's setup screen answers to in onActivityResult. */
     const val REQUEST_CONFIGURE = 0x0CA6
+    /** The file that keeps the setup screen's id and when it was asked for ([setupRecord]). */
+    private const val SETUP_FILE = "widget_setup"
+    private const val SETUP_ID = "id"
+    private const val SETUP_AT = "at"
 
     private var host: Host? = null
     private var started = false
     private var listening = false
     private var pruned = false
+    /** The start that follows [pruneOnce], whose prune has just looked for dead widgets. */
+    private var justPruned = false
 
     /** The add in progress: its id, which pruning leaves alone, and the widget it's for. */
     @Volatile private var pending: Int? = null
     private var pendingInfo: AppWidgetProviderInfo? = null
-    /** The id whose setup screen is open, waiting for its result. */
-    private var configuring: Int? = null
+    /** Held while [begin] allocates an id and makes it [pending], so pruning never finds the id between the two. */
+    private val allocating = Any()
+    /** The id whose setup screen is open, waiting for its result. Pruning reads it too, off the main thread. */
+    @Volatile private var configuring: Int? = null
     /** The activity paused since the setup screen was asked for, so its next resume is the return from it. */
     private var setupShown = false
     /** The activity that asked for the setup screen: only its own return counts, not another screen's resume. */
@@ -63,6 +77,8 @@ object WidgetHost {
     /** The activity [views] were made for, and the views, by id. */
     private var viewsOwner: Context? = null
     private val views = HashMap<Int, WidgetHostView>()
+    /** What each app widget in the stack is, as pruning last looked it up off the main thread, by id. */
+    private val infos = ConcurrentHashMap<Int, AppWidgetProviderInfo>()
 
     @Synchronized
     private fun host(context: Context): Host = host ?: Host(context.applicationContext).also { host = it }
@@ -72,8 +88,13 @@ object WidgetHost {
         started = true
         listen(context)
         // The providers-changed callback only comes while listening, so an app uninstalled while home was away is
-        // caught here. Only dead widgets go: an add whose setup screen is still up must keep its id.
-        if (pruned && context.launcher.prefs.settings.value.widgetStack.any { appWidgetId(it) != null }) prune(context, freeUnused = false)
+        // caught here, on every start but the one right after pruneOnce, which has just looked. Only dead widgets go:
+        // freeing ids no widget holds is left to pruneOnce and to providers changing.
+        if (justPruned) {
+            justPruned = false
+        } else if (context.launcher.prefs.settings.value.widgetStack.any { appWidgetId(it) != null }) {
+            prune(context, freeUnused = false)
+        }
     }
 
     /** Home stopped: no widget updates until it starts again. */
@@ -93,12 +114,14 @@ object WidgetHost {
 
     /**
      * Drops stack entries whose app widget the system no longer has (its app was uninstalled, or the id was lost in a
-     * restore) and frees ids the host holds that no entry uses (an add that never finished). Once per process, from
-     * MainActivity.onCreate; the host runs it again whenever the installed widget providers change.
+     * restore) and frees ids the host holds that no entry uses (an add that never finished), leaving an add still under
+     * way alone, even one whose setup screen outlived the process. Once per process, from MainActivity.onCreate; the
+     * host runs it again whenever the installed widget providers change.
      */
     fun pruneOnce(context: Context) {
         if (pruned) return
         pruned = true
+        justPruned = true
         prune(context)
     }
 
@@ -107,21 +130,51 @@ object WidgetHost {
         val launcher = app.launcher
         launcher.scope.launch(Dispatchers.IO) {
             val manager = AppWidgetManager.getInstance(app)
-            val alive = HashMap<Int, Boolean>()
-            // A failed lookup keeps the widget: only a definite "gone" drops it.
-            fun isAlive(id: Int) = alive.getOrPut(id) { runCatching { manager.getAppWidgetInfo(id) != null }.getOrDefault(true) }
-            val stack = launcher.prefs.settings.value.widgetStack
-            if (dropDeadAppWidgets(stack, ::isAlive) != stack) {
-                launcher.prefs.update { it.copy(widgetStack = dropDeadAppWidgets(it.widgetStack, ::isAlive)) }
+            // Every lookup is made here, before the update, whose transform must stay quick: an id added meanwhile
+            // wasn't looked up, so it stays.
+            val gone = HashSet<Int>()
+            for (id in launcher.prefs.settings.value.widgetStack.mapNotNull(::appWidgetId)) {
+                // A failed lookup keeps the widget: only a definite "gone" drops it.
+                val lookup = runCatching { manager.getAppWidgetInfo(id) }
+                if (lookup.isFailure) continue
+                val info = lookup.getOrNull()
+                if (info != null) {
+                    infos[id] = info
+                } else {
+                    infos.remove(id)
+                    gone += id
+                }
+            }
+            if (gone.isNotEmpty()) {
+                launcher.prefs.update { it.copy(widgetStack = dropDeadAppWidgets(it.widgetStack) { id -> id !in gone }) }
             }
             if (!freeUnused) return@launch
             val host = host(app)
+            val setup = setupRecord(app)
             for (id in runCatching { host.appWidgetIds }.getOrNull() ?: IntArray(0)) {
-                // Read again for each: an add can finish while this runs.
-                val used = launcher.prefs.settings.value.widgetStack.any { appWidgetId(it) == id }
-                if (!used && id != pending && id != configuring) runCatching { host.deleteAppWidgetId(id) }
+                // What's being added is read before the stack, for each id: commit() puts an id in the stack before it
+                // lets go of these, so an id no longer being added is in the stack by the time this reads it.
+                val adding = synchronized(allocating) { id == pending || id == configuring } || id == recordedSetup(setup, fresh = true)
+                val used = adding || launcher.prefs.settings.value.widgetStack.any { appWidgetId(it) == id }
+                if (!used) runCatching { host.deleteAppWidgetId(id) }
             }
         }
+    }
+
+    /**
+     * The setup screen last asked for, kept on disk: a process death while it's up forgets [configuring], and then only
+     * its answer, to home or to Settings, knows the id. A prune before that answer (home's onCreate, which comes first,
+     * or a visit home with Settings' setup still up) must leave the id alone. The answer clears it; one that never
+     * comes (Settings' task was cleared under it) stops counting after a day ([setupMayAnswer]).
+     */
+    private fun setupRecord(context: Context): SharedPreferences =
+        context.applicationContext.getSharedPreferences(SETUP_FILE, Context.MODE_PRIVATE)
+
+    /** The id in [record], or null; with [fresh], only while its setup screen may still answer. */
+    private fun recordedSetup(record: SharedPreferences, fresh: Boolean): Int? {
+        val id = record.getInt(SETUP_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+        if (id == AppWidgetManager.INVALID_APPWIDGET_ID) return null
+        return if (!fresh || setupMayAnswer(record.getLong(SETUP_AT, 0), SystemClock.elapsedRealtime())) id else null
     }
 
     /** What [id] is, or null when the system no longer has it. */
@@ -137,8 +190,9 @@ object WidgetHost {
     fun begin(context: Context, info: AppWidgetProviderInfo, widthDp: Int, heightDp: Int): Intent? {
         // An add that never came back (its dialog was dismissed by a config change) gives way to this one.
         pending?.let { discard(context, it) }
-        val id = runCatching { host(context).allocateAppWidgetId() }.getOrNull() ?: return null
-        pending = id
+        val id = synchronized(allocating) {
+            runCatching { host(context).allocateAppWidgetId() }.getOrNull()?.also { pending = it }
+        } ?: return null
         pendingInfo = info
         val options = sizeOptions(widthDp, heightDp)
         val bound = runCatching { AppWidgetManager.getInstance(context).bindAppWidgetIdIfAllowed(id, info.profile, info.provider, options) }
@@ -176,6 +230,7 @@ object WidgetHost {
         configuring = id
         setupShown = false
         setupOwner = WeakReference(activity)
+        setupRecord(activity).edit { putInt(SETUP_ID, id).putLong(SETUP_AT, SystemClock.elapsedRealtime()) }
         return runCatching { host(activity).startAppWidgetConfigureActivityForResult(activity, id, 0, REQUEST_CONFIGURE, null) }
             .onFailure { discard(activity, id) }
             .isSuccess
@@ -197,8 +252,12 @@ object WidgetHost {
      */
     fun onActivityResult(context: Context, requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode != REQUEST_CONFIGURE) return false
-        // After a process death the id comes back only in the answer.
-        val id = configuring ?: data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)?.takeIf { it != -1 } ?: return true
+        // After a process death the id comes back only in the answer, or, when the answer has none (the system closed
+        // the screen, or it returned no data), in the setup's record.
+        val id = configuring
+            ?: data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)?.takeIf { it != -1 }
+            ?: recordedSetup(setupRecord(context), fresh = false)
+            ?: return true
         if (resultCode == Activity.RESULT_OK) commit(context, id) else discard(context, id)
         return true
     }
@@ -224,18 +283,20 @@ object WidgetHost {
     private fun commit(context: Context, id: Int) {
         val entry = WIDGET_APP_PREFIX + id
         context.launcher.prefs.update { it.copy(widgetStack = addWidget(it.widgetStack, entry)) }
-        finished(id)
+        finished(context, id)
         if (entry !in context.launcher.prefs.settings.value.widgetStack) discard(context, id) else listen(context)
     }
 
     /** Frees [id]: a failed or cancelled add, or a widget taken out of the stack. */
     private fun discard(context: Context, id: Int) {
-        finished(id)
+        finished(context, id)
         views.remove(id)
+        infos.remove(id)
         runCatching { host(context).deleteAppWidgetId(id) }
     }
 
-    private fun finished(id: Int) {
+    /** [id]'s add is over: pruning stops leaving it alone, so a placed widget must be in the stack before this. */
+    private fun finished(context: Context, id: Int) {
         if (pending == id) {
             pending = null
             pendingInfo = null
@@ -244,6 +305,8 @@ object WidgetHost {
             configuring = null
             setupShown = false
         }
+        val record = setupRecord(context)
+        if (recordedSetup(record, fresh = false) == id) record.edit { clear() }
     }
 
     /** Takes [entry] out of the stack; an app widget's id is freed with it. */
@@ -253,10 +316,12 @@ object WidgetHost {
     }
 
     /**
-     * [id]'s view for [activity], made once and kept while that activity lives, or null when the device has no widget
-     * service. The caller detaches it from its last parent before adding it anywhere.
+     * [id]'s view for [activity], made once and kept while that activity lives, or null when the system no longer has
+     * the widget or the device has no widget service. It's made with what pruning last found the widget to be, so it's
+     * looked up here, on the main thread, only when no prune has yet. The caller detaches it from its last parent
+     * before adding it anywhere.
      */
-    internal fun view(activity: Context, id: Int, info: AppWidgetProviderInfo): WidgetHostView? {
+    internal fun view(activity: Context, id: Int): WidgetHostView? {
         if (viewsOwner !== activity) {
             views.clear()
             viewsOwner = activity
@@ -270,6 +335,7 @@ object WidgetHost {
             })
         }
         views[id]?.let { return it }
+        val info = infos[id] ?: info(activity, id)?.also { infos[id] = it } ?: return null
         val view = runCatching { host(activity).createView(activity, id, info) as? WidgetHostView }.getOrNull() ?: return null
         views[id] = view
         return view
@@ -384,6 +450,15 @@ fun addWidget(stack: List<String>, entry: String): List<String> =
 /** [stack] with the widget at [from] moved to [to]; unchanged when either is out of range. */
 fun moveWidget(stack: List<String>, from: Int, to: Int): List<String> =
     if (from !in stack.indices || to !in stack.indices || from == to) stack else stack.toMutableList().apply { add(to, removeAt(from)) }
+
+/** How long a setup screen asked for is waited for, to keep its id from pruning across a process death. */
+private const val SETUP_KEPT_MS = 24 * 60 * 60 * 1000L
+
+/**
+ * Whether a setup screen asked for at [askedAt] may still answer at [now], both [SystemClock.elapsedRealtime]: for a
+ * day. A restart in between usually shows as the clock going back, and the day bounds the rest.
+ */
+internal fun setupMayAnswer(askedAt: Long, now: Long): Boolean = now - askedAt in 0..SETUP_KEPT_MS
 
 /** [stack] without the app widgets [isAlive] says the system no longer has; built-in widgets always stay. */
 fun dropDeadAppWidgets(stack: List<String>, isAlive: (Int) -> Boolean): List<String> =

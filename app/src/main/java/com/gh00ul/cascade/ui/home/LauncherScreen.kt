@@ -2,6 +2,7 @@ package com.gh00ul.cascade.ui.home
 
 import android.app.Activity
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.ReportDrawnWhen
@@ -122,6 +123,7 @@ import com.gh00ul.cascade.notifications.LastPlayer
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.notifications.NowPlaying
 import com.gh00ul.cascade.notifications.NowPlayingState
+import com.gh00ul.cascade.settings.NotificationAccessHelp
 import com.gh00ul.cascade.settings.SettingsActivity
 import com.gh00ul.cascade.settings.SettingsScreen
 import com.gh00ul.cascade.ui.common.rememberEntry
@@ -467,6 +469,10 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
     var hasNotificationAccess by remember { mutableStateOf(LauncherActions.hasNotificationAccess(context)) }
     val replayedResume = rememberReplaySkip(Lifecycle.State.RESUMED)
     var defaultPromptHidden by rememberSaveable { mutableStateOf(false) }
+    // Set by the access card's Allow. Back home with access still off on Android 13+, Android most likely blocked the
+    // setting ("restricted setting", for a sideloaded app), so the help explains how to allow it.
+    var accessAsked by rememberSaveable { mutableStateOf(false) }
+    var accessHelpOpen by rememberSaveable { mutableStateOf(false) }
     // Music player: the playing app's favorite row turns into it. A player that is paused when you come home rests.
     val media = nowPlaying?.takeIf { settings.showMediaControls }
     val mediaApp = remember(apps, media?.packageName) {
@@ -493,16 +499,25 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             isDefault = LauncherActions.isDefaultLauncher(context)
             hasNotificationAccess = LauncherActions.hasNotificationAccess(context)
         }
+        // On a replayed resume too: the flag is set then only if home was recreated while away (dark mode, font size),
+        // and composition has just read the access.
+        if (accessAsked) {
+            accessAsked = false
+            if (!hasNotificationAccess && Build.VERSION.SDK_INT >= 33) accessHelpOpen = true
+        }
         NowPlaying.refresh()
         if (launcher.prefs.settings.value.autoUpdateCheck) Updater.check(context)
         val live = NowPlaying.state.value
         mediaResting = live?.isPaused == true
         restPending = live == null
+        // An update install waiting on a confirmation Android didn't show; a no-op otherwise.
+        Updater.showPendingConfirm(context)
     }
     val roleRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         isDefault = LauncherActions.isDefaultLauncher(context)
-        // The role dialog is skipped silently after repeated refusals; fall back to the settings page.
-        if (!isDefault) LauncherActions.openHomeSettings(context)
+        // The role dialog is skipped silently after repeated refusals; fall back to the settings page, saying what to
+        // pick there.
+        if (!isDefault) LauncherActions.openHomeSettings(context, hint = true)
     }
 
     val byKey = remember(apps) { apps.associateBy { it.key } }
@@ -642,11 +657,23 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             }
         }
     }
-    // Locking needs Cascade's accessibility service; while it's off, the double-tap opens Settings to turn it on.
+    // Locking needs Cascade's accessibility service; while it's off, the double-tap opens Settings to turn it on. On but
+    // not connected (it crashed, or Android hasn't bound it again), only turning it off and on brings it back.
     val emptyDoubleTap: () -> Unit = {
         when (settings.doubleTapAction) {
             DoubleTapAction.NOTHING -> {}
-            DoubleTapAction.LOCK_SCREEN -> if (!LockService.lock()) SettingsActivity.open(context, SettingsScreen.GESTURES)
+            DoubleTapAction.LOCK_SCREEN -> when {
+                LockService.lock() -> {}
+                LockService.isSupported && LockService.isEnabled(context) -> {
+                    Toast.makeText(
+                        context,
+                        "Couldn't lock the screen. Turn Cascade's lock service off and on in Accessibility.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    LauncherActions.openAccessibilitySettings(context)
+                }
+                else -> SettingsActivity.open(context, SettingsScreen.GESTURES)
+            }
             DoubleTapAction.NOTIFICATIONS -> LauncherActions.expandNotifications(context)
             DoubleTapAction.SEARCH -> searchOpen = true
             DoubleTapAction.OPEN_APP -> openGestureApp(settings.doubleTapApp)
@@ -820,7 +847,10 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                                         title = "See notifications beside your apps",
                                         body = "Allow notification access to show a dot and the latest message under each favorite.",
                                         action = "Allow",
-                                        onAction = { LauncherActions.openNotificationAccess(context) },
+                                        onAction = {
+                                            accessAsked = true
+                                            LauncherActions.openNotificationAccess(context)
+                                        },
                                         onDismiss = { launcher.prefs.update { it.copy(notificationPromptDismissed = true) } },
                                     )
                                     // Full width, so a card coming or going only animates its height.
@@ -1056,6 +1086,10 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
             onConfirm = { name -> launcher.prefs.update { s -> s.newFolder(nextFolderId(s.folders), name, listOf(app.key)) } },
             onDismiss = { newFolderFor = null },
         )
+    }
+    // Read in a scope of its own, so the help opening or closing doesn't recompose the screen.
+    Isolated({ accessHelpOpen }) { open ->
+        if (open && Build.VERSION.SDK_INT >= 33) NotificationAccessHelp(onDismiss = { accessHelpOpen = false })
     }
 }
 

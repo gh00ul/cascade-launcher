@@ -140,6 +140,12 @@ private const val OverlayBackShrink = 0.08f
 private const val OverlayBackDim = 0.2f
 
 /**
+ * How long, in ms, the "No apps match" line waits before it fades in: past contacts' pause in typing and their lookup,
+ * so a name only a contact matches doesn't flash it first. A spec delay, so Remove animations shows it at once.
+ */
+private const val NothingFoundDelay = 300
+
+/**
  * The home screen's alpha under search, from the search transition (target: open): it gets out of the way quickly as
  * search fades in over it, and fades back in as search closes. Read it only while drawing.
  */
@@ -250,6 +256,8 @@ fun AnimatedVisibilityScope.SearchOverlay(
         searchWeb && query.isNotBlank() -> GoTarget.WEB
         else -> GoTarget.NONE
     }
+    // Nothing at all shows for the query: no row Go could act on, and no contacts (which Go doesn't open).
+    val nothingFound = query.isNotBlank() && target == GoTarget.NONE && contacts.isEmpty()
     // Opening a contact, the dialer or a message closes search, as opening an app does.
     val startContact = { intent: Intent, failure: String -> if (startFromSearch(context, intent, failure)) onDismiss() }
     // 0 at rest; follows a predictive back gesture. Read only in the overlay's layer.
@@ -506,6 +514,20 @@ fun AnimatedVisibilityScope.SearchOverlay(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                    }
+                }
+                if (nothingFound) {
+                    item(key = "nothing") {
+                        Text(
+                            "No apps match “${query.trim()}”.",
+                            style = style.small,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            // Where the rows' labels start; fades in late, so contacts arriving just after don't flash it.
+                            modifier = Modifier
+                                .staggered(NothingFoundDelay)
+                                .padding(start = if (showIcons) 8.dp + iconSize + 16.dp else 8.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
+                        )
                     }
                 }
             }

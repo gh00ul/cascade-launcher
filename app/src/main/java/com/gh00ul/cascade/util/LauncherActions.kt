@@ -63,11 +63,22 @@ object LauncherActions {
     }
 
     fun openAppInfo(context: Context, app: AppEntry) {
-        runCatching { context.getSystemService(LauncherApps::class.java).startAppDetailsActivity(app.component, app.user, null, null) }
+        // Through LauncherApps, so a work app opens its own profile's page.
+        val opened = try {
+            context.getSystemService(LauncherApps::class.java).startAppDetailsActivity(app.component, app.user, null, null)
+            true
+        } catch (e: ActivityNotFoundException) {
+            false
+        } catch (e: SecurityException) {
+            false
+        }
+        if (!opened) Toast.makeText(context, "Couldn't open App info for ${app.label}", Toast.LENGTH_SHORT).show()
     }
 
     fun uninstall(context: Context, app: AppEntry) {
-        start(context, Intent(Intent.ACTION_DELETE, Uri.fromParts("package", app.packageName, null)))
+        if (!start(context, Intent(Intent.ACTION_DELETE, Uri.fromParts("package", app.packageName, null)))) {
+            Toast.makeText(context, "Couldn't uninstall ${app.label}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Static and dynamic shortcuts, like the ones Pixel Launcher shows on long-press. */
@@ -129,8 +140,10 @@ object LauncherActions {
 
     fun openCalendar(context: Context) {
         val now = "content://com.android.calendar/time/${System.currentTimeMillis()}".toUri()
-        if (!start(context, Intent(Intent.ACTION_VIEW, now))) {
-            start(context, Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR))
+        if (!start(context, Intent(Intent.ACTION_VIEW, now)) &&
+            !start(context, Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR))
+        ) {
+            Toast.makeText(context, "Couldn't open the calendar", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -143,7 +156,9 @@ object LauncherActions {
     }
 
     fun openOwnAppInfo(context: Context) {
-        start(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
+        if (!start(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))) {
+            Toast.makeText(context, "Couldn't open App info", Toast.LENGTH_SHORT).show()
+        }
     }
 
     fun openWallpaperPicker(context: Context) {
@@ -169,15 +184,33 @@ object LauncherActions {
         if (Build.VERSION.SDK_INT >= 29) {
             val roles = context.getSystemService(RoleManager::class.java)
             if (roles.isRoleAvailable(RoleManager.ROLE_HOME) && !roles.isRoleHeld(RoleManager.ROLE_HOME)) {
-                roleRequest.launch(roles.createRequestRoleIntent(RoleManager.ROLE_HOME))
+                try {
+                    roleRequest.launch(roles.createRequestRoleIntent(RoleManager.ROLE_HOME))
+                } catch (e: ActivityNotFoundException) {
+                    // Nothing shows the role dialog on this phone: the setting takes the same choice.
+                    openHomeSettings(context, hint = true)
+                }
                 return
             }
         }
         openHomeSettings(context)
     }
 
-    fun openHomeSettings(context: Context) {
-        start(context, Intent(Settings.ACTION_HOME_SETTINGS))
+    /**
+     * The home-app setting, or Default apps where Settings has no page of its own for it. With [hint], a toast says
+     * what to do there: for when it opens instead of the dialog the user asked for.
+     */
+    fun openHomeSettings(context: Context, hint: Boolean = false) {
+        val opened = start(context, Intent(Settings.ACTION_HOME_SETTINGS)) ||
+            start(context, Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        when {
+            !opened -> Toast.makeText(
+                context,
+                "Couldn't open the home app setting. Look for Default apps in Settings.",
+                Toast.LENGTH_LONG,
+            ).show()
+            hint -> Toast.makeText(context, "Choose Cascade as your home app here", Toast.LENGTH_SHORT).show()
+        }
     }
 
     fun hasNotificationAccess(context: Context): Boolean =
@@ -190,7 +223,9 @@ object LauncherActions {
                 .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component)
             if (start(context, detail)) return
         }
-        start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        if (!start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))) {
+            Toast.makeText(context, "Couldn't open notification access settings", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**
@@ -200,12 +235,13 @@ object LauncherActions {
      */
     fun openAccessibilitySettings(context: Context) {
         val key = ComponentName(context, LockService::class.java).flattenToString()
-        start(
+        val opened = start(
             context,
             Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 .putExtra(":settings:fragment_args_key", key)
                 .putExtra(":settings:show_fragment_args", Bundle().apply { putString(":settings:fragment_args_key", key) }),
         )
+        if (!opened) Toast.makeText(context, "Couldn't open Accessibility settings", Toast.LENGTH_SHORT).show()
     }
 
     private fun start(context: Context, intent: Intent): Boolean = try {

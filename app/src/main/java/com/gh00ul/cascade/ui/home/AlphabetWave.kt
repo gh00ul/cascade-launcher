@@ -83,6 +83,11 @@ private const val OptionSlot = 1.3f
 private const val OptionSwell = 2f
 /** An app's name under the finger swells less again: it's a word, not two letters. */
 private const val NameSwell = 1.5f
+/**
+ * How far into a letter's slot the finger is kept, at least, from the edge it came in by, when the letter opens or the
+ * one before it folds: a finger resting on the boundary stays on one letter rather than flicking between two.
+ */
+private const val EntryMargin = 0.15f
 /** How far past the letters' column, toward the screen edge, app names end (they grow inward from there). */
 private val NameEdge = 5.dp
 /** Over how far past the strip's ends a letter or name fades out, when the strip has scrolled it there. */
@@ -173,7 +178,10 @@ private class StripPlan(val count: Int) {
 
     fun closingY(j: Int) = lerp(closingFirst + closingStep * j, toY[closing], progress)
 
-    /** What's at [y] in the layout: a letter's index, or -2 - j for the open letter's j-th second letter. */
+    /**
+     * What's at [y] in the layout: a letter's index, or -2 - j for the open letter's j-th second letter. Past the last
+     * letter's second letters, there being nothing after them, it's still the last of them.
+     */
     fun hit(y: Float): Int {
         val down = y - top
         if (open < 0) return (down / slot).toInt().coerceIn(0, count - 1)
@@ -181,21 +189,26 @@ private class StripPlan(val count: Int) {
         val after = options + openCount * optionSlot
         return when {
             down < options -> (down / slot).toInt().coerceIn(0, open)
-            down < after -> -2 - ((down - options) / optionSlot).toInt().coerceIn(0, openCount - 1)
+            down < after || open == count - 1 -> -2 - ((down - options) / optionSlot).toInt().coerceIn(0, openCount - 1)
             else -> (open + 1 + ((down - after) / slot).toInt()).coerceIn(open + 1, count - 1)
         }
     }
 
+    /** Where in letter [i]'s slot [y] is, from 0 at its top to 1 at its bottom. */
+    fun within(i: Int, y: Float) = ((y - top - (offset(i) - slot / 2f)) / slot).coerceIn(0f, 1f)
+
     /**
-     * Lays the strip out with [newOpen]'s [newCount] second letters out (-1 and 0 for none), keeping letter [anchor] at
-     * [anchorY] so what's under the finger stays there, or centering it all with no anchor (-1). Slots shrink from
-     * [maxSlot] only as far as needed to fit [height]. With [glide], everything moves from where it is now.
+     * Lays the strip out with [newOpen]'s [newCount] second letters out (-1 and 0 for none), or centers it all with no
+     * [anchor] (-1). With one, the finger at [anchorY] stays on letter [anchor], at the same point in its slot ([at], 0
+     * at its top to 1 at its bottom): slots change size as letters open and fold, and a letter kept where it was, rather
+     * than around the finger, could leave a finger that had only just reached it back on the letter before. Slots shrink
+     * from [maxSlot] only as far as needed to fit [height]. With [glide], everything moves from where it is now.
      *
      * Kept under the finger, a letter opened low on the strip can push its last apps and the letters after them past
      * the strip's end: [follow] then scrolls them into reach as the finger moves on. (Clamping the strip to fit instead
      * would move the letter out from under the finger, onto one of its apps halfway down.)
      */
-    fun layOut(height: Float, maxSlot: Float, newOpen: Int, newCount: Int, anchor: Int, anchorY: Float, glide: Boolean) {
+    fun layOut(height: Float, maxSlot: Float, newOpen: Int, newCount: Int, anchor: Int, anchorY: Float, at: Float, glide: Boolean) {
         if (glide) {
             for (i in 0 until count) fromY[i] = letterY(i)
             fromSlot = slotNow
@@ -224,7 +237,7 @@ private class StripPlan(val count: Int) {
             pivotY = Float.NaN
         } else {
             pivotY = anchorY.coerceIn(1f, height - 1f)
-            pivotAt = offset(anchor)
+            pivotAt = offset(anchor) + slot * (at - 0.5f)
             above = max(1f, pivotAt / pivotY)
             below = max(1f, (total - pivotAt) / (height - pivotY))
             top = pivotY - pivotAt
@@ -365,8 +378,8 @@ fun AlphabetWave(
                     handoverJob?.cancel()
                     handoverJob = scope.launch { animate(0f, 1f, animationSpec = Handover) { value, _ -> handover = value } }
                 }
-                fun layOut(open: Int, count: Int, anchor: Int, anchorY: Float) {
-                    plan.layOut(size.height.toFloat(), MaxSlot.toPx(), open, count, anchor, anchorY, glide = true)
+                fun layOut(open: Int, count: Int, anchor: Int, anchorY: Float, at: Float = 0.5f) {
+                    plan.layOut(size.height.toFloat(), MaxSlot.toPx(), open, count, anchor, anchorY, at, glide = true)
                     unfoldJob?.cancel()
                     unfoldJob = scope.launch { animate(0f, 1f, animationSpec = Unfold) { value, _ -> plan.progress = value } }
                 }
@@ -374,7 +387,7 @@ fun AlphabetWave(
                     val count = currentLetters.size
                     if (count == 0) return
                     if (plan.height != size.height.toFloat()) {
-                        plan.layOut(size.height.toFloat(), MaxSlot.toPx(), -1, 0, -1, 0f, glide = false)
+                        plan.layOut(size.height.toFloat(), MaxSlot.toPx(), -1, 0, -1, 0f, 0.5f, glide = false)
                     }
                     touchY = y
                     plan.follow(y)
@@ -403,7 +416,10 @@ fun AlphabetWave(
                         // Open this letter's second letters (folding any others back), keeping it under the finger.
                         val options = currentPrefixes[currentLetters[index]].orEmpty()
                         val opening = if (options.size >= (if (currentNames) 1 else 2)) options.size else 0
-                        if (opening > 0 || plan.open >= 0) layOut(if (opening > 0) index else -1, opening, index, plan.toY[index])
+                        if (opening > 0 || plan.open >= 0) {
+                            val at = plan.within(index, y).coerceIn(EntryMargin, 1f - EntryMargin)
+                            layOut(if (opening > 0) index else -1, opening, index, y, at)
+                        }
                     }
                 }
                 // App names: the app whose name the finger lifted on opens, out of that name as drawn under the finger
@@ -456,7 +472,7 @@ fun AlphabetWave(
                 onDrawBehind {
                     val count = letters.size
                     if (count == 0) return@onDrawBehind
-                    if (plan.height != size.height) plan.layOut(size.height, MaxSlot.toPx(), -1, 0, -1, 0f, glide = false)
+                    if (plan.height != size.height) plan.layOut(size.height, MaxSlot.toPx(), -1, 0, -1, 0f, 0.5f, glide = false)
                     val slot = plan.slot
                     val glide = plan.progress
                     // Letters rest 14dp in from the screen edge and bulge inward, toward the list (mirrored in RTL).

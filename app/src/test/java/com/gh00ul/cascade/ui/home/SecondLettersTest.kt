@@ -218,9 +218,42 @@ class SecondLettersTest {
         assertEquals("app:${app("Samsung Health").key}", top())
         strip { slide(0f, slot * 1.3f * (opened - 2) / below) }
         assertEquals("app:${app("Steam").key}", top())
-        strip { slide(0f, (slot * 1.3f / 2 + slot / 2) / below) }
+        // Just past Steam's slot: T, which opens around the finger.
+        strip { slide(0f, slot * 1.3f / 2 / below + 1.dp.toPx()) }
         assertEquals("section:T", top())
         strip { up() }
+    }
+
+    /**
+     * Slowly down off a letter's last app onto the next letter, whose apps outnumber it (F's two, then G's twelve): G's
+     * apps shrink every slot as they open, and the finger stays on G, then goes on to its first app. (The finger used to
+     * land just above G's shrunk slot, back on F, which opened again, so it went round F's apps and never got past.)
+     */
+    @Test fun slowlyOffALettersLastAppReachesTheNext() {
+        show(stripApps = true, apps = FakeApps.crowded)
+        strip { down(letter("F")) }
+        strip { slide(0f, ((22.dp + 22.dp * 1.3f) / 2).toPx()) }
+        // Half a dp at a time, noting each row the list jumps to.
+        val seen = mutableListOf(top())
+        repeat(160) {
+            strip { moveBy(Offset(0f, 0.5.dp.toPx())) }
+            if (top() != seen.last()) seen += top()
+        }
+        val expected = listOf("app:${app("Facebook").key}", "app:${app("Files").key}", "section:G", "app:${app("Galaxy Store").key}")
+        assertEquals(expected, seen.take(4))
+        strip { up() }
+    }
+
+    /**
+     * Past the last letter's last app (W's Weather) and off the strip's end: there's nothing after it, so the finger stays
+     * on Weather, and letting go opens it. (Past the last letter's apps used to throw, taking the launcher down.)
+     */
+    @Test fun pastTheLastLettersAppsStaysOnTheLast() {
+        show(stripApps = true)
+        strip { down(letter("W")) }
+        strip { slide(0f, 300.dp.toPx(), steps = 30) }
+        strip { up() }
+        assertEquals(listOf(app("Weather")), opened)
     }
 
     /** App names: letting go on an app's name opens that app; letting go on a letter opens nothing. */

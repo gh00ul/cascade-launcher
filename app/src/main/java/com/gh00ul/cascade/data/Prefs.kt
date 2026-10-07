@@ -164,58 +164,68 @@ class Prefs(context: Context) {
         it.copy(renames = if (label.isNullOrBlank()) it.renames - key else it.renames + (key to label.trim()))
     }
 
-    private fun read() = LauncherSettings(
-        favorites = sp.getString(FAVORITES, null)?.let(::parseList) ?: emptyList(),
-        hidden = sp.getString(HIDDEN, null)?.let(::parseList)?.toSet() ?: emptySet(),
-        renames = sp.getString(RENAMES, null)?.let(::parseMap) ?: emptyMap(),
-        showIcons = sp.getBoolean(SHOW_ICONS, true),
-        monochromeIcons = sp.getBoolean(MONOCHROME, false),
-        showNotificationPreviews = sp.getBoolean(PREVIEWS, true),
-        showMediaControls = sp.getBoolean(MEDIA, true),
-        textColor = sp.getString(TEXT_COLOR, null)?.let { name -> TextColor.entries.firstOrNull { it.name == name } } ?: TextColor.AUTO,
-        iconSize = sp.getString(ICON_SIZE, null)?.let { name -> IconSize.entries.firstOrNull { it.name == name } } ?: IconSize.MEDIUM,
-        clockStyle = sp.getString(CLOCK_STYLE, null)?.let { name -> ClockStyle.entries.firstOrNull { it.name == name } } ?: ClockStyle.CLASSIC,
-        showCalendar = sp.getBoolean(SHOW_CALENDAR, false),
-        showBattery = sp.getBoolean(SHOW_BATTERY, true),
-        autoUpdateCheck = sp.getBoolean(AUTO_UPDATE, true),
-        swipeDownAction = sp.getString(SWIPE_DOWN, null)
-            ?.let { name -> SwipeDownAction.entries.firstOrNull { it.name == name } }
-            ?: SwipeDownAction.NOTIFICATIONS,
-        favoritesSeeded = sp.getBoolean(SEEDED, false),
-        notificationPromptDismissed = sp.getBoolean(NOTIFICATION_PROMPT, false),
-        timeFormat = sp.getString(TIME_FORMAT, null)?.let { name -> TimeFormat.entries.firstOrNull { it.name == name } } ?: TimeFormat.SYSTEM,
-        showDate = sp.getBoolean(SHOW_DATE, true),
-        showAlarm = sp.getBoolean(SHOW_ALARM, true),
-        showTimers = sp.getBoolean(SHOW_TIMERS, true),
-        wallpaperDim = sp.getString(WALLPAPER_DIM, null)?.let { name -> WallpaperDim.entries.firstOrNull { it.name == name } } ?: WallpaperDim.OFF,
-        hideStatusBar = sp.getBoolean(HIDE_STATUS_BAR, false),
-        haptics = sp.getBoolean(HAPTICS, true),
-        doubleTapAction = sp.getString(DOUBLE_TAP, null)
-            ?.let { name -> DoubleTapAction.entries.firstOrNull { it.name == name } }
-            ?: DoubleTapAction.NOTHING,
-        searchWeb = sp.getBoolean(SEARCH_WEB, true),
-        hiddenInSearch = sp.getBoolean(HIDDEN_IN_SEARCH, true),
-        autoLaunchSingleMatch = sp.getBoolean(AUTO_LAUNCH, false),
-        batteryAlways = sp.getBoolean(BATTERY_ALWAYS, false),
-        showWeather = sp.getBoolean(SHOW_WEATHER, false),
-        weatherPlace = sp.getString(WEATHER_PLACE, null)?.let(::parsePlace),
-        tempUnit = sp.getString(TEMP_UNIT, null)?.let { name -> TempUnit.entries.firstOrNull { it.name == name } } ?: TempUnit.AUTO,
-        resumePrompt = sp.getBoolean(RESUME_PROMPT, true),
-        folders = sp.getString(FOLDERS, null)?.let(::parseFolders) ?: emptyMap(),
-        // Only entries the stack can show: its editors move widgets by their place in that list, which must be this one.
-        widgetStack = sp.getString(WIDGET_STACK, null)?.let(::parseList)?.filter(::isStackWidget)?.take(MAX_STACK_WIDGETS) ?: emptyList(),
-        searchCalculator = sp.getBoolean(SEARCH_CALCULATOR, true),
-        searchContacts = sp.getBoolean(SEARCH_CONTACTS, false),
-        swipeDownApp = sp.getString(SWIPE_DOWN_APP, null),
-        doubleTapApp = sp.getString(DOUBLE_TAP_APP, null),
-        showLiveUpdates = sp.getBoolean(SHOW_LIVE_UPDATES, true),
-        searchCommands = sp.getBoolean(SEARCH_COMMANDS, true),
-        searchShortcuts = sp.getBoolean(SEARCH_SHORTCUTS, true),
-        musicGlow = sp.getBoolean(MUSIC_GLOW, true),
-        copyLoginCodes = sp.getBoolean(COPY_LOGIN_CODES, true),
-        secondLetters = sp.getBoolean(SECOND_LETTERS, false),
-        stripApps = sp.getBoolean(STRIP_APPS, false),
-    )
+    /**
+     * The stored settings, each value checked for its type: getBoolean and getString throw on a value of another type,
+     * and this runs in Application.onCreate, so one bad value would crash home on every launch. A value of the wrong
+     * type reads as its default instead; the next [update] writes every key back with its proper type.
+     */
+    private fun read(): LauncherSettings {
+        val stored = sp.all
+        fun bool(key: String, default: Boolean) = stored[key] as? Boolean ?: default
+        fun string(key: String) = stored[key] as? String
+        return LauncherSettings(
+            favorites = string(FAVORITES)?.let(::parseList) ?: emptyList(),
+            hidden = string(HIDDEN)?.let(::parseList)?.toSet() ?: emptySet(),
+            renames = string(RENAMES)?.let(::parseMap) ?: emptyMap(),
+            showIcons = bool(SHOW_ICONS, true),
+            monochromeIcons = bool(MONOCHROME, false),
+            showNotificationPreviews = bool(PREVIEWS, true),
+            showMediaControls = bool(MEDIA, true),
+            textColor = string(TEXT_COLOR)?.let { name -> TextColor.entries.firstOrNull { it.name == name } } ?: TextColor.AUTO,
+            iconSize = string(ICON_SIZE)?.let { name -> IconSize.entries.firstOrNull { it.name == name } } ?: IconSize.MEDIUM,
+            clockStyle = string(CLOCK_STYLE)?.let { name -> ClockStyle.entries.firstOrNull { it.name == name } } ?: ClockStyle.CLASSIC,
+            showCalendar = bool(SHOW_CALENDAR, false),
+            showBattery = bool(SHOW_BATTERY, true),
+            autoUpdateCheck = bool(AUTO_UPDATE, true),
+            swipeDownAction = string(SWIPE_DOWN)
+                ?.let { name -> SwipeDownAction.entries.firstOrNull { it.name == name } }
+                ?: SwipeDownAction.NOTIFICATIONS,
+            favoritesSeeded = bool(SEEDED, false),
+            notificationPromptDismissed = bool(NOTIFICATION_PROMPT, false),
+            timeFormat = string(TIME_FORMAT)?.let { name -> TimeFormat.entries.firstOrNull { it.name == name } } ?: TimeFormat.SYSTEM,
+            showDate = bool(SHOW_DATE, true),
+            showAlarm = bool(SHOW_ALARM, true),
+            showTimers = bool(SHOW_TIMERS, true),
+            wallpaperDim = string(WALLPAPER_DIM)?.let { name -> WallpaperDim.entries.firstOrNull { it.name == name } } ?: WallpaperDim.OFF,
+            hideStatusBar = bool(HIDE_STATUS_BAR, false),
+            haptics = bool(HAPTICS, true),
+            doubleTapAction = string(DOUBLE_TAP)
+                ?.let { name -> DoubleTapAction.entries.firstOrNull { it.name == name } }
+                ?: DoubleTapAction.NOTHING,
+            searchWeb = bool(SEARCH_WEB, true),
+            hiddenInSearch = bool(HIDDEN_IN_SEARCH, true),
+            autoLaunchSingleMatch = bool(AUTO_LAUNCH, false),
+            batteryAlways = bool(BATTERY_ALWAYS, false),
+            showWeather = bool(SHOW_WEATHER, false),
+            weatherPlace = string(WEATHER_PLACE)?.let(::parsePlace),
+            tempUnit = string(TEMP_UNIT)?.let { name -> TempUnit.entries.firstOrNull { it.name == name } } ?: TempUnit.AUTO,
+            resumePrompt = bool(RESUME_PROMPT, true),
+            folders = string(FOLDERS)?.let(::parseFolders) ?: emptyMap(),
+            // Only entries the stack can show: its editors move widgets by their place in that list, which must be this one.
+            widgetStack = string(WIDGET_STACK)?.let(::parseList)?.filter(::isStackWidget)?.take(MAX_STACK_WIDGETS) ?: emptyList(),
+            searchCalculator = bool(SEARCH_CALCULATOR, true),
+            searchContacts = bool(SEARCH_CONTACTS, false),
+            swipeDownApp = string(SWIPE_DOWN_APP),
+            doubleTapApp = string(DOUBLE_TAP_APP),
+            showLiveUpdates = bool(SHOW_LIVE_UPDATES, true),
+            searchCommands = bool(SEARCH_COMMANDS, true),
+            searchShortcuts = bool(SEARCH_SHORTCUTS, true),
+            musicGlow = bool(MUSIC_GLOW, true),
+            copyLoginCodes = bool(COPY_LOGIN_CODES, true),
+            secondLetters = bool(SECOND_LETTERS, false),
+            stripApps = bool(STRIP_APPS, false),
+        )
+    }
 
     private fun write(s: LauncherSettings) {
         sp.edit {

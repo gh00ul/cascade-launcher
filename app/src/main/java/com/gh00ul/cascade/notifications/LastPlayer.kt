@@ -38,7 +38,9 @@ object LastPlayer {
     fun init(context: Context) {
         val sp = context.getSharedPreferences("last_player", Context.MODE_PRIVATE)
         prefs = sp
-        _state.value = sp.getString(KEY, null)?.let(::parse)
+        // Type-checked rather than getString, which throws on a value of another type here in Application.onCreate:
+        // a record that isn't a string reads as none, and the next track played writes over it.
+        _state.value = (sp.all[KEY] as? String)?.let(::parse)
     }
 
     /** [packageName] is playing [title]. Called on the main thread by [NowPlaying]. */

@@ -170,38 +170,57 @@ object WidgetHost {
     private fun setupRecord(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(SETUP_FILE, Context.MODE_PRIVATE)
 
-    /** The id in [record], or null; with [fresh], only while its setup screen may still answer. */
+    /**
+     * The id in [record], or null; with [fresh], only while its setup screen may still answer. Type-checked rather than
+     * getInt and getLong, which throw on a value of another type: pruning reads this from MainActivity.onCreate, so a
+     * bad record would crash home on every launch. One that isn't an Int reads as none.
+     */
     private fun recordedSetup(record: SharedPreferences, fresh: Boolean): Int? {
-        val id = record.getInt(SETUP_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+        val stored = record.all
+        val id = stored[SETUP_ID] as? Int ?: return null
         if (id == AppWidgetManager.INVALID_APPWIDGET_ID) return null
-        return if (!fresh || setupMayAnswer(record.getLong(SETUP_AT, 0), SystemClock.elapsedRealtime())) id else null
+        val askedAt = stored[SETUP_AT] as? Long ?: 0L
+        return if (!fresh || setupMayAnswer(askedAt, SystemClock.elapsedRealtime())) id else null
     }
 
     /** What [id] is, or null when the system no longer has it. */
     fun info(context: Context, id: Int): AppWidgetProviderInfo? =
         runCatching { AppWidgetManager.getInstance(context).getAppWidgetInfo(id) }.getOrNull()
 
+    /** How [begin] went: what to do next. */
+    sealed interface Begin {
+        /** Bound already: go on with [setUp]. */
+        data object Bound : Begin
+
+        /** The system's "Allow Cascade to create widgets" dialog, to launch for a result that goes to [onBindResult]. */
+        class Ask(val intent: Intent) : Begin
+
+        /** The system wouldn't hand out an id: nothing was started, and there's nothing to go on with. */
+        data object Failed : Begin
+    }
+
     /**
      * Starts adding [info], shown [widthDp] by [heightDp]: allocates an id and binds it if Cascade may without asking
-     * (the user allowed it before, with "Always allow"). Null when it's bound, so go on with [setUp]; otherwise the
-     * system's "Allow Cascade to create widgets" dialog, to launch for a result that goes to [onBindResult]. Null too
-     * when the system won't hand out an id, with nothing to go on with.
+     * (the user allowed it before, with "Always allow"). [Begin.Bound] when it's bound; otherwise [Begin.Ask] with the
+     * dialog that asks the user first; [Begin.Failed] when no id could be allocated.
      */
-    fun begin(context: Context, info: AppWidgetProviderInfo, widthDp: Int, heightDp: Int): Intent? {
+    fun begin(context: Context, info: AppWidgetProviderInfo, widthDp: Int, heightDp: Int): Begin {
         // An add that never came back (its dialog was dismissed by a config change) gives way to this one.
         pending?.let { discard(context, it) }
         val id = synchronized(allocating) {
             runCatching { host(context).allocateAppWidgetId() }.getOrNull()?.also { pending = it }
-        } ?: return null
+        } ?: return Begin.Failed
         pendingInfo = info
         val options = sizeOptions(widthDp, heightDp)
         val bound = runCatching { AppWidgetManager.getInstance(context).bindAppWidgetIdIfAllowed(id, info.profile, info.provider, options) }
             .getOrDefault(false)
-        return if (bound) null else Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
-            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
-            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
-            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, info.profile)
-            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_OPTIONS, options)
+        return if (bound) Begin.Bound else Begin.Ask(
+            Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, info.profile)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_OPTIONS, options),
+        )
     }
 
     /** The bind dialog's answer: on to [setUp] when the user allowed it, else the id is freed. */

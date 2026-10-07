@@ -13,6 +13,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.lang.reflect.Modifier
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class)
@@ -71,7 +72,7 @@ class PrefsTest {
 
     @Test fun everySettingSurvivesAReload() {
         val stored = LauncherSettings(
-            favorites = listOf("b/b.Main#0", "a/a.Main#0", "c/c.Main#10"),
+            favorites = listOf("b/b.Main#0", "folder:1", "a/a.Main#0", "folder:2", "c/c.Main#10"),
             hidden = setOf("h/h.Main#0"),
             renames = mapOf("a/a.Main#0" to "Alpha", "b/b.Main#0" to "Café ☕"),
             showIcons = false,
@@ -102,11 +103,49 @@ class PrefsTest {
             showWeather = true,
             weatherPlace = WeatherPlace("Zürich", 47.3769, 8.5417),
             tempUnit = TempUnit.FAHRENHEIT,
+            resumePrompt = false,
+            folders = mapOf("1" to Folder("Jeux ☕", listOf("g/g.Main#0", "k/k.Main#10")), "2" to Folder("", listOf("m/m.Main#0"))),
+            widgetStack = listOf(WIDGET_WEATHER, "app:7", WIDGET_CALENDAR),
+            searchCalculator = false,
+            searchContacts = true,
+            swipeDownApp = "s/s.Main#0",
+            doubleTapApp = "d/d.Main#10",
+            showLiveUpdates = false,
+            searchCommands = false,
+            searchShortcuts = false,
+            musicGlow = false,
+            copyLoginCodes = false,
             secondLetters = true,
             stripApps = true,
         )
+        assertEveryFieldChanged(stored)
         Prefs(context).update { stored }
         assertEquals(stored, Prefs(context).settings.value)
+    }
+
+    /**
+     * A stored value of the wrong type (a hand-edited file, a key whose type changed) reads as its default, and the
+     * rest still load: reading runs in Application.onCreate, where a throw would crash home on every launch. Nothing
+     * is written back then; the next change stores every key with its proper type.
+     */
+    @Test fun aStoredValueOfTheWrongTypeReadsAsItsDefault() {
+        val sp = context.getSharedPreferences("launcher", Context.MODE_PRIVATE)
+        sp.edit()
+            .putString("show_icons", "yes")
+            .putInt("haptics", 0)
+            .putBoolean("favorites", true)
+            .putLong("icon_size", 3L)
+            .putInt("swipe_down_app", 7)
+            .putBoolean("monochrome_icons", true)
+            .putString("clock_style", "BOLD")
+            .commit()
+        val prefs = Prefs(context)
+        assertEquals(LauncherSettings(monochromeIcons = true, clockStyle = ClockStyle.BOLD), prefs.settings.value)
+        assertEquals("yes", sp.all["show_icons"])
+
+        prefs.update { it.copy(showDate = false) }
+        assertEquals(true, sp.all["show_icons"])
+        assertEquals(LauncherSettings(monochromeIcons = true, clockStyle = ClockStyle.BOLD, showDate = false), Prefs(context).settings.value)
     }
 
     @Test fun favoritesKeepTheirOrder() {
@@ -154,4 +193,18 @@ class PrefsTest {
         context.getSharedPreferences("launcher", Context.MODE_PRIVATE).edit().putString("swipe_down", "SEARCH").commit()
         assertEquals(SwipeDownAction.SEARCH, Prefs(context).settings.value.swipeDownAction)
     }
+}
+
+/**
+ * Fails unless every field of [settings] differs from its default, so a round trip of it checks them all: a field
+ * added to LauncherSettings has to be added to the fixtures here and in SettingsBackupTest too.
+ */
+internal fun assertEveryFieldChanged(settings: LauncherSettings) {
+    val defaults = LauncherSettings()
+    val unchanged = LauncherSettings::class.java.declaredFields
+        .filterNot { Modifier.isStatic(it.modifiers) || it.isSynthetic }
+        .onEach { it.isAccessible = true }
+        .filter { it.get(settings) == it.get(defaults) }
+        .map { it.name }
+    assertEquals("Fields left at their defaults", emptyList<String>(), unchanged)
 }

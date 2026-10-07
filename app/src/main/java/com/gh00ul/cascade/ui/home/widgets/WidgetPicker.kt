@@ -165,11 +165,14 @@ internal fun rememberWidgetAdder(): WidgetAdder {
             builtIn = { entry -> context.launcher.prefs.update { it.copy(widgetStack = addWidget(it.widgetStack, entry)) } },
             app = { info ->
                 if (activity != null) {
-                    val ask = WidgetHost.begin(context, info, width, StackHeight.value.toInt())
-                    if (ask != null) {
-                        runCatching { bind.launch(ask) }.onFailure { WidgetHost.onBindResult(activity, Activity.RESULT_CANCELED) }
-                    } else if (!WidgetHost.setUp(activity)) {
-                        setupFailed(context)
+                    when (val start = WidgetHost.begin(context, info, width, StackHeight.value.toInt())) {
+                        WidgetHost.Begin.Bound -> if (!WidgetHost.setUp(activity)) setupFailed(context)
+                        // The dialog can't open (no app on this phone handles it): the id is freed, and nothing is added.
+                        is WidgetHost.Begin.Ask -> runCatching { bind.launch(start.intent) }.onFailure {
+                            WidgetHost.onBindResult(activity, Activity.RESULT_CANCELED)
+                            addFailed(context)
+                        }
+                        WidgetHost.Begin.Failed -> addFailed(context)
                     }
                 }
             },
@@ -178,6 +181,8 @@ internal fun rememberWidgetAdder(): WidgetAdder {
 }
 
 private fun setupFailed(context: Context) = Toast.makeText(context, "Couldn't open the widget's setup", Toast.LENGTH_SHORT).show()
+
+private fun addFailed(context: Context) = Toast.makeText(context, "Couldn't add the widget", Toast.LENGTH_SHORT).show()
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

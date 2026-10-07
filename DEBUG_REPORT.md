@@ -128,3 +128,42 @@ can't put over a release.
 
 After: debug and release build, lint 0 errors and 0 code warnings (only the dependency-version warnings left on purpose
 above), 424 tests pass.
+
+## Phase 3: crash hunt
+
+Six read-only audit agents (Null-Safety, Lifecycle, Coroutines & Threading, Compose, Permissions & Intents, Resources)
+each covered the whole codebase for one category. None found a crash on a normal path: `!!`, casts, platform nulls,
+`coerceIn` bounds, lazy keys, saveable types, every external launch and every PendingIntent were already guarded. Five
+fix agents with disjoint files fixed what they did find; the lead wired the cross-file parts.
+
+| # | Severity | Bug | Root cause | Fix | Files | Found by | Verified |
+|---|---|---|---|---|---|---|---|
+| 1 | Medium (ANR) | Home could freeze when an icon picker swapped an app's alias while a setting changed, or during Restore | Lock-order inversion: main held Prefs' lock and (via Main.immediate collectors) took the app list's lock; a reload held the list lock across PackageManager calls and `prefs.update`. Restore parsed up to 1 MB of JSON on main inside Prefs' lock | Moves computed and stored outside the list lock, under a reload-only lock; Restore parses off main once, merges inside the update | `AppRepository.kt`, `Prefs.kt`, `SettingsBackup.kt`, `MorePages.kt` | Data Layer, Coroutines | New test: moves stored without the list lock held; lock graph reviewed by lead |
+| 2 | Low (latent) | A nested settings update could be lost on restart | `Prefs.update` published before writing | Write, then publish | `Prefs.kt` | Data Layer | New test: nested update stored last |
+| 3 | Medium | Listen mode's Resume could open the music app over another app or behind the lock screen | The 4 s fallback waited for a recomposition to see `resuming = false`; home doesn't recompose while stopped | The wait watches the flag (snapshotFlow) and the launch requires STARTED | `LauncherScreen.kt` | Lifecycle, Compose (independently) | `ListenModeTest` rewritten to pause recomposition like a device; lead confirmed it fails on the old code and passes on the fix |
+| 4 | Medium | A widget whose setup screen was open across a process death was freed and lost | `pending`/`configuring` live in memory; the create-time prune freed the id before the setup's answer arrived | Setup id kept on disk until answered (max a day); prune reads in-flight ids before the stack; `configuring` volatile; allocate + mark pending atomically | `WidgetHost.kt`, `WidgetStack.kt` | Architecture, Coroutines | New test (one-day window); needs device |
+| 5 | Low | Two widget prunes on every cold start; binder lookups inside the Prefs update; binder call while composing a widget page | `pruned` flag let the first start re-prune; `isAlive` looked up inside the transform | One prune per cold start; lookups before the update; page uses the prune's cached info | `WidgetHost.kt`, `WidgetStack.kt` | Architecture, Coroutines, Lifecycle | Review; BATTERY.md corrected |
+| 6 | Low | Rename / new-folder dialogs and the widget sheet closed (and lost text) on a dark-mode or font change; the widget "Allow" answer was lost | Plain `remember` across activity recreation | `rememberSaveable` with app keys and `TextFieldValue.Saver` | `LauncherScreen.kt`, `Dialogs.kt` | Lifecycle | Needs device |
+| 7 | Low | New folder / Rename folder, Settings search and the weather place dialog could open without the keyboard | Focus requested before the field's window (dialog) or slot existed; `runCatching` around a call that doesn't throw | Request focus from inside the slot, after the field | `Dialogs.kt`, `LookPages.kt`, `MainPage.kt` | Null-Safety, Coroutines | Needs device |
+| 8 | Low | Notification dots, previews, player and chips could stay off after an update or force stop | The system rebinds a dead listener once; `requestRebind` alone is a no-op | 5 s after each home start, if access is granted but not connected: `requestUnbind` + `requestRebind` (Android 14+) | `NotificationListener.kt`, `MainActivity.kt` | Permissions, Lifecycle | Needs device |
+| 9 | Low | A media browser that never answers stayed bound all day | Disconnect posted only from `onConnected` | 10 s timeout after `connect()` | `LastPlayer.kt` | Lifecycle, Coroutines | New tests (never answers; fails once) |
+| 10 | Low | Letter strip (App names) jumped instead of gliding while held at an end | `scroll()` changed only plain fields; nothing invalidated the draw | Snapshot counter read in the draw | `AlphabetWave.kt` | Compose | Screenshots unchanged; needs device |
+| 11 | Low | Battery chip made a binder call on main for every voltage/temperature broadcast while charging | `computeChargeTimeRemaining` on every broadcast | Asked on level/charging change or while unknown | `ClockHeader.kt` | Coroutines | Lifecycle tests pass |
+| 12 | Low | Weather widget showed hours already past after time away with failed fetches | "Now" read only when a reading arrived | Re-read on each start | `WeatherWidget.kt` | Compose (also a deferred bug) | Needs device |
+| 13 | Low | Update download progress recomposed all of home | Collected in the screen body | Collected inside the card slot | `LauncherScreen.kt` | Compose | Screenshots unchanged |
+| 14 | Low | Deprecated background-start mode on Android 16, under an unexplained `@Suppress` | API 36 split ALLOWED into ALLOW_IF_VISIBLE / ALLOW_ALWAYS | ALLOW_IF_VISIBLE on 36+, narrowed suppression on 34–35 | `PendingIntents.kt` | Architecture, Dependency, Permissions | Needs device |
+| 15 | Low | Predictive back animations didn't play on Android 13–15 | No `enableOnBackInvokedCallback` | Attribute added | `AndroidManifest.xml` | Dependency | Needs Android 15 device |
+| 16 | Low (hardening) | Resume row allocated a brush and stroke per frame; letter alpha could exceed 1; unchecked `layoutId` cast; NaN launch bounds; empty Settings stack restore | — | `drawWithCache`, clamp, `as?`, finite check, `ifEmpty { null }` | `ResumeRow.kt`, `AlphabetWave.kt`, `FavoriteReorder.kt`, `LauncherActions.kt`, `SettingsActivity.kt` | Compose, Null-Safety | Build, tests |
+
+Moved to later phases: updater network bugs (Phase 5), error messages and permission flows (Phase 5), large-font
+clipping, the Settings background flash and touch targets (Phase 7).
+
+Left on purpose:
+- NotificationStore's gate starting open: closing it would blank Settings' preview chips in a fresh process and make a
+  screenshot test order-dependent, for close to no battery gain.
+- MediaRow's animated colors read in composition: Material's `Slider` takes colors as values; it recomposes only for the
+  600 ms of a track change.
+- Work-profile timer/live chips falling back to the personal app (no work profile on the target phone).
+
+Verified: debug and release build, lint clean (only the dependency-version warnings left on purpose), 431 unit tests
+pass (7 new), and all 142 Robolectric screenshots are byte-identical to v0.18.0's.

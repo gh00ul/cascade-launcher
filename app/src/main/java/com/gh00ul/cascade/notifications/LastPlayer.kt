@@ -84,7 +84,14 @@ object LastPlayer {
         val hints = Bundle().apply { putBoolean(MediaBrowserService.BrowserRoot.EXTRA_RECENT, true) }
         val created = runCatching { MediaBrowser(app, ComponentName(service.packageName, service.name), callback, hints) }.getOrNull()
         browser = created
-        if (created == null) pressPlay(app) else runCatching { created.connect() }.onFailure { pressPlay(app) }
+        if (created == null || runCatching { created.connect() }.isFailure) {
+            pressPlay(app)
+            return
+        }
+        // A browser that neither connects nor fails would stay bound, keeping the app's service alive, for as long as
+        // Cascade runs. Once connected, onConnected's own disconnect applies; disconnecting twice is safe. No play key
+        // here: home opens the app when nothing plays within a few seconds.
+        handler.postDelayed({ if (!created.isConnected) created.disconnect() }, CONNECT_TIMEOUT_MS)
     }
 
     /** A play key, as headphones' button would send it: Android routes it to the app that played last. */
@@ -97,6 +104,8 @@ object LastPlayer {
 
     private const val KEY = "last"
     private const val DISCONNECT_MS = 5_000L
+    /** Far longer than an app takes to start its browser service cold. */
+    private const val CONNECT_TIMEOUT_MS = 10_000L
 
     internal fun json(p: LastPlayed): String =
         JSONObject().put("package", p.packageName).put("title", p.title).put("subtitle", p.subtitle).toString()

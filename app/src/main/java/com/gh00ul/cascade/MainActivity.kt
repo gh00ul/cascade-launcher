@@ -9,6 +9,7 @@ import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.gh00ul.cascade.data.WidgetHost
+import com.gh00ul.cascade.notifications.NotificationListener
 import com.gh00ul.cascade.notifications.NotificationStore
 import com.gh00ul.cascade.ui.home.LauncherScreen
 import com.gh00ul.cascade.ui.theme.LauncherTheme
@@ -40,6 +41,8 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         NotificationStore.resume()
+        // Access granted but the listener not connected (after an update, a force stop or a crash): bind it again.
+        NotificationListener.rebindIfDisconnected(this)
         WidgetHost.onStart(this)
     }
 

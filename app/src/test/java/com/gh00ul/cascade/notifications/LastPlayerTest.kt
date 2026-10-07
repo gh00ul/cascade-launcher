@@ -1,9 +1,17 @@
 package com.gh00ul.cascade.notifications
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
+import android.content.IntentFilter
 import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Binder
+import android.os.Looper
+import android.service.media.MediaBrowserService
+import android.view.KeyEvent
 import com.gh00ul.cascade.ui.home.isListeningDevice
+import java.time.Duration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -12,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /** Listen mode's memory of the last player, and which outputs count as headphones. */
@@ -40,7 +49,7 @@ class LastPlayerTest {
         LastPlayer.played("com.spotify.music", "Intro", "The xx")
         LastPlayer.played("com.spotify.music", "Islands", "The xx")
         // apply() reports changes on the main thread.
-        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        shadowOf(Looper.getMainLooper()).idle()
         prefs.unregisterOnSharedPreferenceChangeListener(listener)
         assertEquals(1, writes)
     }
@@ -50,6 +59,51 @@ class LastPlayerTest {
         assertNull(LastPlayer.parse("""{"package":"","title":"x"}"""))
         val p = LastPlayed("com.example.radio", "", "")
         assertEquals(p, LastPlayer.parse(LastPlayer.json(p)))
+    }
+
+    private val radio = ComponentName("com.example.radio", "com.example.radio.Browser")
+
+    /** The radio app has a media browser service, as Resume finds it. */
+    private fun installBrowser(): Application {
+        val app = RuntimeEnvironment.getApplication()
+        shadowOf(app.packageManager).apply {
+            addServiceIfNotPresent(radio)
+            addIntentFilterForService(radio, IntentFilter(MediaBrowserService.SERVICE_INTERFACE))
+        }
+        return app
+    }
+
+    private fun playKeys(app: Application) = shadowOf(app.getSystemService(AudioManager::class.java)).dispatchedMediaKeyEvents
+
+    @Test fun aBrowserThatNeverAnswersIsLetGo() {
+        val app = installBrowser()
+        // Its service binds, takes the connect request and never answers: neither connected nor failed.
+        shadowOf(app).setComponentNameAndServiceForBindService(radio, Binder())
+        LastPlayer.resume(app, radio.packageName)
+        val looper = shadowOf(Looper.getMainLooper())
+        looper.idle()
+        assertEquals(1, shadowOf(app).boundServiceConnections.size)
+        // Bound for good otherwise, keeping the radio app alive while Cascade runs.
+        looper.idleFor(Duration.ofSeconds(10))
+        assertTrue(shadowOf(app).boundServiceConnections.isEmpty())
+        // Home opens the app when nothing plays, so giving up sends no play key of its own.
+        assertTrue(playKeys(app).isEmpty())
+    }
+
+    @Test fun aBrowserThatFailsGetsOnePlayKey() {
+        val app = installBrowser()
+        shadowOf(app).declareComponentUnbindable(radio)
+        LastPlayer.resume(app, radio.packageName)
+        val looper = shadowOf(Looper.getMainLooper())
+        looper.idle()
+        assertEquals(
+            listOf(KeyEvent.ACTION_DOWN to KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.ACTION_UP to KeyEvent.KEYCODE_MEDIA_PLAY),
+            playKeys(app).map { it.action to it.keyCode },
+        )
+        // The timeout later finds it disconnected already: disconnecting again changes nothing, and plays nothing.
+        looper.idleFor(Duration.ofSeconds(10))
+        assertEquals(2, playKeys(app).size)
+        assertTrue(shadowOf(app).boundServiceConnections.isEmpty())
     }
 
     @Test fun headphonesCountButTheSpeakerAndCallLinksDont() {

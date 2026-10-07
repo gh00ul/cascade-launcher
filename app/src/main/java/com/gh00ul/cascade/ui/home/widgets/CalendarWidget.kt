@@ -1,10 +1,7 @@
 package com.gh00ul.cascade.ui.home.widgets
 
 import android.Manifest
-import android.app.Activity
 import android.text.format.DateFormat
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -37,7 +34,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -53,6 +49,7 @@ import com.gh00ul.cascade.util.AgendaEvent
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.hasCalendarAccess
 import com.gh00ul.cascade.util.localDay
+import com.gh00ul.cascade.util.rememberPermissionPrompt
 import com.gh00ul.cascade.util.upcomingEvents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -72,8 +69,8 @@ private const val REQUERY_MS = 5 * 60_000L
 
 private val RowShape = RoundedCornerShape(10.dp)
 
-/** The agenda as it was read at [now]. */
-private class Agenda(val now: Long, val events: List<AgendaEvent>)
+/** The agenda as it was read at [now]; [events] is null when the calendar couldn't be read. */
+private class Agenda(val now: Long, val events: List<AgendaEvent>?)
 
 /**
  * The calendar widget: an agenda of today and the next two days, by day, all-day events first, in each calendar's
@@ -82,7 +79,7 @@ private class Agenda(val now: Long, val events: List<AgendaEvent>)
  *
  * The provider is read on each return home and every five minutes while home stays visible, never in the background
  * (see BATTERY.md). Without calendar access it offers to ask for it; once Android stops asking, the button opens App
- * info instead.
+ * info instead. A read that fails says so, rather than showing a clear calendar, until the next read works.
  */
 @Composable
 internal fun CalendarWidget(settings: LauncherSettings, onLongPress: () -> Unit, modifier: Modifier = Modifier) {
@@ -94,13 +91,7 @@ internal fun CalendarWidget(settings: LauncherSettings, onLongPress: () -> Unit,
     val replayedResume = rememberReplaySkip(Lifecycle.State.RESUMED)
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { if (!replayedResume.consume()) allowed = hasCalendarAccess(context) }
     // After "Don't allow" twice, Android stops asking and the request fails at once; send the user to App info then.
-    var blocked by remember { mutableStateOf(false) }
-    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        allowed = granted
-        val activity = context as? Activity
-        blocked = !granted && activity != null &&
-            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.READ_CALENDAR)
-    }
+    val prompt = rememberPermissionPrompt(Manifest.permission.READ_CALENDAR) { granted -> allowed = granted }
     val agenda by produceState<Agenda?>(null, allowed, lifecycle, clock) {
         if (!allowed) {
             value = null
@@ -117,19 +108,29 @@ internal fun CalendarWidget(settings: LauncherSettings, onLongPress: () -> Unit,
     }
 
     val shown = agenda
+    val events = shown?.events
     when {
         !allowed -> WidgetMessage(
             ExtraIcons.Event,
             "Your next events",
-            if (blocked) "Calendar access is blocked. Allow it in App info to see what's coming up here."
+            if (prompt.blocked) "Calendar access is blocked. Allow it in App info to see what's coming up here."
             else "Allow calendar access to see what's coming up today and the next two days.",
             modifier,
-            action = if (blocked) "App info" else "Allow",
-            onAction = { if (blocked) LauncherActions.openOwnAppInfo(context) else request.launch(Manifest.permission.READ_CALENDAR) },
+            action = if (prompt.blocked) "App info" else "Allow",
+            onAction = { if (prompt.blocked) LauncherActions.openOwnAppInfo(context) else prompt.launch() },
         )
         // The first read is on its way; it takes a moment.
         shown == null -> Box(modifier.fillMaxSize())
-        shown.events.isEmpty() -> WidgetMessage(
+        // The read failed; the next one, in five minutes or on the next return home, may work.
+        events == null -> WidgetMessage(
+            ExtraIcons.Event,
+            "Your next events",
+            "Couldn't read your calendar. Tap to open it.",
+            modifier,
+            onClick = { LauncherActions.openCalendar(context) },
+            onLongPress = onLongPress,
+        )
+        events.isEmpty() -> WidgetMessage(
             ExtraIcons.Event,
             "Nothing coming up",
             "Your calendar is clear today and the next two days.",
@@ -137,7 +138,7 @@ internal fun CalendarWidget(settings: LauncherSettings, onLongPress: () -> Unit,
             onClick = { LauncherActions.openCalendar(context) },
             onLongPress = onLongPress,
         )
-        else -> AgendaList(shown, is24Hour(settings.timeFormat, DateFormat.is24HourFormat(context)), onLongPress, modifier)
+        else -> AgendaList(shown.now, events, is24Hour(settings.timeFormat, DateFormat.is24HourFormat(context)), onLongPress, modifier)
     }
 }
 
@@ -175,14 +176,14 @@ internal fun agendaRows(events: List<AgendaEvent>, now: Long, today: Long, timeF
     }
 
 @Composable
-private fun AgendaList(agenda: Agenda, is24h: Boolean, onLongPress: () -> Unit, modifier: Modifier = Modifier) {
+private fun AgendaList(now: Long, events: List<AgendaEvent>, is24h: Boolean, onLongPress: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val style = LocalLauncherStyle.current
     val text = rememberWidgetText()
     val locale = LocalConfiguration.current.locales[0]
-    val rows = remember(agenda, is24h, locale) {
+    val rows = remember(now, events, is24h, locale) {
         val timeFormat = SimpleDateFormat(clockPattern(locale, is24h, withDay = false), locale)
-        agendaRows(agenda.events, agenda.now, localDay(agenda.now, TimeZone.getDefault()), timeFormat) { day ->
+        agendaRows(events, now, localDay(now, TimeZone.getDefault()), timeFormat) { day ->
             LocalDate.ofEpochDay(day).dayOfWeek.getDisplayName(TextStyle.FULL, locale)
         }
     }

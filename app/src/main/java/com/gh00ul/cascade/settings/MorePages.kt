@@ -3,8 +3,8 @@ package com.gh00ul.cascade.settings
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.IconImage
 import android.Manifest
-import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -45,7 +45,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -60,7 +59,9 @@ import com.gh00ul.cascade.launcher
 import com.gh00ul.cascade.update.Updater
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.LockService
+import com.gh00ul.cascade.util.rememberPermissionPrompt
 import java.io.ByteArrayOutputStream
+import java.io.FileNotFoundException
 import java.io.InputStream
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
@@ -188,27 +189,7 @@ internal fun GesturesPage(settings: LauncherSettings, apps: List<AppEntry>, icon
         )
     }
 
-    if (explainLock) {
-        AlertDialog(
-            onDismissRequest = { explainLock = false },
-            title = { Text("Turn on the lock service") },
-            text = {
-                Text(
-                    "Android lets apps lock the screen only through an accessibility service. Cascade's reads nothing on " +
-                        "your screen: it only locks it when you double-tap home.\n\nIn the list, open Cascade and turn it on. " +
-                        "If Android says the setting is restricted, open Cascade's App info, tap ⋮, choose “Allow restricted " +
-                        "settings”, and try again.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    explainLock = false
-                    LauncherActions.openAccessibilitySettings(context)
-                }) { Text("Open settings") }
-            },
-            dismissButton = { TextButton(onClick = { explainLock = false }) { Text("Not now") } },
-        )
-    }
+    if (explainLock) LockServiceHelp(onDismiss = { explainLock = false })
 }
 
 /** How search on home behaves, and what it finds besides apps. */
@@ -225,12 +206,8 @@ internal fun SearchPage(settings: LauncherSettings, nav: SettingsNav) {
         awaitingAppInfo = false
     }
     // After "Don't allow" twice, Android stops asking and the request fails at once; send the user to App info then.
-    var contactsBlocked by remember { mutableStateOf(false) }
-    val contactsRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val contactsPrompt = rememberPermissionPrompt(Manifest.permission.READ_CONTACTS) { granted ->
         contactsAllowed = granted
-        val activity = context as? Activity
-        contactsBlocked = !granted && activity != null &&
-            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.READ_CONTACTS)
         prefs.update { it.copy(searchContacts = granted) }
     }
 
@@ -265,7 +242,7 @@ internal fun SearchPage(settings: LauncherSettings, nav: SettingsNav) {
             SwitchRow(
                 "Contacts",
                 when {
-                    contactsBlocked && !contactsAllowed -> "Contacts access is blocked. Tap to allow it in App info."
+                    contactsPrompt.blocked && !contactsAllowed -> "Contacts access is blocked. Tap to allow it in App info."
                     settings.searchContacts && !contactsAllowed -> "Contacts access is off. Allow it in App info."
                     else -> "Finds people as you type, with buttons to text or call them. Read only while search is open."
                 },
@@ -273,11 +250,11 @@ internal fun SearchPage(settings: LauncherSettings, nav: SettingsNav) {
                 key = "contacts",
             ) { on ->
                 when {
-                    on && !hasContactsAccess(context) && contactsBlocked -> {
+                    on && !hasContactsAccess(context) && contactsPrompt.blocked -> {
                         awaitingAppInfo = true
                         LauncherActions.openOwnAppInfo(context)
                     }
-                    on && !hasContactsAccess(context) -> contactsRequest.launch(Manifest.permission.READ_CONTACTS)
+                    on && !hasContactsAccess(context) -> contactsPrompt.launch()
                     else -> prefs.update { it.copy(searchContacts = on) }
                 }
             }
@@ -302,8 +279,7 @@ internal fun BackupPage(nav: SettingsNav) {
         val app = context.launcher
         app.scope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { app.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) } != null }
-                    .getOrDefault(false)
+                runCatching { writeNewDocument(app.contentResolver, uri, text.toByteArray()) }.getOrDefault(false)
             }
             Toast.makeText(app, if (ok) "Settings backed up" else "Couldn't save the backup", Toast.LENGTH_SHORT).show()
         }
@@ -318,10 +294,15 @@ internal fun BackupPage(nav: SettingsNav) {
     LaunchedEffect(pendingUri) {
         pending = null
         val uri = pendingUri ?: return@LaunchedEffect
-        val text = withContext(Dispatchers.IO) {
-            runCatching { context.contentResolver.openInputStream(uri)?.use { it.readTextAtMost(BACKUP_MAX_BYTES) } }
-                .getOrNull()
+        // A failure when the file can't be read; null text when it's too big to be a backup.
+        val read = withContext(Dispatchers.IO) {
+            runCatching {
+                // No stream means the provider couldn't open it: as unreadable as an exception.
+                val stream = context.contentResolver.openInputStream(uri) ?: throw FileNotFoundException("No stream")
+                stream.use { it.readTextAtMost(BACKUP_MAX_BYTES) }
+            }
         }
+        val text = read.getOrNull()
         // Off the main thread too: org.json recurses, so a pathologically nested file could overflow the stack. Parsed
         // once, here: Restore only merges the result onto the settings as they are then.
         val parsed = text?.let {
@@ -330,10 +311,11 @@ internal fun BackupPage(nav: SettingsNav) {
             }
         }
         when {
-            text == null -> {
+            read.isFailure -> {
                 Toast.makeText(context, "Couldn't read that file", Toast.LENGTH_SHORT).show()
                 pendingUri = null
             }
+            // Too big to be a backup, or read but not one.
             parsed == null -> {
                 Toast.makeText(context, "That file isn't a Cascade settings backup", Toast.LENGTH_SHORT).show()
                 pendingUri = null
@@ -393,6 +375,27 @@ internal fun BackupPage(nav: SettingsNav) {
     }
 }
 
+/**
+ * Writes [bytes] to [uri], a document the picker has just created. "wt" first, which truncates; some providers
+ * (possibly Google Drive) refuse that mode or hand back no stream, and then plain "w" is just as good, since the new
+ * document is empty. False when neither mode gives a stream; a failed write throws.
+ */
+private fun writeNewDocument(resolver: ContentResolver, uri: Uri, bytes: ByteArray): Boolean {
+    // Only the ways a provider says it doesn't support "wt"; anything else fails the backup, as before.
+    val truncating = try {
+        resolver.openOutputStream(uri, "wt")
+    } catch (_: FileNotFoundException) {
+        null
+    } catch (_: IllegalArgumentException) {
+        null
+    } catch (_: UnsupportedOperationException) {
+        null
+    }
+    val out = truncating ?: resolver.openOutputStream(uri, "w") ?: return false
+    out.use { it.write(bytes) }
+    return true
+}
+
 /** The stream as UTF-8 text, or null when it's longer than [limit] bytes. Reads at most [limit] + 1 bytes. */
 private fun InputStream.readTextAtMost(limit: Int): String? {
     val out = ByteArrayOutputStream()
@@ -414,6 +417,8 @@ internal fun AboutPage(settings: LauncherSettings, nav: SettingsNav) {
     val prefs = context.launcher.prefs
     val setup = rememberSetupState()
     val roleRequest = rememberDefaultHomeRequest(setup)
+    val accessRequest = rememberNotificationAccessRequest()
+    var explainLock by rememberSaveable { mutableStateOf(false) }
     val update by Updater.state.collectAsStateWithLifecycle()
     val version = rememberVersionName()
 
@@ -436,14 +441,17 @@ internal fun AboutPage(settings: LauncherSettings, nav: SettingsNav) {
                 summary = if (setup.hasAccess) "Dots, previews and the music player are on" else "Needed for dots, previews and the music player",
                 ok = setup.hasAccess,
                 key = "notificationAccess",
-            ) { LauncherActions.openNotificationAccess(context) }
+            ) { accessRequest.open(context) }
             if (LockService.isSupported) {
                 StatusRow(
                     title = "Lock service",
                     summary = if (setup.lockEnabled) "For double-tap to lock" else "Only needed for double-tap to lock",
                     ok = setup.lockEnabled,
                     required = false,
-                ) { LauncherActions.openAccessibilitySettings(context) }
+                ) {
+                    // Off, it's explained first, as on the Gestures page; on, straight to its switch.
+                    if (setup.lockEnabled) LauncherActions.openAccessibilitySettings(context) else explainLock = true
+                }
             }
         }
         SettingsGroup {
@@ -463,6 +471,9 @@ internal fun AboutPage(settings: LauncherSettings, nav: SettingsNav) {
             SettingRow(title = "License", summary = "MIT. Free and open source.")
         }
     }
+
+    if (accessRequest.showHelp) NotificationAccessHelp(onDismiss = accessRequest::dismissHelp)
+    if (explainLock) LockServiceHelp(onDismiss = { explainLock = false })
 }
 
 /** Cascade's icon, name and version, the update status, and the one button that fits it. */

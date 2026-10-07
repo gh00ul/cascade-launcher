@@ -67,6 +67,7 @@ import com.gh00ul.cascade.data.homeItems
 import com.gh00ul.cascade.update.Updater
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.LockService
+import com.gh00ul.cascade.util.hasCalendarAccess
 
 /**
  * The top page: search, setup while it's unfinished, the home preview (tap it for Appearance), then each page with
@@ -82,6 +83,7 @@ internal fun MainPage(
 ) {
     val setup = rememberSetupState()
     val roleRequest = rememberDefaultHomeRequest(setup)
+    val accessRequest = rememberNotificationAccessRequest()
     val context = LocalContext.current
     val update by Updater.state.collectAsStateWithLifecycle()
     val version = rememberVersionName()
@@ -95,7 +97,7 @@ internal fun MainPage(
             SetupCard(
                 setup = setup,
                 onDefault = { LauncherActions.requestDefaultLauncher(context, roleRequest) },
-                onAccess = { LauncherActions.openNotificationAccess(context) },
+                onAccess = { accessRequest.open(context) },
             )
         }
         HomePreview(
@@ -131,14 +133,14 @@ internal fun MainPage(
             )
             SettingRow(
                 title = "Clock & glance",
-                summary = clockSummary(settings),
+                summary = clockSummary(settings, calendarAllowed = setup.calendarAllowed),
                 icon = SettingsIcons.Schedule,
                 iconColors = categoryColors(2),
                 onClick = { nav.go(SettingsScreen.CLOCK) },
             )
             SettingRow(
                 title = "Gestures",
-                summary = gesturesSummary(settings),
+                summary = gesturesSummary(settings, lockEnabled = setup.lockEnabled),
                 icon = SettingsIcons.TouchApp,
                 iconColors = categoryColors(0),
                 onClick = { nav.go(SettingsScreen.GESTURES) },
@@ -172,6 +174,8 @@ internal fun MainPage(
             )
         }
     }
+
+    if (accessRequest.showHelp) NotificationAccessHelp(onDismiss = accessRequest::dismissHelp)
 }
 
 /** "1 favorite", "6 favorites". */
@@ -188,12 +192,13 @@ internal fun appearanceSummary(s: LauncherSettings): String = listOfNotNull(
     "dimmed".takeIf { s.wallpaperDim != WallpaperDim.OFF },
 ).joinToString(" · ")
 
-internal fun clockSummary(s: LauncherSettings): String {
+/** Lists what shows under the clock; like weather without a place, the calendar can't show without [calendarAllowed]. */
+internal fun clockSummary(s: LauncherSettings, calendarAllowed: Boolean = true): String {
     val glance = listOfNotNull(
         "weather".takeIf { s.showWeather && s.weatherPlace != null },
         "alarm".takeIf { s.showAlarm },
         "timers".takeIf { s.showTimers },
-        "calendar".takeIf { s.showCalendar },
+        "calendar".takeIf { s.showCalendar && calendarAllowed },
         "battery".takeIf { s.showBattery },
     )
     val style = when (s.clockStyle) {
@@ -204,7 +209,8 @@ internal fun clockSummary(s: LauncherSettings): String {
     return if (glance.isEmpty()) "$style clock" else "$style · ${glance.joinToString(", ")}"
 }
 
-internal fun gesturesSummary(s: LauncherSettings): String {
+/** The gestures as set; double-tap to lock does nothing until the lock service is on, so it says so while [lockEnabled] is off. */
+internal fun gesturesSummary(s: LauncherSettings, lockEnabled: Boolean = true): String {
     val down = when (s.swipeDownAction) {
         SwipeDownAction.NOTIFICATIONS -> "notifications"
         SwipeDownAction.QUICK_SETTINGS -> "quick settings"
@@ -214,7 +220,7 @@ internal fun gesturesSummary(s: LauncherSettings): String {
     }
     val tap = when (s.doubleTapAction) {
         DoubleTapAction.NOTHING -> null
-        DoubleTapAction.LOCK_SCREEN -> "lock"
+        DoubleTapAction.LOCK_SCREEN -> if (lockEnabled) "lock" else "lock (lock service off)"
         DoubleTapAction.NOTIFICATIONS -> "notifications"
         DoubleTapAction.SEARCH -> "search"
         DoubleTapAction.OPEN_APP -> "an app"
@@ -229,20 +235,26 @@ internal fun updateSummary(update: Updater.State): String = when (update) {
     is Updater.State.Available -> "${update.release.versionName} is available"
     is Updater.State.Downloading -> "downloading ${update.release.versionName}…"
     is Updater.State.Installing -> "installing ${update.release.versionName}…"
-    is Updater.State.Failed -> "update didn't finish"
+    // No release means the check itself failed; with one, the download or install did.
+    is Updater.State.Failed -> if (update.release == null) "couldn't check for updates" else "update didn't finish"
 }
 
-/** Whether Cascade is the home app, has notification access and has its lock service on; read again on each return. */
+/**
+ * Whether Cascade is the home app, has notification access, has its lock service on and may read the calendar; read
+ * again on each return.
+ */
 @Stable
 internal class SetupState(context: Context) {
     var isDefault by mutableStateOf(LauncherActions.isDefaultLauncher(context))
     var hasAccess by mutableStateOf(LauncherActions.hasNotificationAccess(context))
     var lockEnabled by mutableStateOf(LockService.isEnabled(context))
+    var calendarAllowed by mutableStateOf(hasCalendarAccess(context))
 
     fun refresh(context: Context) {
         isDefault = LauncherActions.isDefaultLauncher(context)
         hasAccess = LauncherActions.hasNotificationAccess(context)
         lockEnabled = LockService.isEnabled(context)
+        calendarAllowed = hasCalendarAccess(context)
     }
 }
 
@@ -259,7 +271,7 @@ internal fun rememberSetupState(): SetupState {
 internal fun rememberDefaultHomeRequest(setup: SetupState) = LocalContext.current.let { context ->
     rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         setup.refresh(context)
-        if (!setup.isDefault) LauncherActions.openHomeSettings(context)
+        if (!setup.isDefault) LauncherActions.openHomeSettings(context, hint = true)
     }
 }
 

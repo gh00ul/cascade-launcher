@@ -94,9 +94,10 @@ data class AgendaEvent(val event: CalendarEvent, val day: Long, val color: Int)
  * The calendar widget's agenda: what's left of today and the next [days] - 1 days, at most [limit] events, by day,
  * each day's all-day events first and then the rest by start. Events that are over are left out, and one under way
  * (or an all-day event that began before today) is listed under today. Declined events and hidden calendars are
- * skipped, as for [nextCalendarEvent]. Blocking: call off the main thread.
+ * skipped, as for [nextCalendarEvent]. Null when the calendar couldn't be read, so that isn't taken for an empty one;
+ * empty without calendar access, which the caller asks for. Blocking: call off the main thread.
  */
-fun upcomingEvents(context: Context, now: Long, days: Int, limit: Int): List<AgendaEvent> {
+fun upcomingEvents(context: Context, now: Long, days: Int, limit: Int): List<AgendaEvent>? {
     if (!hasCalendarAccess(context) || days <= 0 || limit <= 0) return emptyList()
     val zone = TimeZone.getDefault()
     val today = localDay(now, zone)
@@ -117,6 +118,8 @@ fun upcomingEvents(context: Context, now: Long, days: Int, limit: Int): List<Age
     )
     val selection = "${CalendarContract.Instances.VISIBLE} = 1 AND " +
         "${CalendarContract.Instances.SELF_ATTENDEE_STATUS} != ${CalendarContract.Attendees.ATTENDEE_STATUS_DECLINED}"
+    // The provider runs in another process and can fail in any way there (access revoked a moment ago, the provider
+    // busy or gone); no cursor at all is a failed read too. Each is reported as null, for the widget to say so.
     return runCatching {
         context.contentResolver.query(uri, projection, selection, null, "${CalendarContract.Instances.BEGIN} ASC")?.use { c ->
             val rows = mutableListOf<CalendarInstance>()
@@ -132,7 +135,7 @@ fun upcomingEvents(context: Context, now: Long, days: Int, limit: Int): List<Age
             }
             agenda(rows, now, days, limit, zone)
         }
-    }.getOrNull().orEmpty()
+    }.getOrNull()
 }
 
 /** [upcomingEvents]' shaping of the query's [rows], in any order. Today is [now]'s day in [zone]. */

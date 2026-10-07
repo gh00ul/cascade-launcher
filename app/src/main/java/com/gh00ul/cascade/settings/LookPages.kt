@@ -1,10 +1,7 @@
 package com.gh00ul.cascade.settings
 
 import android.Manifest
-import android.app.Activity
 import android.text.format.DateFormat
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -40,11 +37,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.gh00ul.cascade.data.AppEntry
 import com.gh00ul.cascade.data.ClockStyle
+import com.gh00ul.cascade.data.HttpStatusException
 import com.gh00ul.cascade.data.IconImage
 import com.gh00ul.cascade.data.IconSize
 import com.gh00ul.cascade.data.LauncherSettings
@@ -60,6 +57,8 @@ import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.theme.LauncherStyle
 import com.gh00ul.cascade.util.LauncherActions
 import com.gh00ul.cascade.util.hasCalendarAccess
+import com.gh00ul.cascade.util.rememberPermissionPrompt
+import java.io.IOException
 import kotlinx.coroutines.delay
 
 internal fun textColorName(c: TextColor) = when (c) {
@@ -200,12 +199,8 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
         awaitingAppInfo = false
     }
     // After "Don't allow" twice, Android stops asking and the request fails at once; send the user to App info then.
-    var calendarBlocked by remember { mutableStateOf(false) }
-    val calendarRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val calendarPrompt = rememberPermissionPrompt(Manifest.permission.READ_CALENDAR) { granted ->
         calendarAllowed = granted
-        val activity = context as? Activity
-        calendarBlocked = !granted && activity != null &&
-            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.READ_CALENDAR)
         prefs.update { it.copy(showCalendar = granted) }
     }
     val place = settings.weatherPlace
@@ -294,7 +289,7 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
             SwitchRow(
                 "Next calendar event",
                 when {
-                    calendarBlocked && !calendarAllowed -> "Calendar access is blocked. Tap to allow it in App info."
+                    calendarPrompt.blocked && !calendarAllowed -> "Calendar access is blocked. Tap to allow it in App info."
                     settings.showCalendar && !calendarAllowed -> "Calendar access is off. Allow it in App info."
                     else -> "What's coming up today, with how long until it starts"
                 },
@@ -302,11 +297,11 @@ internal fun ClockPage(settings: LauncherSettings, favorites: List<AppEntry>, ic
                 key = "calendar",
             ) { on ->
                 when {
-                    on && !hasCalendarAccess(context) && calendarBlocked -> {
+                    on && !hasCalendarAccess(context) && calendarPrompt.blocked -> {
                         awaitingAppInfo = true
                         LauncherActions.openOwnAppInfo(context)
                     }
-                    on && !hasCalendarAccess(context) -> calendarRequest.launch(Manifest.permission.READ_CALENDAR)
+                    on && !hasCalendarAccess(context) -> calendarPrompt.launch()
                     else -> prefs.update { it.copy(showCalendar = on) }
                 }
             }
@@ -371,9 +366,15 @@ private fun PlaceDialog(onPick: (WeatherPlace) -> Unit, onDismiss: () -> Unit) {
                 results = it
                 status = if (it.isEmpty()) "No places match “$q”." else null
             },
-            onFailure = {
+            onFailure = { e ->
                 results = emptyList()
-                status = "Couldn't search. Check your connection."
+                // Only a network failure is the connection's fault. An HTTP error (an IOException too, so it's checked
+                // first) or a reply that won't parse is the service's, so trying again later is the advice.
+                status = when (e) {
+                    is HttpStatusException -> "Couldn't search right now. Try again in a bit."
+                    is IOException -> "Couldn't search. Check your connection."
+                    else -> "Couldn't search right now. Try again in a bit."
+                }
             },
         )
     }

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.gh00ul.cascade.data.DayForecast
 import com.gh00ul.cascade.data.HourForecast
@@ -42,6 +43,7 @@ import com.gh00ul.cascade.data.Weather
 import com.gh00ul.cascade.data.WeatherKind
 import com.gh00ul.cascade.data.WeatherNow
 import com.gh00ul.cascade.data.WeatherPlace
+import com.gh00ul.cascade.data.usesFahrenheit
 import com.gh00ul.cascade.settings.SettingsActivity
 import com.gh00ul.cascade.settings.SettingsScreen
 import com.gh00ul.cascade.ui.common.rememberReplaySkip
@@ -97,6 +99,8 @@ internal fun WeatherWidget(settings: LauncherSettings, onLongPress: () -> Unit, 
         }
     }
     val reading = rememberWeatherAt(place, settings.tempUnit)
+    val failedFor by Weather.failedFor.collectAsStateWithLifecycle()
+    val fahrenheit = usesFahrenheit(settings.tempUnit, LocalConfiguration.current.locales[0])
     when {
         place == null -> WidgetMessage(
             weatherIcon(WeatherKind.PARTLY_CLOUDY, isDay = true),
@@ -109,7 +113,9 @@ internal fun WeatherWidget(settings: LauncherSettings, onLongPress: () -> Unit, 
         reading == null -> WidgetMessage(
             weatherIcon(WeatherKind.CLOUDY, isDay = true),
             shortName(place),
-            "The weather shows here once it has loaded.",
+            // Only the latest fetch for this place and unit counts: one for a place picked before doesn't.
+            if (failedFor == place to fahrenheit) "Couldn't load the weather. It'll try again shortly."
+            else "The weather shows here once it has loaded.",
             modifier,
             onClick = { LauncherActions.webSearch(context, "weather ${place.name}") },
             onLongPress = onLongPress,

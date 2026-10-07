@@ -5,8 +5,12 @@ import android.content.SharedPreferences
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.edit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -131,6 +135,13 @@ object Weather {
      */
     val state: StateFlow<WeatherNow?> = _state.asStateFlow()
 
+    private val _failedFor = MutableStateFlow<Pair<WeatherPlace, Boolean>?>(null)
+    /**
+     * The place and unit (true for Fahrenheit) whose latest fetch failed, until a fetch succeeds: with no reading to
+     * show, the widget says so instead of waiting quietly. It only reports; retries keep to the 10-minute backoff.
+     */
+    val failedFor: StateFlow<Pair<WeatherPlace, Boolean>?> = _failedFor.asStateFlow()
+
     // Not LauncherApplication's scope: the readout also runs in Settings and in tests, under a plain Application. One
     // task at a time and in order, so a fetch never overlaps another fetch or a clear, and needs no lock.
     private val queue = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
@@ -189,25 +200,59 @@ object Weather {
         if (name.length < 2) return Result.success(emptyList())
         // toLanguageTag has the current codes ("he", not the "iw" that Locale.language keeps on Android).
         val language = Locale.getDefault().toLanguageTag().substringBefore('-').lowercase(Locale.ROOT)
-        return withContext(Dispatchers.IO) { runCatching { parsePlaces(get(searchUrl(name, language))) } }
+        // Typing on cancels this search; its request is disconnected rather than left running to its timeouts.
+        return withContext(Dispatchers.IO) { runCatching { parsePlaces(responseBodyCancellable(request(searchUrl(name, language)))) } }
     }
 
     private fun storeFor(app: Context): WeatherStore =
-        store ?: WeatherStore(app.getSharedPreferences("weather", Context.MODE_PRIVATE), _state, ::get).also { store = it }
+        store ?: WeatherStore(app.getSharedPreferences("weather", Context.MODE_PRIVATE), _state, _failedFor, ::get).also { store = it }
 
     /** A GET with short timeouts: a late reading is no use, and the next return home tries again. */
-    private fun get(url: String): String {
-        val connection = URL(url).openConnection() as HttpURLConnection
+    private fun get(url: String): String = responseBody(request(url))
+
+    /** The request for [url], not yet sent: nothing touches the network until its status or body is read. */
+    private fun request(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+        connectTimeout = 10_000
+        readTimeout = 10_000
+        setRequestProperty("Accept", "application/json")
+        setRequestProperty("User-Agent", "Cascade-launcher")
+    }
+}
+
+/**
+ * The body of the answer on [connection] when its status is 200; any other status throws [HttpStatusException]. The
+ * status comes first because for an error status Android's body read throws a bare FileNotFoundException instead.
+ * Disconnects either way.
+ */
+internal fun responseBody(connection: HttpURLConnection): String {
+    try {
+        val code = connection.responseCode
+        if (code != HttpURLConnection.HTTP_OK) throw HttpStatusException(code)
+        return connection.inputStream.bufferedReader().use { it.readText() }
+    } finally {
+        connection.disconnect()
+    }
+}
+
+/**
+ * [responseBody], with the blocking read tied to the calling coroutine: cancelling it disconnects [connection], which
+ * makes the connect or read under way throw at once instead of running on for up to 20 seconds.
+ */
+internal suspend fun responseBodyCancellable(connection: HttpURLConnection): String = coroutineScope {
+    // disconnect() is safe from another thread; it's how HttpURLConnection is meant to be cancelled.
+    val disconnectOnCancel = launch(start = CoroutineStart.UNDISPATCHED) {
         try {
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "Cascade-launcher")
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) error("HTTP ${connection.responseCode}")
-            return connection.inputStream.bufferedReader().use { it.readText() }
+            awaitCancellation()
         } finally {
             connection.disconnect()
         }
+    }
+    try {
+        // Cancelled already: a disconnect before connecting does nothing, so don't connect at all.
+        ensureActive()
+        responseBody(connection)
+    } finally {
+        disconnectOnCancel.cancel()
     }
 }
 
@@ -218,18 +263,22 @@ object Weather {
 internal class WeatherStore(
     private val prefs: SharedPreferences,
     private val state: MutableStateFlow<WeatherNow?>,
+    /**
+     * The place and unit that last failed, until a fetch succeeds: a failure holds back retries for those, not for a
+     * place picked since. A flow so [Weather.failedFor] can show it.
+     */
+    private val failedFor: MutableStateFlow<Pair<WeatherPlace, Boolean>?> = MutableStateFlow(null),
     private val download: (String) -> String,
 ) {
     private var loaded = false
     private var failedAt = 0L
-    /** The place and unit that last failed: a failure holds back retries for those, not for a place picked since. */
-    private var failedFor: Pair<WeatherPlace, Boolean>? = null
 
     /** Reads the stored reading into [state] once; one older than 3 hours is dropped instead. */
     fun load(now: Long) {
         if (loaded) return
         loaded = true
-        val stored = prefs.getString(NOW, null)?.let(::parseWeather)
+        // Not getString: a value of another type there would throw, and this runs where nothing catches it.
+        val stored = (prefs.all[NOW] as? String)?.let(::parseWeather)
         if (stored != null && now - stored.fetchedAt in 0 until Weather.KEEP_MS) state.compareAndSet(null, stored)
         else if (prefs.contains(NOW)) prefs.edit { remove(NOW) }
     }
@@ -244,7 +293,7 @@ internal class WeatherStore(
         val expired = current != null && now - current.fetchedAt !in 0 until Weather.KEEP_MS
         if (current != null && (current.place != place || current.fahrenheit != fahrenheit || expired)) forget()
         if (place == null) return
-        val lastFailure = if (failedFor == place to fahrenheit) failedAt else 0L
+        val lastFailure = if (failedFor.value == place to fahrenheit) failedAt else 0L
         // With the weather widget on home, a reading without the hours (stored by a build before the forecast) is fetched
         // again, or the widget would show only the current conditions until it's half an hour old.
         val fresh = state.value?.takeIf { !needsForecast || it.hours.isNotEmpty() }
@@ -256,10 +305,10 @@ internal class WeatherStore(
         }
         if (fetched == null) {
             failedAt = now
-            failedFor = place to fahrenheit
+            failedFor.value = place to fahrenheit
             return
         }
-        failedFor = null
+        failedFor.value = null
         state.value = fetched
         prefs.edit { putString(NOW, weatherJson(fetched)) }
     }

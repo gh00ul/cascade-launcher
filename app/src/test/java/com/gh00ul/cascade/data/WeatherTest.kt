@@ -5,20 +5,32 @@ import android.content.Context
 import com.gh00ul.cascade.ui.common.ExtraIcons
 import com.gh00ul.cascade.ui.home.weatherIcon
 import com.gh00ul.cascade.ui.home.weatherText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.SocketException
+import java.net.URL
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 // Robolectric for the real org.json (on the plain JVM it is a stub that returns defaults) and SharedPreferences.
 @RunWith(RobolectricTestRunner::class)
@@ -372,5 +384,98 @@ class WeatherTest {
         store.update(seattle, false, t0 + 3 * hour, force = false)
         assertNull(state.value)
         assertEquals(3, requests.size)
+    }
+
+    @Test fun aFailedFetchIsReportedForItsPlaceAndUnitUntilOneSucceeds() {
+        val failedFor = MutableStateFlow<Pair<WeatherPlace, Boolean>?>(null)
+        val store = WeatherStore(prefs, state, failedFor) { url -> requests += url; response() }
+        response = { throw IOException("offline") }
+        store.update(seattle, false, t0, force = false)
+        assertEquals(seattle to false, failedFor.value)
+        // Another place's fetch fails too: now that's the one reported.
+        store.update(zurich, false, t0 + minute, force = false)
+        assertEquals(zurich to false, failedFor.value)
+        // Inside the backoff nothing is fetched, and the failure still stands.
+        store.update(zurich, false, t0 + 5 * minute, force = false)
+        assertEquals(2, requests.size)
+        assertEquals(zurich to false, failedFor.value)
+        response = { forecast }
+        store.update(zurich, false, t0 + 11 * minute, force = false)
+        assertNull(failedFor.value)
+        // An HTTP error is a failure as well.
+        response = { throw HttpStatusException(503) }
+        store.update(zurich, true, t0 + 12 * minute, force = false)
+        assertEquals(zurich to true, failedFor.value)
+    }
+
+    // Responses, without the network
+
+    @Test fun aStatusOtherThan200ThrowsHttpStatusExceptionBeforeTheBody() {
+        for (code in listOf(204, 400, 404, 429, 500, 503)) {
+            val connection = FakeConnection(code)
+            val e = assertThrows(HttpStatusException::class.java) { responseBody(connection) }
+            assertEquals(code, e.code)
+            assertFalse(connection.bodyRead)
+            assertTrue(connection.disconnected)
+        }
+    }
+
+    @Test fun a200ReturnsTheBodyAndDisconnects() {
+        val connection = FakeConnection(200, places)
+        assertEquals(places, responseBody(connection))
+        assertTrue(connection.disconnected)
+        assertEquals(places, runBlocking { responseBodyCancellable(FakeConnection(200, places)) })
+    }
+
+    @Test fun cancellingARequestDisconnectsIt() = runBlocking {
+        // A search the user has typed past: its blocked read must end now, not at the timeouts.
+        val connection = HangingConnection()
+        val search = launch(Dispatchers.IO) { runCatching { responseBodyCancellable(connection) } }
+        assertTrue(connection.waiting.await(5, TimeUnit.SECONDS))
+        withTimeout(5_000) { search.cancelAndJoin() }
+        assertTrue(connection.disconnected)
+    }
+
+    /** A response without the network. Like Android's, it throws a FileNotFoundException for an error status's body. */
+    private class FakeConnection(private val code: Int, private val body: String = "") :
+        HttpURLConnection(URL("https://geocoding-api.open-meteo.com/v1/search")) {
+        var disconnected = false
+        var bodyRead = false
+
+        override fun getResponseCode() = code
+
+        override fun getInputStream(): InputStream {
+            if (code >= 400) throw FileNotFoundException("https://geocoding-api.open-meteo.com/v1/search")
+            bodyRead = true
+            return body.byteInputStream()
+        }
+
+        override fun connect() = Unit
+
+        override fun disconnect() {
+            disconnected = true
+        }
+
+        override fun usingProxy() = false
+    }
+
+    /** A request to a server that never answers: it waits until it's disconnected, then fails as a closed socket does. */
+    private class HangingConnection : HttpURLConnection(URL("https://geocoding-api.open-meteo.com/v1/search")) {
+        val waiting = CountDownLatch(1)
+        private val disconnects = CountDownLatch(1)
+        val disconnected get() = disconnects.count == 0L
+
+        override fun getResponseCode(): Int {
+            waiting.countDown()
+            // Gives up in the end rather than hang the test run when nothing disconnects it.
+            disconnects.await(10, TimeUnit.SECONDS)
+            throw SocketException("Socket closed")
+        }
+
+        override fun connect() = Unit
+
+        override fun disconnect() = disconnects.countDown()
+
+        override fun usingProxy() = false
     }
 }

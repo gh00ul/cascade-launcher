@@ -156,7 +156,7 @@ internal fun GesturesPage(settings: LauncherSettings, apps: List<AppEntry>, icon
             // The strip opens up one way or the other: turning either on turns the other off.
             SwitchRow(
                 "App names",
-                "The letter under your finger opens up to its apps by name, Mail, Maps, Messages, to scroll through",
+                "The letter under your finger opens up to its apps by name, Mail, Maps, Messages, to scroll through. Let go on one to open it",
                 settings.stripApps,
                 key = "stripApps",
             ) { on -> prefs.update { it.copy(stripApps = on, secondLetters = it.secondLetters && !on) } }

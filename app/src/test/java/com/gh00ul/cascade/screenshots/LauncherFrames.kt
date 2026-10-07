@@ -217,7 +217,7 @@ internal fun HomeScreen(
     items: List<HomeItem>? = null,
     /** For tests that scroll it, or read where it came to rest. */
     listState: LazyListState = rememberLazyListState(initialFirstVisibleItemIndex = firstItem),
-    /** For tests that tap, long-press or move favorites; moving them is off unless [onReorderFavorites] is given. */
+    /** For tests that tap, long-press or move favorites (moving them is off unless [onReorderFavorites] is given), or lift on an app's name on the strip. */
     onLaunch: (AppEntry) -> Unit = {},
     onAppLongPress: (AppEntry) -> Unit = {},
     /** A favorite held for its menu started to move instead, and the menu closed. */
@@ -350,6 +350,7 @@ internal fun HomeScreen(
                     prefixes = prefixes,
                     onPrefix = { prefix -> scope.launch { listState.scrollToItem(prefix.row) } },
                     names = settings.stripApps,
+                    onOpen = { prefix, _ -> (rows.getOrNull(prefix.row - FIRST_APP_ROW) as? ListRow.App)?.let { onLaunch(it.app) } },
                     modifier = Modifier.fillMaxHeight(),
                     restAlpha = { HomeStripAlpha + (1f - HomeStripAlpha) * progress() },
                 )

@@ -873,6 +873,8 @@ fun LauncherScreen(homePresses: Flow<Unit>) {
                         prefixes = prefixes,
                         onPrefix = { prefix -> scope.launch { listState.scrollToItem(prefix.row) } },
                         names = settings.stripApps,
+                        // App names: the app the finger lifts on opens, out of its name on the strip.
+                        onOpen = { prefix, bounds -> (rows.getOrNull(prefix.row - FIRST_APP_ROW) as? Row.App)?.let { launch(it.app, bounds) } },
                         // Hidden from TalkBack under an open folder or menu, like the list it scrolls.
                         modifier = Modifier.fillMaxHeight().hiddenFromAccessibilityWhen(popupOpen),
                         // Quiet on home, where the clock and favorites come first; as strong as ever over the list.

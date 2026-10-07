@@ -92,6 +92,8 @@ class SecondLettersTest {
     private val list = LazyListState(firstVisibleItemIndex = FIRST_APP_ROW)
 
     private var apps = FakeApps.all
+    /** Apps the strip opened, in order. */
+    private val opened = mutableListOf<AppEntry>()
 
     private fun show(secondLetters: Boolean = false, stripApps: Boolean = false, apps: List<AppEntry> = FakeApps.all) {
         this.apps = apps
@@ -105,6 +107,7 @@ class SecondLettersTest {
                             favorites = FakeApps.favorites,
                             icons = emptyMap(),
                             listState = list,
+                            onLaunch = { opened += it },
                         )
                     }
                 }
@@ -218,6 +221,47 @@ class SecondLettersTest {
         strip { slide(0f, (slot * 1.3f / 2 + slot / 2) / below) }
         assertEquals("section:T", top())
         strip { up() }
+    }
+
+    /** App names: letting go on an app's name opens that app; letting go on a letter opens nothing. */
+    @Test fun withAppNamesLettingGoOnAnAppOpensIt() {
+        show(stripApps = true)
+        val letter = 22.dp
+        val option = letter * 1.3f
+        val toFirst = (letter + option) / 2
+        // C to its second app, Calendar, and let go.
+        strip { down(letter("C")) }
+        strip { slide(0f, toFirst.toPx() + option.toPx()) }
+        assertEquals("app:${app("Calendar").key}", top())
+        assertEquals(emptyList<AppEntry>(), opened)
+        strip { up() }
+        assertEquals(listOf(app("Calendar")), opened)
+        // C again, then down past its apps onto D, and let go there: the list stays at D and nothing opens.
+        strip { down(letter("C")) }
+        strip { slide(0f, toFirst.toPx() + option.toPx() * 4 + toFirst.toPx()) }
+        assertEquals("section:D", top())
+        strip { up() }
+        assertEquals(listOf(app("Calendar")), opened)
+    }
+
+    /** A gesture the system takes over (a back swipe from this edge, say) ends in a cancel, not a lift: nothing opens. */
+    @Test fun withAppNamesACancelledGestureOpensNothing() {
+        show(stripApps = true)
+        strip { down(letter("C")) }
+        strip { slide(0f, ((22.dp + 22.dp * 1.3f) / 2).toPx()) }
+        assertEquals("app:${app("Calculator").key}", top())
+        strip { cancel() }
+        assertEquals(emptyList<AppEntry>(), opened)
+    }
+
+    /** Second letters only jump the list: letting go on one opens nothing. */
+    @Test fun withSecondLettersLettingGoOpensNothing() {
+        show(secondLetters = true)
+        strip { down(letter("C")) }
+        strip { slide(0f, ((22.dp + 22.dp * 1.3f) / 2).toPx()) }
+        assertEquals("app:${app("Calculator").key}", top())
+        strip { up() }
+        assertEquals(emptyList<AppEntry>(), opened)
     }
 
     /** Off (the default), the letters are all the strip has: one slot down from C is D. */

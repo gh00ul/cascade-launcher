@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.translate
@@ -27,7 +28,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -54,6 +58,8 @@ import kotlin.math.max
 import kotlin.math.min
 
 private val MaxSlot = 22.dp
+/** How far in from the screen edge the letters rest (from the left one in RTL). */
+private val LetterInset = 14.dp
 private val WaveSpread = 52.dp
 private val WaveDepth = 64.dp
 /** The glow is baked this much stronger and faded back by alpha, so the rise spring's overshoot past 1 still fits. */
@@ -252,8 +258,9 @@ private class StripPlan(val count: Int) {
  * (M: Ma, Me, Mu, each in a slot of its own before N), and dragging on through them jumps the list to each with
  * [onPrefix]. Reaching the next letter folds them back and opens that one's; the letter just reached stays under the
  * finger while the strip makes room around it. Lifting the finger folds them all back. With [names] (the App names
- * setting), [prefixes] are the letter's apps by name instead: they end at the strip's edge and grow inward, and a letter
- * with even one app opens.
+ * setting), [prefixes] are the letter's apps by name instead: they end at the strip's edge and grow inward, a letter
+ * with even one app opens, and lifting the finger on an app's name opens it with [onOpen], with where the name was in
+ * the window to open from. Lifting it on a letter just leaves the list there.
  */
 @Composable
 fun AlphabetWave(
@@ -264,6 +271,7 @@ fun AlphabetWave(
     prefixes: Map<String, List<LetterPrefix>> = emptyMap(),
     onPrefix: (LetterPrefix) -> Unit = {},
     names: Boolean = false,
+    onOpen: (LetterPrefix, Rect) -> Unit = { _, _ -> },
 ) {
     // Read through a state: the gesture below outlives recompositions, and Settings can turn vibration off meanwhile.
     val haptics by rememberUpdatedState(LocalHapticFeedback.current)
@@ -273,11 +281,17 @@ fun AlphabetWave(
     val prefixLayouts: Map<String, List<TextLayoutResult>> = remember(prefixes, measurer, style) {
         prefixes.mapValues { (_, list) -> list.map { measurer.measure(it.text, style.letter) } }
     }
+    val currentPrefixLayouts by rememberUpdatedState(prefixLayouts)
+    val currentLayoutDirection by rememberUpdatedState(LocalLayoutDirection.current)
     val currentLetters by rememberUpdatedState(letters)
     val currentOnLetter by rememberUpdatedState(onLetter)
     val currentPrefixes by rememberUpdatedState(prefixes)
     val currentOnPrefix by rememberUpdatedState(onPrefix)
     val currentNames by rememberUpdatedState(names)
+    val currentOnOpen by rememberUpdatedState(onOpen)
+    // The strip's top-left in the window, for the bounds an app opens from. Kept as it is laid out, not as state: only a
+    // lift reads it.
+    val origin = remember { floatArrayOf(0f, 0f) }
     val scope = rememberCoroutineScope()
     val plan = remember(letters.size) { StripPlan(letters.size) }
 
@@ -305,6 +319,11 @@ fun AlphabetWave(
     Spacer(
         modifier
             .width(36.dp)
+            .onGloballyPositioned { coordinates ->
+                val at = coordinates.positionInWindow()
+                origin[0] = at.x
+                origin[1] = at.y
+            }
             // Its own layer, so a resting fade that follows the scroll changes the layer's alpha, not the letters.
             .graphicsLayer {
                 val rest = restAlpha()
@@ -387,18 +406,40 @@ fun AlphabetWave(
                         if (opening > 0 || plan.open >= 0) layOut(if (opening > 0) index else -1, opening, index, plan.toY[index])
                     }
                 }
+                // App names: the app whose name the finger lifted on opens, out of that name as drawn under the finger
+                // (fully swollen, bulged inward, ending past the letters' column).
+                fun openPicked() {
+                    val letter = currentLetters.getOrNull(plan.open) ?: return
+                    val app = currentPrefixes[letter]?.getOrNull(picked) ?: return
+                    val layout = currentPrefixLayouts[letter]?.getOrNull(picked) ?: return
+                    val rtl = currentLayoutDirection == LayoutDirection.Rtl
+                    val inward = if (rtl) 1f else -1f
+                    val end = (if (rtl) LetterInset.toPx() else size.width - LetterInset.toPx()) + inward * (WaveDepth.toPx() - NameEdge.toPx())
+                    val width = layout.size.width * NameSwell
+                    val height = layout.size.height * NameSwell
+                    val left = origin[0] + if (rtl) end else end - width
+                    val top = origin[1] + plan.optionY(picked) - height / 2f
+                    currentOnOpen(app, Rect(left, top, left + width, top + height))
+                }
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     down.consume()
                     picked = -1
                     move(down.position.y)
+                    var lifted = false
                     while (true) {
                         val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
+                        if (!change.pressed) {
+                            // A lift, unless the system took the gesture over (a back swipe from this edge, say): that
+                            // comes as a lift already consumed, and opens nothing.
+                            lifted = !change.isConsumed
+                            break
+                        }
                         change.consume()
                         move(change.position.y)
                     }
                     selected = -1
+                    if (lifted && currentNames) openPicked()
                     // Lifted: whatever opened folds back, and the strip settles back to its resting layout.
                     if (currentPrefixes.isNotEmpty() && plan.height >= 0f) layOut(-1, 0, -1, 0f)
                 }
@@ -420,7 +461,7 @@ fun AlphabetWave(
                     val glide = plan.progress
                     // Letters rest 14dp in from the screen edge and bulge inward, toward the list (mirrored in RTL).
                     val rtl = layoutDirection == LayoutDirection.Rtl
-                    val restX = if (rtl) 14.dp.toPx() else size.width - 14.dp.toPx()
+                    val restX = if (rtl) LetterInset.toPx() else size.width - LetterInset.toPx()
                     val inward = if (rtl) 1f else -1f
                     val spread = WaveSpread.toPx()
                     val depth = WaveDepth.toPx()

@@ -24,7 +24,8 @@ and Android won't update an app across a key change.
   strip stays quiet, so the clock and favorites come first; it brightens as the list comes up or as you touch it.
   Turn on Second letters (Settings > Gestures) and the letter under your finger opens up right in the strip to its
   apps' second letters: drag down from M through Ma, Me and Mu to jump straight to them, then on to N. Or turn on
-  App names instead, and the letter opens up to its apps by name (Mail, Maps, Messages) to scroll through.
+  App names instead, and the letter opens up to its apps by name (Mail, Maps, Messages) to scroll through;
+  let go on one to open it, or on a letter to just stay there.
   The letter you touch stays under your finger; when its apps run past the end of the strip, the strip scrolls
   them up to you as you drag.
 - **Notifications in the list.** Apps with notifications get a dot. Favorites also show the latest message

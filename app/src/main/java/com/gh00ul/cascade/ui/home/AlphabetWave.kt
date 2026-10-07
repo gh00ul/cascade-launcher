@@ -1,5 +1,6 @@
 package com.gh00ul.cascade.ui.home
 
+import android.annotation.SuppressLint
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -35,6 +36,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -46,8 +49,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -112,6 +119,13 @@ private val LiftReach = 24.dp
 /** How far past the letters' column, toward the screen edge, app names end (they grow inward from there). */
 private val NameEdge = 5.dp
 /**
+ * How close to the screen's far edge an app's name may come, fully swollen under the finger; a longer one ends in an
+ * ellipsis there (large font sizes), rather than running off screen.
+ */
+private val NameMargin = 16.dp
+/** How far the pill an app's name is picked on reaches past it at each end. */
+private val PillPad = 6.dp
+/**
  * Over how far past the strip's ends a letter or name fades out, when the strip has scrolled it there: two or three of
  * them, easing out, so it's plain there's more.
  */
@@ -123,6 +137,22 @@ private val EdgeFade = 56.dp
 private val ScrollZone = 48.dp
 private val ScrollSlow = 90.dp
 private val ScrollFast = 420.dp
+
+/**
+ * How much an app's name swells under the finger: [NameSwell], or less where the pill it's picked on (as tall as its
+ * line) would overflow its [slot].
+ */
+private fun nameSwell(layout: TextLayoutResult, slot: Float) = min(NameSwell, slot / layout.size.height)
+
+/**
+ * A second letter or app name measured as the strip draws it. Wider than [maxWidth] px it's measured again, ending in
+ * an ellipsis there; anything that fits is measured exactly as before.
+ */
+private fun TextMeasurer.measureOption(text: String, style: TextStyle, maxWidth: Int): TextLayoutResult {
+    val whole = measure(text, style)
+    if (whole.size.width <= maxWidth) return whole
+    return measure(text, style, overflow = TextOverflow.Ellipsis, softWrap = false, maxLines = 1, constraints = Constraints(maxWidth = maxWidth))
+}
 
 /** A second-letter step under a strip letter: "Ma", and the A–Z list row its first app is at. */
 @Immutable
@@ -345,8 +375,17 @@ fun AlphabetWave(
     val style = LocalLauncherStyle.current
     val measurer = rememberTextMeasurer()
     val layouts = remember(letters, measurer, style) { letters.map { measurer.measure(it, style.letter) } }
-    val prefixLayouts: Map<String, List<TextLayoutResult>> = remember(prefixes, measurer, style) {
-        prefixes.mapValues { (_, list) -> list.map { measurer.measure(it.text, style.letter) } }
+    // App names end, fully bulged, a set way in from the screen's end edge, where the strip sits. Fully swollen and on
+    // their pill, they're no wider than fits from there to NameMargin short of the far edge.
+    // Lint's ConfigurationScreenWidthHeight: the activity's own Configuration already reports its window's width, which
+    // is all this needs.
+    @SuppressLint("ConfigurationScreenWidthHeight")
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+    val nameMax = with(LocalDensity.current) {
+        ((screenWidth - (LetterInset + WaveDepth - NameEdge) - NameMargin) / NameSwell - PillPad).roundToPx().coerceAtLeast(1)
+    }
+    val prefixLayouts: Map<String, List<TextLayoutResult>> = remember(prefixes, measurer, style, names, nameMax) {
+        prefixes.mapValues { (_, list) -> list.map { measurer.measureOption(it.text, style.letter, if (names) nameMax else Int.MAX_VALUE) } }
     }
     val currentPrefixLayouts by rememberUpdatedState(prefixLayouts)
     val currentLayoutDirection by rememberUpdatedState(LocalLayoutDirection.current)
@@ -532,8 +571,9 @@ fun AlphabetWave(
                     val rtl = currentLayoutDirection == LayoutDirection.Rtl
                     val inward = if (rtl) 1f else -1f
                     val end = (if (rtl) LetterInset.toPx() else size.width - LetterInset.toPx()) + inward * (WaveDepth.toPx() - NameEdge.toPx())
-                    val width = layout.size.width * NameSwell
-                    val height = layout.size.height * NameSwell
+                    val swell = nameSwell(layout, plan.optionSlot)
+                    val width = layout.size.width * swell
+                    val height = layout.size.height * swell
                     val left = if (rtl) end else end - width
                     if (if (rtl) lift.x > left + width + reach else lift.x < left - reach) return
                     val top = plan.optionY(picked) - height / 2f
@@ -607,6 +647,9 @@ fun AlphabetWave(
                     // Swollen letters keep a gap between them, however short their slots get to make room for an open
                     // letter's apps (capitals are ~0.72em tall).
                     val letterSwell = ((plan.slotNow - SwellGap.toPx()) / (style.letter.fontSize.toPx() * 0.72f)).coerceIn(1f, LetterSwell)
+                    // Second letters likewise in their own, taller slots; app names in drawItem, by their pill.
+                    val optionSlot = plan.slotNow * OptionSlot
+                    val optionSwell = ((optionSlot - SwellGap.toPx()) / (style.letter.fontSize.toPx() * 0.72f)).coerceIn(1f, OptionSwell)
 
                     if (touching) {
                         translate(restX + inward * depth * 0.6f, touchY) {
@@ -645,7 +688,11 @@ fun AlphabetWave(
                             rtl -> cx
                             else -> cx - layout.size.width
                         }
-                        val scale = fit + (swellTo - fit) * influence
+                        // An app's name is picked on a pill as tall as its line: swollen or not, that fits the name's slot,
+                        // however large the font. Letters and second letters have no limit here.
+                        val room = if (name) nameSwell(layout, optionSlot) else Float.POSITIVE_INFINITY
+                        val rest = min(fit, room)
+                        val scale = rest + (min(swellTo, room) - rest) * influence
                         // At rest (and fully accented) the exact colors, not a lerp's round trip through Oklab.
                         val color = when {
                             accent <= 0f -> style.content
@@ -655,7 +702,7 @@ fun AlphabetWave(
                         withTransform({ scale(scale, scale, pivot = Offset(cx, cy)) }) {
                             if (name && accent > 0f) {
                                 val h = layout.size.height.toFloat()
-                                val pad = 6.dp.toPx()
+                                val pad = PillPad.toPx()
                                 drawRoundRect(
                                     pill,
                                     topLeft = Offset(left - pad, cy - h / 2f),
@@ -673,7 +720,7 @@ fun AlphabetWave(
                             )
                         }
                     }
-                    val itemSwell = if (names) NameSwell else OptionSwell
+                    val itemSwell = if (names) NameSwell else optionSwell
                     fun drawLetter(i: Int) = drawItem(layouts[i], plan.letterY(i), lerp(accentFrom[i], if (i == accented) swell else 0f, handover), 1f, letterSwell)
 
                     // Second letters folding back into their letter, fading as they go.

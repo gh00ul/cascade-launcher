@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.List
@@ -474,7 +475,16 @@ private fun RowScope.MenuButton(icon: ImageVector, label: String, description: S
             Icon(icon, contentDescription = null, tint = if (selected) style.accent else LocalContentColor.current, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.height(6.dp))
-        Text(label, style = MenuSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // A quarter of the card's width: at a large font size the label shrinks to fit rather than lose its end, inset
+        // so it never runs into the next one. Centered, so at the default size, with room to spare, it doesn't move.
+        Text(
+            label,
+            style = MenuSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            autoSize = MenuSmallFit,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
     }
 }
 
@@ -482,8 +492,16 @@ private fun RowScope.MenuButton(icon: ImageVector, label: String, description: S
 @Composable
 private fun MenuLabel(text: String, action: Pair<String, () -> Unit>? = null) {
     val style = LocalLauncherStyle.current
+    val fit = remember(style) { TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = style.section.fontSize) }
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text.uppercase(), style = style.section.copy(shadow = null), modifier = Modifier.weight(1f).semantics { heading() })
+        // One line, shrinking to fit at a large font size, rather than breaking the word.
+        Text(
+            text.uppercase(),
+            style = style.section.copy(shadow = null),
+            maxLines = 1,
+            autoSize = fit,
+            modifier = Modifier.weight(1f).semantics { heading() },
+        )
         if (action != null) {
             Text(
                 action.first,
@@ -544,3 +562,5 @@ private val MenuTitle = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Medi
 private val MenuText = TextStyle(fontSize = 16.sp)
 private val MenuDetail = TextStyle(fontSize = 13.sp, lineHeight = 17.sp)
 private val MenuSmall = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium)
+// Down from the full size only when it doesn't fit, which takes a large font size: at the default it lands on the max.
+private val MenuSmallFit = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = MenuSmall.fontSize)
